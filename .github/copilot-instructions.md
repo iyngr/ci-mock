@@ -1,261 +1,336 @@
-# CI Mock - Minimal Python Repository
+# AI-Powered Technical Assessment Platform
 
-CI Mock is a minimal Python repository designed for testing CI/CD workflows and GitHub Copilot agent functionality. This is an **empty starter repository** that serves as a clean testing environment.
+This repository contains a comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation and real-time proctoring capabilities.
 
 **ALWAYS follow these instructions first and only fallback to additional search and context gathering if the information here is incomplete or found to be in error.**
 
 ## Repository Current State
 
 ### What This Repository Contains
-The repository is currently minimal and contains only:
+This is a full-featured application with the following structure:
 ```
 ci-mock/
 ├── .git/                 # Git repository data
 ├── .github/              # GitHub configuration
 │   └── copilot-instructions.md  # This file
-├── .gitignore           # Comprehensive Python gitignore
-└── README.md            # Basic project documentation (just "# ci-mock")
+├── .gitignore           # Comprehensive gitignore
+├── README.md            # Full project documentation
+├── backend/             # Python FastAPI backend
+│   ├── main.py          # FastAPI application entry point
+│   ├── models.py        # Pydantic data models
+│   ├── pyproject.toml   # UV package configuration
+│   ├── Dockerfile       # Docker configuration
+│   ├── routers/         # API route modules
+│   │   ├── admin.py     # Admin endpoints
+│   │   ├── candidate.py # Candidate assessment endpoints
+│   │   └── utils.py     # Utility endpoints
+│   └── uv.lock          # UV dependency lock file
+└── frontend/            # Next.js 14 TypeScript frontend
+    ├── package.json     # PNPM package configuration
+    ├── next.config.ts   # Next.js configuration
+    ├── tsconfig.json    # TypeScript configuration
+    ├── src/             # Source code directory
+    ├── public/          # Static assets
+    └── pnpm-lock.yaml   # PNPM dependency lock file
 ```
 
-**There is NO existing source code, NO src/ directory, NO tests, NO Python modules, NO package configuration.**
-
 ### Repository Purpose
-This repository serves as a clean testing environment for:
-- Testing CI/CD workflows with Python projects
-- GitHub Copilot agent functionality validation
-- Mock development environment setup
-- Clean slate experimentation
+This repository is a production-ready technical assessment platform featuring:
+- **Backend**: Python 3.12 with FastAPI, Motor (MongoDB), Azure integrations
+- **Frontend**: Next.js 14 with TypeScript, Tailwind CSS, Monaco Editor
+- **Features**: AI evaluation, code execution, real-time proctoring, admin dashboard
 
 ## Working Effectively
 
 ### Environment Setup
-- **Python Version**: Python 3.12.3 is available at `/usr/bin/python` and `/usr/bin/python3`
-- **Package Manager**: pip 24.0 is pre-installed
+- **Python Version**: Python 3.12+ (specified in backend/.python-version)
+- **Package Managers**: UV (backend), PNPM (frontend)
 - **Repository Root**: `/home/runner/work/ci-mock/ci-mock`
 
-### Bootstrap Commands for Starting from Scratch
-Since this is an empty repository, you'll need to create everything from scratch:
+### Development Setup Commands
+To work with this full-stack application:
 
 ```bash
 # Navigate to repository root
 cd /home/runner/work/ci-mock/ci-mock
 
-# Install essential Python development tools (NEVER CANCEL: Takes 10-60 seconds)
-pip install pytest black flake8 mypy --quiet
+# Backend setup with UV
+cd backend
+uv sync                    # Install all dependencies from pyproject.toml
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Create virtual environment (recommended for any development)
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows (if needed)
+# Frontend setup with PNPM (in new terminal)
+cd frontend
+pnpm install              # Install all dependencies from package.json
+pnpm dev                  # Start development server with Turbopack
+
+# Docker option for backend
+cd backend
+docker build -t assessment-api .
+docker run -p 8000:8000 assessment-api
 ```
 
 **TIMING EXPECTATIONS:**
-- `pip install` commands: 10-60 seconds - NEVER CANCEL, set timeout to 120+ seconds
-- Virtual environment creation: 3-5 seconds
-- Python script execution: < 1 second for simple scripts
-- Test execution: < 1 second for small test suites
-- Code formatting (black): < 5 seconds
-- Linting (flake8): < 5 seconds  
-- Type checking (mypy): < 10 seconds
+- `uv sync`: 30-90 seconds - Install backend dependencies (FastAPI, Motor, etc.)
+- `pnpm install`: 60-120 seconds - Install frontend dependencies (Next.js, React, etc.)
+- `pnpm dev`: 10-15 seconds startup - Next.js development server
+- `uvicorn` startup: 2-3 seconds - FastAPI development server
+- Docker build: 2-5 minutes - Complete backend container build
 
-## Creating a Python Project from Scratch
+## Application Architecture & Technologies
 
-### Basic Project Structure Setup
-Create a standard Python project structure:
+### Backend (FastAPI)
+**Core Technologies:**
+- **FastAPI**: Modern Python web framework with automatic API documentation
+- **Motor**: Async MongoDB driver for database operations  
+- **Pydantic**: Data validation and serialization
+- **Uvicorn**: ASGI server for running FastAPI applications
+- **UV**: Modern Python package manager (replaces pip/poetry)
 
+**Key Files:**
+- `backend/main.py`: FastAPI application entry point with CORS and router setup
+- `backend/models.py`: Pydantic models for data validation
+- `backend/routers/`: API endpoint modules (admin, candidate, utils)
+- `backend/pyproject.toml`: UV package configuration with all dependencies
+
+**Database Integration:**
+- Designed for Azure Cosmos DB (MongoDB API)
+- Motor async driver for non-blocking database operations
+- Mock connections for development
+
+### Frontend (Next.js 14)
+**Core Technologies:**
+- **Next.js 14**: React framework with App Router and Turbopack
+- **TypeScript**: Type-safe JavaScript development
+- **Tailwind CSS**: Utility-first CSS framework
+- **Shadcn/UI**: Modern React component library
+- **Monaco Editor**: VS Code editor for code questions
+- **Chart.js**: Data visualization for admin dashboard
+
+**Key Files:**
+- `frontend/src/`: Main source code directory
+- `frontend/package.json`: PNPM dependencies and scripts
+- `frontend/next.config.ts`: Next.js configuration
+- `frontend/tsconfig.json`: TypeScript compiler configuration
+
+### External Integrations
+- **Azure OpenAI**: GPT-4o for AI-powered evaluation
+- **Judge0 API**: Code execution and testing
+- **Azure Cosmos DB**: NoSQL database for assessments and results
+
+## Development Workflow Commands
+
+### Backend Development (FastAPI)
 ```bash
-# Create basic project directories
-mkdir -p src tests docs
-touch src/__init__.py
-touch tests/__init__.py
+cd backend
 
-# Create a simple example module
-echo "def add(a, b):
-    \"\"\"Add two numbers.\"\"\"
-    return a + b
+# Install dependencies
+uv sync
 
-def multiply(a, b):
-    \"\"\"Multiply two numbers.\"\"\"
-    return a * b" > src/calculator.py
+# Run development server with auto-reload
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Create corresponding tests
-echo "import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# Add new dependencies
+uv add fastapi motor pydantic
 
-from calculator import add, multiply
+# Run specific commands in UV environment
+uv run python -c "import fastapi; print(fastapi.__version__)"
 
-def test_add():
-    assert add(2, 3) == 5
-    assert add(-1, 1) == 0
-
-def test_multiply():
-    assert multiply(3, 4) == 12
-    assert multiply(0, 5) == 0" > tests/test_calculator.py
+# Docker development
+docker build -t assessment-api .
+docker run -p 8000:8000 -e DATABASE_URL=mongodb://localhost:27017 assessment-api
 ```
 
-### Project Configuration
-Create basic project configuration files:
-
+### Frontend Development (Next.js)
 ```bash
-# Create pyproject.toml for modern Python packaging
-echo '[build-system]
-requires = ["setuptools>=45", "wheel"]
-build-backend = "setuptools.build_meta"
+cd frontend
 
-[project]
-name = "ci-mock"
-version = "0.1.0"
-description = "Mock CI environment for testing"
-requires-python = ">=3.12"
-dependencies = []
+# Install dependencies
+pnpm install
 
-[project.optional-dependencies]
-dev = ["pytest", "black", "flake8", "mypy"]
+# Run development server with Turbopack
+pnpm dev
 
-[tool.black]
-line-length = 88
+# Build for production
+pnpm build
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]' > pyproject.toml
+# Run production build locally
+pnpm start
 
-# Create requirements files
-echo "# Production dependencies
-# (none currently)" > requirements.txt
+# Lint TypeScript and React code
+pnpm lint
 
-echo "# Development dependencies
-pytest>=7.0.0
-black>=22.0.0
-flake8>=4.0.0
-mypy>=0.910" > requirements-dev.txt
+# Add new dependencies
+pnpm add @monaco-editor/react
+pnpm add -D @types/node
 ```
 
-### Development Workflow Commands
-
-#### Testing (after creating tests)
+### Full-Stack Development
 ```bash
-# Run tests (only works after creating test files)
-python -m pytest tests/ -v
+# Start both services simultaneously (use separate terminals)
 
-# Run tests with coverage
-pip install coverage --quiet
-coverage run -m pytest tests/
-coverage report
+# Terminal 1: Backend
+cd backend && uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2: Frontend  
+cd frontend && pnpm dev
+
+# Access points:
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
 ```
 
-#### Code Quality (after creating source files)
-```bash
-# Format code with black
-black src/ tests/
+## Working with Existing Codebase
 
-# Check code style with flake8  
-flake8 src/ tests/
+### Understanding the API Structure
+The backend follows a clean architecture pattern:
 
-# Type checking with mypy
-mypy src/
+```python
+# backend/main.py - FastAPI app setup
+from fastapi import FastAPI
+app = FastAPI(title="AI Technical Assessment Platform API")
 
-# Run all quality checks together
-black src/ tests/ && flake8 src/ tests/ && mypy src/ && python -m pytest tests/ -v
+# Router organization
+from routers import candidate, admin, utils
+app.include_router(candidate.router, prefix="/api/candidate")
+app.include_router(admin.router, prefix="/api/admin") 
+app.include_router(utils.router, prefix="/api/utils")
 ```
 
-### Quick Validation Workflows
+**Key API Endpoints:**
+- `POST /api/candidate/login` - Validate assessment codes
+- `GET /api/candidate/assessment/{test_id}` - Get questions
+- `POST /api/admin/login` - Admin authentication
+- `POST /api/utils/run-code` - Execute code via Judge0
 
-#### 1. Basic Python Environment Test
-```bash
-# Test Python is working
-echo "print('Hello, CI Mock Environment!')" > validate_test.py
-python validate_test.py
-rm validate_test.py
+### Working with the Frontend
+The frontend uses Next.js 14 App Router structure:
+
+```typescript
+// Modern Next.js patterns in use:
+- App Router (not Pages Router)
+- TypeScript for type safety
+- Tailwind CSS for styling
+- Server and Client Components
+- Monaco Editor for code editing
 ```
 
-#### 2. Package Installation Test
-```bash
-# Test package installation capability
-pip install requests --quiet
-python -c "import requests; print('Package installation successful')"
-```
+### Database Integration
+```python
+# backend/main.py - Database setup
+from motor.motor_asyncio import AsyncIOMotorClient
 
-#### 3. Complete Development Workflow Test
-```bash
-# Create and test a complete mini-project
-mkdir -p /tmp/test_project
-echo "def hello(): return 'Hello World'" > /tmp/test_project/main.py
-echo "
-import sys
-sys.path.append('/tmp/test_project')
-from main import hello
-
-def test_hello():
-    assert hello() == 'Hello World'
-" > /tmp/test_project/test_main.py
-
-cd /tmp/test_project && python -m pytest test_main.py -v
-cd /home/runner/work/ci-mock/ci-mock
-rm -rf /tmp/test_project
+# Designed for Azure Cosmos DB
+# Currently uses mock connections for development
+# Production will connect to MongoDB API
 ```
 
 ## Development Patterns and Guidelines
 
-### Recommended Directory Structure
-When building out the project, follow this structure:
+### Code Organization
+**Backend Structure:**
 ```
-ci-mock/
-├── src/                  # Source code
-│   ├── __init__.py
-│   └── [modules].py
-├── tests/                # Test files
-│   ├── __init__.py
-│   └── test_[modules].py
-├── docs/                 # Documentation
-├── .github/              # GitHub workflows/configs
-├── .gitignore           # Git ignore rules
-├── README.md            # Project documentation
-├── pyproject.toml       # Project configuration
-├── requirements.txt     # Production dependencies
-└── requirements-dev.txt # Development dependencies
+backend/
+├── main.py              # FastAPI app and CORS setup
+├── models.py            # Pydantic models for validation
+├── routers/             # Feature-based route organization
+│   ├── admin.py         # Admin management endpoints
+│   ├── candidate.py     # Assessment taking endpoints
+│   └── utils.py         # Code execution and AI evaluation
+└── pyproject.toml       # UV dependency management
 ```
 
-### Git Workflow
+**Frontend Structure:**
+```
+frontend/
+├── src/                 # Next.js 14 App Router structure
+├── package.json         # PNPM dependencies (React 19, Next.js 14)
+├── next.config.ts       # Next.js configuration
+└── tsconfig.json        # TypeScript configuration
+```
+
+### Key Technologies in Use
+**Backend Dependencies (from pyproject.toml):**
+- `fastapi>=0.116.1` - Modern Python web framework
+- `motor>=3.7.1` - Async MongoDB driver
+- `pydantic>=2.11.7` - Data validation
+- `uvicorn>=0.35.0` - ASGI server
+- `python-jose[cryptography]>=3.5.0` - JWT handling
+
+**Frontend Dependencies (from package.json):**
+- `next: 15.4.6` - React framework
+- `react: 19.1.0` - Latest React version
+- `@monaco-editor/react: ^4.7.0` - Code editor
+- `tailwindcss: ^4` - Utility-first CSS
+- `chart.js: ^4.5.0` - Data visualization
+
+### Environment Configuration
+**Development Environment Variables:**
 ```bash
-# Check status before making changes
+# Backend (.env)
+DATABASE_URL=mongodb://localhost:27017/assessment
+AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key
+JUDGE0_API_URL=https://judge0-ce.p.rapidapi.com
+JUDGE0_API_KEY=your-judge0-key
+
+# Frontend (.env.local)
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+### Git Workflow for Full-Stack Development
+```bash
+# Check status across both directories
 git status
 
-# Add and commit changes
-git add .
-git commit -m "Descriptive commit message"
+# Common development workflow
+cd backend && uv sync                    # Update backend deps
+cd ../frontend && pnpm install          # Update frontend deps
 
-# Before committing, validate everything works
-python -c "print('Basic Python check')"
+# Test both services before committing
+cd backend && uv run uvicorn main:app --host 0.0.0.0 --port 8000 &
+cd frontend && pnpm build               # Verify frontend builds
+curl http://localhost:8000/health       # Verify backend responds
+
+# Commit changes
+git add .
+git commit -m "feat: add new assessment feature"
 ```
 
 ## Critical Reminders
 
-### Working with Empty Repository
-- **START FROM SCRATCH**: Don't assume any existing code or directories exist
-- **CREATE STRUCTURE FIRST**: Set up directories and files before running tools
-- **VALIDATE INCREMENTALLY**: Test each piece as you build it
+### Working with Full-Stack Application
+- **UNDERSTAND ARCHITECTURE**: This is a production application, not a toy project
+- **USE CORRECT PACKAGE MANAGERS**: UV for backend, PNPM for frontend  
+- **RESPECT EXISTING PATTERNS**: Follow FastAPI router structure and Next.js App Router
+- **TEST BOTH LAYERS**: Ensure backend API and frontend build successfully
 
-### Timing and Cancellation Rules
-- **NEVER CANCEL** pip install commands - they take 10-60 seconds
-- **NEVER CANCEL** test runs - they complete quickly but need time
-- Always set timeout to 120+ seconds for pip commands
+### Timing and Performance Expectations
+- **Backend startup**: 2-3 seconds with `uvicorn --reload`
+- **Frontend dev server**: 10-15 seconds with `pnpm dev` (Turbopack)
+- **Full build**: 2-3 minutes for production builds
+- **Docker build**: 3-5 minutes for complete backend container
 
-### Common Gotchas
-- Don't run `pytest` before creating test files - it will fail
-- Don't run `black` or `flake8` on non-existent directories
-- Don't assume imports work before creating the modules
-- Always check if files/directories exist before referencing them
+### Common Workflows
+- **API Development**: Work in `backend/routers/` with FastAPI patterns
+- **UI Development**: Work in `frontend/src/` with Next.js 14 App Router
+- **Database Changes**: Update `backend/models.py` for schema changes
+- **Adding Dependencies**: Use `uv add` for backend, `pnpm add` for frontend
 
 ## Troubleshooting
 
-### "No tests ran" or "No Python files found"
-- This is expected in the empty repository
-- Create test files first using the examples above
+### Backend Issues
+- **Import Errors**: Ensure `uv sync` completed successfully
+- **Port Conflicts**: Backend runs on :8000, frontend on :3000
+- **Database Connection**: Check MongoDB connection string in development
 
-### "ModuleNotFoundError" 
-- Modules don't exist yet in this empty repository
-- Create source files first, then import them
+### Frontend Issues  
+- **Build Failures**: Check TypeScript errors with `pnpm lint`
+- **Module Not Found**: Ensure `pnpm install` completed
+- **API Connection**: Verify backend is running on port 8000
 
-### Command failures
-- Many development commands will fail until you create the appropriate files
-- Build the project structure incrementally and test at each step
+### Integration Issues
+- **CORS Errors**: Check CORS middleware in `backend/main.py`
+- **API Calls Failing**: Verify backend health at `/health` endpoint
+- **Environment Variables**: Check both backend and frontend env files

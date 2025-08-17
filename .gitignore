@@ -46,7 +46,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
-*.py.cover
+*.py,cover
 .hypothesis/
 .pytest_cache/
 cover/
@@ -205,3 +205,16 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Frontend Node.js dependencies
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/build/
+
+# Backend Python virtual environment
+backend/.venv/
+backend/venv/
+
+# Temporary files
+/tmp/

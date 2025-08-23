@@ -53,7 +53,7 @@ export default function Assessment() {
     try {
       const response = await fetch(`http://localhost:8000/api/candidate/assessment/${testId}`)
       const data = await response.json()
-      
+
       if (data.success) {
         setQuestions(data.questions)
         // Initialize answers array
@@ -135,7 +135,7 @@ export default function Assessment() {
       })
 
       const data = await response.json()
-      
+
       if (data.success) {
         setCodeOutput(data.output || "Code executed successfully")
       } else {
@@ -165,22 +165,44 @@ export default function Assessment() {
     const testId = localStorage.getItem("testId")
     if (!testId) return
 
+    // Map frontend camelCase keys to backend expected snake_case keys
+    const mappedAnswers = answers.map(a => ({
+      question_id: (a as any).questionId,
+      question_type: (a as any).questionType,
+      answer: (a as any).answer,
+      time_spent: (a as any).timeSpent,
+      code_submissions: (a as any).codeSubmissions?.map((cs: any) => ({
+        code: cs.code,
+        timestamp: cs.timestamp,
+        output: cs.output,
+        error: cs.error
+      }))
+    }))
+
+    const mappedEvents = proctoringEvents.map(e => ({
+      timestamp: e.timestamp,
+      event_type: e.eventType,
+      details: e.details
+    }))
+
     try {
       const response = await fetch("http://localhost:8000/api/candidate/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           test_id: testId,
-          answers,
-          proctoring_events: proctoringEvents
+          answers: mappedAnswers,
+          proctoring_events: mappedEvents
         })
       })
 
       const data = await response.json()
-      
+
       if (data.success) {
         localStorage.removeItem("testId")
         router.push("/candidate/success")
+      } else {
+        console.error('Submit failed', data)
       }
     } catch (error) {
       console.error("Failed to submit assessment:", error)
@@ -245,7 +267,7 @@ export default function Assessment() {
               </Button>
             </div>
           </div>
-          
+
           <div className="flex items-center space-x-4">
             <div className="text-lg font-mono bg-red-100 px-3 py-1 rounded">
               Time: {formatTime(timeLeft)}
@@ -270,7 +292,7 @@ export default function Assessment() {
               </span>
               {currentQuestion.tags.length > 0 && (
                 <div className="mt-2">
-                  {currentQuestion.tags.map((tag, index) => (
+                  {currentQuestion.tags.map((tag: string, index: number) => (
                     <span
                       key={index}
                       className="inline-block bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs mr-2"
@@ -281,7 +303,7 @@ export default function Assessment() {
                 </div>
               )}
             </div>
-            
+
             <div className="prose max-w-none">
               <h3 className="text-lg font-semibold mb-4">Question:</h3>
               <p className="whitespace-pre-wrap">{currentQuestion.prompt}</p>
@@ -291,10 +313,10 @@ export default function Assessment() {
           {/* Right Column - Answer Input */}
           <div className="bg-white rounded-lg shadow p-6">
             <h3 className="text-lg font-semibold mb-4">Your Answer:</h3>
-            
+
             {currentQuestion.type === QuestionType.MCQ && (
               <div className="space-y-3">
-                {currentQuestion.options?.map((option, index) => (
+                {currentQuestion.options?.map((option: string, index: number) => (
                   <label key={index} className="flex items-center space-x-3 cursor-pointer">
                     <input
                       type="radio"
@@ -335,13 +357,13 @@ export default function Assessment() {
                     }}
                   />
                 </div>
-                
+
                 <div className="flex justify-between items-center">
                   <Button onClick={runCode} disabled={runningCode}>
                     {runningCode ? "Running..." : "Run Code"}
                   </Button>
                 </div>
-                
+
                 {codeOutput && (
                   <div className="bg-gray-900 text-green-400 p-4 rounded font-mono text-sm">
                     <div className="mb-2 text-gray-400">Output:</div>

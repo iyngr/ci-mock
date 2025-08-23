@@ -101,44 +101,47 @@ async def get_tests():
 @router.get("/report/{result_id}")
 async def get_detailed_report(result_id: str):
     """Get detailed report for a completed test"""
-    # Mock detailed report data
+    # Mock detailed report data that matches frontend interface
     mock_report = {
-        "candidate": {
-            "email": "john@example.com",
-            "name": "John Doe"
-        },
-        "test": {
-            "_id": result_id,
-            "createdAt": "2024-01-15T10:00:00Z",
-            "completedAt": "2024-01-15T12:00:00Z",
-            "duration": 120  # minutes
-        },
-        "scores": {
-            "overall": 85.0,
-            "competencies": {
-                "Programming": 90.0,
-                "Problem Solving": 80.0,
-                "System Design": 85.0
-            },
-            "subSkills": {
-                "JavaScript": 95.0,
-                "Algorithms": 85.0,
-                "Database Design": 80.0,
-                "API Design": 75.0
-            }
-        },
-        "questions": [
-            {
-                "id": "q1",
-                "type": "mcq",
-                "prompt": "What is the time complexity of binary search?",
-                "candidateAnswer": "O(log n)",
-                "correctAnswer": "O(log n)",
-                "score": 10.0,
-                "maxScore": 10.0
-            }
+        # Page 1 data
+        "assessmentName": "Python Django Developer Assessment",
+        "candidateName": "John Doe",
+        "testDate": "July 25, 2023 12:52:33 PM IST",
+        "email": "john@example.com",
+        "testTakerId": result_id,
+        
+        # Page 2 data
+        "overallScore": 82,
+        "detailedStatus": "Test-taker Completed",
+        "testFinishTime": "July 25, 2023 12:52:33 PM IST",
+        "lastName": "Doe",
+        "dateOfBirth": "Mar 15, 1990",
+        "contactNo": "+1-555-0123",
+        "gender": "Male",
+        "country": "United States",
+        "strengths": ["Python Programming", "Django Framework"],
+        "areasOfDevelopment": ["Database Optimization", "System Architecture"],
+        "competencyAnalysis": [
+            {"name": "Python Programming", "score": 88, "category": "exceptional"},
+            {"name": "Django Framework", "score": 85, "category": "exceptional"},
+            {"name": "Database Design", "score": 75, "category": "good"},
+            {"name": "API Development", "score": 82, "category": "exceptional"},
+            {"name": "Testing", "score": 65, "category": "good"}
         ],
-        "finalSummary": "The candidate demonstrated strong programming skills with excellent understanding of algorithms and data structures. Areas for improvement include system design and database optimization."
+        
+        # Page 3 data
+        "subSkillAnalysis": [
+            {"skillName": "Python - Basic Syntax", "score": 95, "category": "exceptional"},
+            {"skillName": "Django - Models", "score": 88, "category": "exceptional"},
+            {"skillName": "Django - Views", "score": 85, "category": "exceptional"},
+            {"skillName": "Django - Templates", "score": 80, "category": "good"},
+            {"skillName": "Database - Queries", "score": 75, "category": "good"},
+            {"skillName": "API - REST Design", "score": 82, "category": "exceptional"},
+            {"skillName": "Testing - Unit Tests", "score": 65, "category": "good"},
+            {"skillName": "Django - Forms", "score": 90, "category": "exceptional"},
+            {"skillName": "Python - Data Structures", "score": 92, "category": "exceptional"},
+            {"skillName": "Django - Authentication", "score": 78, "category": "good"}
+        ]
     }
     
     return {

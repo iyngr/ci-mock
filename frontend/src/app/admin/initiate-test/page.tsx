@@ -35,7 +35,7 @@ export default function InitiateTest() {
   }, [router])
 
   const handleQuestionToggle = (questionId: string) => {
-    setSelectedQuestions(prev => 
+    setSelectedQuestions(prev =>
       prev.includes(questionId)
         ? prev.filter(id => id !== questionId)
         : [...prev, questionId]
@@ -118,11 +118,11 @@ export default function InitiateTest() {
                 </svg>
               </div>
             </div>
-            
+
             <h1 className="text-2xl font-bold text-gray-900 mb-4">
               Test Created Successfully!
             </h1>
-            
+
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
               <h3 className="text-lg font-semibold text-blue-900 mb-2">Login Code</h3>
               <div className="text-2xl font-mono font-bold text-blue-600 bg-white px-4 py-2 rounded border">
@@ -132,13 +132,13 @@ export default function InitiateTest() {
                 Share this code with the candidate to start their assessment
               </p>
             </div>
-            
+
             <div className="space-y-3 text-left">
               <p><strong>Candidate:</strong> {candidateEmail}</p>
               <p><strong>Questions:</strong> {selectedQuestions.length} selected</p>
               <p><strong>Duration:</strong> {durationHours} hours</p>
             </div>
-            
+
             <div className="mt-8 space-x-4">
               <Button onClick={resetForm}>
                 Create Another Test
@@ -154,15 +154,16 @@ export default function InitiateTest() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen assessment-bg">
       {/* Header */}
-      <div className="bg-white shadow">
+      <div className="assessment-card m-6 rounded-none">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
               <Button
                 variant="outline"
                 onClick={() => router.push("/admin/dashboard")}
+                className="btn-assessment-secondary"
               >
                 ← Back to Dashboard
               </Button>
@@ -172,12 +173,12 @@ export default function InitiateTest() {
       </div>
 
       <div className="max-w-4xl mx-auto py-8 px-4">
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h1 className="text-xl font-semibold text-gray-900">
+        <div className="assessment-card">
+          <div className="px-6 py-4 assessment-border">
+            <h1 className="text-xl font-semibold assessment-text-primary">
               Initiate New Assessment
             </h1>
-            <p className="mt-1 text-sm text-gray-600">
+            <p className="mt-1 text-sm assessment-text-muted">
               Create a new assessment for a candidate by selecting questions and setting duration.
             </p>
           </div>
@@ -224,11 +225,10 @@ export default function InitiateTest() {
                 {mockQuestions.map((question) => (
                   <div
                     key={question.id}
-                    className={`border rounded-lg p-4 cursor-pointer transition-colors ${
-                      selectedQuestions.includes(question.id)
+                    className={`border rounded-lg p-4 cursor-pointer transition-colors ${selectedQuestions.includes(question.id)
                         ? "border-blue-500 bg-blue-50"
                         : "border-gray-300 hover:border-gray-400"
-                    }`}
+                      }`}
                     onClick={() => handleQuestionToggle(question.id)}
                   >
                     <div className="flex items-start space-x-3">

@@ -222,17 +222,18 @@ export default function CandidateReport() {
     }
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen assessment-bg">
             {/* Header */}
-            <div className="bg-white shadow-sm border-b p-4">
+            <div className="assessment-card border-b m-0 rounded-none p-4">
                 <div className="flex justify-between items-center max-w-7xl mx-auto">
                     <div className="flex items-center space-x-4">
-                        <h1 className="text-2xl font-bold">Candidate Report</h1>
+                        <h1 className="text-2xl font-bold assessment-text-primary">Candidate Report</h1>
                         <div className="flex space-x-2">
                             <Button
                                 variant={currentPage === 1 ? "default" : "outline"}
                                 onClick={() => setCurrentPage(1)}
                                 size="sm"
+                                className={currentPage === 1 ? "btn-assessment-primary" : "btn-assessment-secondary"}
                             >
                                 Page 1
                             </Button>
@@ -240,6 +241,7 @@ export default function CandidateReport() {
                                 variant={currentPage === 2 ? "default" : "outline"}
                                 onClick={() => setCurrentPage(2)}
                                 size="sm"
+                                className={currentPage === 2 ? "btn-assessment-primary" : "btn-assessment-secondary"}
                             >
                                 Page 2
                             </Button>
@@ -247,6 +249,7 @@ export default function CandidateReport() {
                                 variant={currentPage === 3 ? "default" : "outline"}
                                 onClick={() => setCurrentPage(3)}
                                 size="sm"
+                                className={currentPage === 3 ? "btn-assessment-primary" : "btn-assessment-secondary"}
                             >
                                 Page 3
                             </Button>

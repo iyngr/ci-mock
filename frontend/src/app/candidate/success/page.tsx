@@ -11,12 +11,12 @@ export default function Success() {
   }, [])
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center">
+    <div className="min-h-screen assessment-bg flex items-center justify-center p-4">
+      <div className="assessment-card p-8 text-center max-w-md w-full animate-fade-in-up">
         <div className="mb-6">
-          <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+          <div className="mx-auto w-16 h-16 bg-gradient-to-br from-green-400 to-green-600 rounded-full flex items-center justify-center">
             <svg
-              className="w-8 h-8 text-green-600"
+              className="w-8 h-8 text-white"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -31,19 +31,19 @@ export default function Success() {
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold text-gray-900 mb-4">
+        <h1 className="text-2xl font-bold assessment-text-primary mb-4">
           Assessment Submitted Successfully!
         </h1>
 
-        <p className="text-gray-600 mb-6">
+        <p className="assessment-text-muted mb-6">
           Thank you for completing the technical assessment. Your responses have been recorded
           and will be evaluated. You will be contacted with the results within the next few days.
         </p>
 
-        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 text-left mb-6">
+        <div className="bg-green-50 border-l-4 border-green-400 p-4 text-left mb-6">
           <div className="flex">
             <div className="ml-3">
-              <p className="text-sm text-blue-700">
+              <p className="text-sm text-green-700">
                 <strong>What happens next?</strong><br />
                 • Your answers are being processed and evaluated<br />
                 • You'll receive an email with your results<br />

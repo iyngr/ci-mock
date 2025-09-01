@@ -107,34 +107,34 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen assessment-bg flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-lg">Loading dashboard...</p>
+          <p className="mt-4 text-lg assessment-text-primary">Loading dashboard...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen assessment-bg">
       {/* Header */}
-      <div className="bg-white shadow">
+      <div className="assessment-card m-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
-              <h1 className="text-xl font-semibold text-gray-900">
+              <h1 className="text-xl font-semibold assessment-text-primary">
                 Assessment Admin Portal
               </h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button
                 onClick={() => router.push("/admin/initiate-test")}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="btn-assessment-primary"
               >
                 Initiate New Test
               </Button>
-              <Button onClick={logout} variant="outline">
+              <Button onClick={logout} className="btn-assessment-secondary">
                 Logout
               </Button>
             </div>

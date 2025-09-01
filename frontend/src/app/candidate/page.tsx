@@ -43,16 +43,22 @@ export default function CandidateLogin() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Enter Assessment Code
+    <div className="min-h-screen assessment-bg flex items-center justify-center p-4">
+      <div className="assessment-card p-8 max-w-md w-full space-y-8 animate-fade-in-up">
+        <div className="text-center">
+          <div className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mb-4">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="text-3xl font-bold assessment-text-primary mb-2">
+            Assessment Portal
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Please enter the login code provided by your assessment administrator
+          <p className="assessment-text-muted">
+            Enter your assessment code to begin
           </p>
         </div>
+
         <form className="mt-8 space-y-6" onSubmit={handleLogin}>
           <div>
             <Input
@@ -60,7 +66,7 @@ export default function CandidateLogin() {
               placeholder="Enter your login code"
               value={loginCode}
               onChange={(e) => setLoginCode(e.target.value)}
-              className="text-center text-lg py-3"
+              className="input-assessment text-center text-lg py-3"
               required
             />
           </div>
@@ -71,7 +77,7 @@ export default function CandidateLogin() {
             <Button
               type="submit"
               disabled={loading || !loginCode.trim()}
-              className="w-full"
+              className="w-full btn-assessment-primary"
             >
               {loading ? "Verifying..." : "Start Assessment"}
             </Button>

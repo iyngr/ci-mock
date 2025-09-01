@@ -755,7 +755,7 @@ export default function Assessment() {
 
   return (
     <div
-      className="min-h-screen bg-gray-50"
+      className="min-h-screen assessment-bg"
       onContextMenu={(e) => e.preventDefault()}
     >
       {showWarningModal && <WarningModal onContinue={handleReturnToTest} violationCount={violationCount} />}
@@ -771,13 +771,13 @@ export default function Assessment() {
       )}
 
       {/* Top Bar */}
-      <div className="bg-white shadow-sm border-b py-3 px-4">
+      <div className="assessment-card border-b py-3 px-4 m-0 rounded-none">
         <div className="max-w-7xl mx-auto flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2 justify-between">
             <div className="flex flex-wrap items-center gap-2 min-w-0">
-              <div className="flex items-center gap-2 pr-2 border-r border-gray-200 mr-2">
+              <div className="flex items-center gap-2 pr-2 border-r assessment-border mr-2">
                 {roleConfig?.icon && <span className="text-xl leading-none">{roleConfig.icon}</span>}
-                <span className="text-sm sm:text-base font-semibold text-gray-800 whitespace-nowrap">{roleConfig?.name} Assessment</span>
+                <span className="text-sm sm:text-base font-semibold assessment-text-primary whitespace-nowrap">{roleConfig?.name} Assessment</span>
               </div>
               <Pill className="bg-blue-50 border-blue-200 text-blue-700">Q {currentQuestionIndex + 1}/{questions.length}</Pill>
               <Pill className="bg-green-50 border-green-200 text-green-700">Answered {answeredCount}/{questions.length}</Pill>

@@ -49,7 +49,7 @@ export default function AdminDashboard() {
     try {
       const response = await fetch("http://localhost:8000/api/admin/dashboard")
       const data = await response.json()
-      
+
       setStats(data.stats)
       setTests(data.tests)
     } catch (error) {
@@ -70,7 +70,7 @@ export default function AdminDashboard() {
         data: [
           stats?.completedTests || 0,
           stats?.pendingTests || 0,
-          stats?.totalTests - (stats?.completedTests || 0) - (stats?.pendingTests || 0) || 0
+          ((stats?.totalTests ?? 0) - (stats?.completedTests ?? 0) - (stats?.pendingTests ?? 0))
         ],
         backgroundColor: ["#10B981", "#F59E0B", "#3B82F6"],
         borderWidth: 0,
@@ -239,8 +239,8 @@ export default function AdminDashboard() {
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Status Summary</h3>
             <div className="w-full h-64 flex items-center justify-center">
-              <Doughnut 
-                data={statusData} 
+              <Doughnut
+                data={statusData}
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
@@ -257,8 +257,8 @@ export default function AdminDashboard() {
           <div className="bg-white p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium text-gray-900 mb-4">Performance Category</h3>
             <div className="w-full h-64 flex items-center justify-center">
-              <Doughnut 
-                data={performanceData} 
+              <Doughnut
+                data={performanceData}
                 options={{
                   responsive: true,
                   maintainAspectRatio: false,
@@ -290,7 +290,7 @@ export default function AdminDashboard() {
                 />
               </div>
             </div>
-            
+
             <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
               <table className="min-w-full divide-y divide-gray-300">
                 <thead className="bg-gray-50">

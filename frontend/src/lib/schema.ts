@@ -6,12 +6,38 @@ export enum QuestionType {
     CODING = "coding",
 }
 
+export enum DeveloperRole {
+    PYTHON_BACKEND = "python-backend",
+    JAVA_BACKEND = "java-backend",
+    NODE_BACKEND = "node-backend",
+    REACT_FRONTEND = "react-frontend",
+    FULLSTACK_JS = "fullstack-js",
+    DEVOPS = "devops",
+}
+
+export enum ProgrammingLanguage {
+    PYTHON = "python",
+    JAVA = "java",
+    JAVASCRIPT = "javascript",
+    TYPESCRIPT = "typescript",
+    CSHARP = "csharp",
+    CPP = "cpp",
+    HTML = "html",
+    CSS = "css",
+    BASH = "bash",
+    YAML = "yaml",
+}
+
 export interface Question {
     _id?: string
     prompt: string
     type: QuestionType | string
+    role: DeveloperRole | string
+    language?: ProgrammingLanguage | string
     options?: string[]
     tags: string[]
+    starter_code?: string
+    show_preview?: boolean
     // other fields may exist on the backend
     [key: string]: any
 }

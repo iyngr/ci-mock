@@ -34,6 +34,28 @@ class QuestionType(str, Enum):
     CODING = "coding"
 
 
+class DeveloperRole(str, Enum):
+    PYTHON_BACKEND = "python-backend"
+    JAVA_BACKEND = "java-backend"
+    NODE_BACKEND = "node-backend"
+    REACT_FRONTEND = "react-frontend"
+    FULLSTACK_JS = "fullstack-js"
+    DEVOPS = "devops"
+
+
+class ProgrammingLanguage(str, Enum):
+    PYTHON = "python"
+    JAVA = "java"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
+    CSHARP = "csharp"
+    CPP = "cpp"
+    HTML = "html"
+    CSS = "css"
+    BASH = "bash"
+    YAML = "yaml"
+
+
 class Admin(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -56,12 +78,16 @@ class Question(BaseModel):
     
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     type: QuestionType
+    role: DeveloperRole
+    language: Optional[ProgrammingLanguage] = None  # For coding questions
     prompt: str
     tags: List[str] = []
     options: Optional[List[str]] = None  # For MCQ questions
     correct_answer: Optional[Union[str, int]] = None  # For MCQ (index) or text answers
+    starter_code: Optional[str] = None  # Initial code template for coding questions
     test_cases: Optional[List[Dict[str, Any]]] = None  # For coding questions
     evaluation_hints: Optional[str] = None  # For LLM evaluation
+    show_preview: Optional[bool] = None  # Override role default for preview
 
 
 class Test(BaseModel):
@@ -74,6 +100,7 @@ class Test(BaseModel):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     candidate_email: str
     login_code: str
+    role: DeveloperRole
     status: TestStatus = TestStatus.PENDING
     initiated_by: str  # Admin email
     created_at: datetime = Field(default_factory=datetime.utcnow)

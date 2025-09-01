@@ -4,9 +4,9 @@ import { useEffect } from "react"
 
 export default function Success() {
   useEffect(() => {
-    // Exit fullscreen mode
+    // Ensure we exit fullscreen immediately on load
     if (document.fullscreenElement) {
-      document.exitFullscreen()
+      document.exitFullscreen().catch(() => { /* ignore */ })
     }
   }, [])
 
@@ -30,27 +30,33 @@ export default function Success() {
             </svg>
           </div>
         </div>
-        
+
         <h1 className="text-2xl font-bold text-gray-900 mb-4">
           Assessment Submitted Successfully!
         </h1>
-        
+
         <p className="text-gray-600 mb-6">
-          Thank you for completing the technical assessment. Your responses have been recorded 
+          Thank you for completing the technical assessment. Your responses have been recorded
           and will be evaluated. You will be contacted with the results within the next few days.
         </p>
-        
-        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 text-left">
+
+        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 text-left mb-6">
           <div className="flex">
             <div className="ml-3">
               <p className="text-sm text-blue-700">
                 <strong>What happens next?</strong><br />
                 • Your answers are being processed and evaluated<br />
                 • You'll receive an email with your results<br />
-                • Feel free to close this browser window
+                • You can safely close this browser tab now
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="bg-gray-50 border rounded-md p-4 text-left">
+          <p className="text-sm text-gray-600">
+            You may now simply close this browser tab or navigate away. Press <kbd className="px-1 py-0.5 bg-gray-200 rounded text-xs">Ctrl+W</kbd> (Windows/Linux) or <kbd className="px-1 py-0.5 bg-gray-200 rounded text-xs">Cmd+W</kbd> (Mac) to close the tab quickly.
+          </p>
         </div>
       </div>
     </div>

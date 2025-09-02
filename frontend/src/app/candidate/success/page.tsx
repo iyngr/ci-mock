@@ -46,7 +46,7 @@ export default function Success() {
               <p className="text-sm text-green-700">
                 <strong>What happens next?</strong><br />
                 • Your answers are being processed and evaluated<br />
-                • You'll receive an email with your results<br />
+                • You&apos;ll receive an email with your results<br />
                 • You can safely close this browser tab now
               </p>
             </div>

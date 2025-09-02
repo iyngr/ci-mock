@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { DashboardStats, TestSummary } from "@/lib/schema"
-import { Doughnut, Bar } from "react-chartjs-2"
+import { Doughnut } from "react-chartjs-2"
 import {
   Chart as ChartJS,
   CategoryScale,

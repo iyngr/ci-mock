@@ -94,14 +94,14 @@ export default function Instructions() {
             </div>
 
             <div className="space-y-4 mb-8">
-              <h3 className="text-lg font-semibold text-green-600">Do's:</h3>
+              <h3 className="text-lg font-semibold text-green-600">Do&apos;s:</h3>
               <ul className="list-disc list-inside space-y-2 text-sm assessment-text-primary">
                 {instructions.slice(0, 4).map((instruction, index) => (
                   <li key={index}>{instruction}</li>
                 ))}
               </ul>
 
-              <h3 className="text-lg font-semibold text-red-600">Don'ts:</h3>
+              <h3 className="text-lg font-semibold text-red-600">Don&apos;ts:</h3>
               <ul className="list-disc list-inside space-y-2 text-sm assessment-text-primary">
                 {instructions.slice(4).map((instruction, index) => (
                   <li key={index}>{instruction}</li>

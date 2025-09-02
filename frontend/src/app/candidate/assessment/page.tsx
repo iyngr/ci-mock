@@ -1,12 +1,12 @@
 "use client"
 
+import React from "react"
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Question, QuestionType, Answer, ProctoringEvent, DeveloperRole } from "@/lib/schema"
-import { ROLE_CONFIGS, getRoleConfig, getAllRoles, getLanguagesForRole } from "@/lib/roleConfig"
+import { Question, QuestionType, Answer, ProctoringEvent, DeveloperRole, CodeSubmission } from "@/lib/schema"
+import { getRoleConfig, getAllRoles, getLanguagesForRole, RoleConfig } from "@/lib/roleConfig"
 import Editor from "@monaco-editor/react"
 import LiveReactEditor from "@/components/LiveReactEditor"
 
@@ -77,12 +77,10 @@ export default function Assessment() {
   const [notification, setNotification] = useState<string | null>(null)
   const [showIncompleteModal, setShowIncompleteModal] = useState(false)
   const [unansweredIndices, setUnansweredIndices] = useState<number[]>([])
-  const [submissionId, setSubmissionId] = useState<string | null>(null)
-  const [expirationTime, setExpirationTime] = useState<string | null>(null)
 
   // Role-based state
-  const [selectedRole, setSelectedRole] = useState<DeveloperRole | null>(null)
-  const [roleConfig, setRoleConfig] = useState<any>(null)
+  const [_selectedRole, setSelectedRole] = useState<DeveloperRole | null>(null)
+  const [roleConfig, setRoleConfig] = useState<RoleConfig | null>(null)
   const [showRoleSelection, setShowRoleSelection] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isSubmittingRef = useRef(false)
@@ -113,7 +111,7 @@ export default function Assessment() {
     isSubmittingRef.current = isSubmitting
   }, [isSubmitting])
 
-  const logProctoringEvent = useCallback((eventType: string, details: any) => {
+  const logProctoringEvent = useCallback((eventType: string, details: Record<string, unknown>) => {
     const event: ProctoringEvent = {
       timestamp: new Date().toISOString(),
       eventType,
@@ -181,6 +179,7 @@ export default function Assessment() {
       isProcessingRef.current = false;
       console.log("Violation processing reset");
     }, 3000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logProctoringEvent]);
 
   const handleReturnToTest = useCallback(() => {
@@ -225,11 +224,11 @@ export default function Assessment() {
 
     // Map frontend camelCase keys to backend expected snake_case keys
     const mappedAnswers = answers.map(a => ({
-      question_id: (a as any).questionId,
-      question_type: (a as any).questionType,
-      answer: (a as any).answer,
-      time_spent: (a as any).timeSpent,
-      code_submissions: (a as any).codeSubmissions?.map((cs: any) => ({
+      question_id: a.questionId,
+      question_type: a.questionType,
+      answer: a.answer,
+      time_spent: a.timeSpent,
+      code_submissions: a.codeSubmissions?.map((cs: CodeSubmission) => ({
         code: cs.code,
         timestamp: cs.timestamp,
         output: cs.output,
@@ -257,11 +256,13 @@ export default function Assessment() {
       const data = await response.json()
 
       if (data.success) {
+        // Part 3: Clean up localStorage after successful submission
         localStorage.removeItem("testId")
         localStorage.removeItem("submissionId")
         localStorage.removeItem("expirationTime")
         localStorage.removeItem("durationMinutes")
         localStorage.removeItem("assessment_autosave")
+        localStorage.removeItem("assessmentState") // Remove the session-resume state
         router.push("/candidate/success")
       } else {
         console.error('Submit failed', data)
@@ -291,8 +292,8 @@ export default function Assessment() {
       return
     }
     handleSubmit()
-  }, [answers, questions, handleSubmit])
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, questions])
   useEffect(() => {
     const testId = localStorage.getItem("testId")
     const storedSubmissionId = localStorage.getItem("submissionId")
@@ -302,10 +303,6 @@ export default function Assessment() {
       router.push("/candidate")
       return
     }
-
-    // Set state from localStorage
-    setSubmissionId(storedSubmissionId)
-    setExpirationTime(storedExpirationTime)
 
     // Calculate initial time left based on server expiration time
     const expirationDate = new Date(storedExpirationTime)
@@ -342,6 +339,30 @@ export default function Assessment() {
             codeSubmissions: q.type === QuestionType.CODING ? [] : undefined
           }))
           setAnswers(initialAnswers)
+
+          // Part 2: Hydrate state from localStorage after questions are loaded
+          const savedAssessmentState = localStorage.getItem("assessmentState");
+          if (savedAssessmentState) {
+            try {
+              const parsedState = JSON.parse(savedAssessmentState);
+
+              // Critical validation: check if submissionId matches current session
+              if (parsedState.submissionId && parsedState.submissionId === storedSubmissionId) {
+                // Validation passed - restore the user's session
+                if (parsedState.answers && Array.isArray(parsedState.answers)) {
+                  setAnswers(parsedState.answers);
+                }
+                if (typeof parsedState.currentQuestionIndex === 'number') {
+                  setCurrentQuestionIndex(parsedState.currentQuestionIndex);
+                }
+                if (parsedState.savedAt) {
+                  setLastSavedAt(parsedState.savedAt);
+                }
+              }
+            } catch (error) {
+              console.error("Failed to parse saved assessment state:", error);
+            }
+          }
         }
       } catch (error) {
         console.error("Failed to fetch assessment:", error)
@@ -354,7 +375,7 @@ export default function Assessment() {
 
     fetchAssessmentData()
 
-    // Load autosaved answers if present (and lengths match)
+    // Legacy autosave support (can be removed in future)
     const saved = localStorage.getItem("assessment_autosave")
     if (saved) {
       try {
@@ -467,19 +488,27 @@ export default function Assessment() {
     }
   }, []) // Empty dependency array - only run once on mount
 
-  // Debounced autosave
+  // Part 1: Persist assessment state to localStorage with debounce
   useEffect(() => {
     if (answers.length === 0) return;
+
     const timeout = setTimeout(() => {
-      const payload = {
-        answers: answers.map(a => ({ questionId: (a as any).questionId, answer: a.answer })),
+      const currentSubmissionId = localStorage.getItem("submissionId");
+      if (!currentSubmissionId) return;
+
+      const stateObject = {
+        answers: answers,
+        currentQuestionIndex: currentQuestionIndex,
+        submissionId: currentSubmissionId,
         savedAt: new Date().toISOString()
-      }
-      localStorage.setItem("assessment_autosave", JSON.stringify(payload))
-      setLastSavedAt(payload.savedAt)
-    }, 1200)
-    return () => clearTimeout(timeout)
-  }, [answers])
+      };
+
+      localStorage.setItem("assessmentState", JSON.stringify(stateObject));
+      setLastSavedAt(stateObject.savedAt);
+    }, 1000); // 1-second debounce delay
+
+    return () => clearTimeout(timeout);
+  }, [answers, currentQuestionIndex])
 
   const setupProctoring = () => {
     // Monitor fullscreen changes
@@ -543,7 +572,7 @@ export default function Assessment() {
     }
   }
 
-  const updateAnswer = (value: any) => {
+  const updateAnswer = (value: number | string) => {
     const updatedAnswers = [...answers]
     updatedAnswers[currentQuestionIndex] = {
       ...updatedAnswers[currentQuestionIndex],
@@ -590,7 +619,7 @@ export default function Assessment() {
       updatedAnswers[currentQuestionIndex].codeSubmissions = codeSubmissions
       setAnswers(updatedAnswers)
 
-    } catch (error) {
+    } catch {
       setCodeOutput("Failed to execute code")
     } finally {
       setRunningCode(false)
@@ -696,7 +725,7 @@ export default function Assessment() {
         <div className="bg-white rounded-lg shadow-xl p-8 max-w-4xl w-full mx-4">
           <h2 className="text-3xl font-bold text-center mb-6">Select Your Developer Role</h2>
           <p className="text-gray-600 text-center mb-8">
-            Choose the role that best matches the position you're applying for. This will customize your coding environment and assessment questions.
+            Choose the role that best matches the position you&apos;re applying for. This will customize your coding environment and assessment questions.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -758,7 +787,7 @@ export default function Assessment() {
   const progressPercent = Math.round((answeredCount / questions.length) * 100)
 
   // Helper to render consistent info pills
-  const Pill = ({ children, className = "" }: { children: any, className?: string }) => (
+  const Pill = ({ children, className = "" }: { children: React.ReactNode, className?: string }) => (
     <span className={`text-xs sm:text-sm px-2 py-1 rounded border bg-gray-50 text-gray-700 font-medium inline-flex items-center ${className}`}>{children}</span>
   )
 

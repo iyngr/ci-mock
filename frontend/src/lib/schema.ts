@@ -39,7 +39,7 @@ export interface Question {
     starter_code?: string
     show_preview?: boolean
     // other fields may exist on the backend
-    [key: string]: any
+    [key: string]: unknown
 }
 
 export interface CodeSubmission {
@@ -60,7 +60,7 @@ export interface Answer {
 export interface ProctoringEvent {
     timestamp: string
     eventType: string
-    details?: Record<string, any>
+    details?: Record<string, unknown>
 }
 
 export interface LoginRequest {
@@ -83,7 +83,7 @@ export interface DashboardStats {
     completedTests: number
     pendingTests: number
     averageScore: number
-    [key: string]: any
+    [key: string]: unknown
 }
 
 export interface TestSummary {
@@ -93,5 +93,5 @@ export interface TestSummary {
     status: string
     createdAt: string
     overallScore?: number
-    [key: string]: any
+    [key: string]: unknown
 }

@@ -37,7 +37,7 @@ export default function AdminLogin() {
       } else {
         setError(data.message || "Invalid credentials")
       }
-    } catch (err) {
+    } catch {
       setError("Failed to connect to server")
     } finally {
       setLoading(false)

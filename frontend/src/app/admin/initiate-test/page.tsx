@@ -74,7 +74,7 @@ export default function InitiateTest() {
       } else {
         setError(data.message || "Failed to create test")
       }
-    } catch (err) {
+    } catch {
       setError("Failed to connect to server")
     } finally {
       setLoading(false)

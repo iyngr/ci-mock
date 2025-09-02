@@ -19,6 +19,7 @@ export default function SubSkillAnalysis({ data }: SubSkillAnalysisProps) {
         if (chartRef.current) {
             drawSubSkillChart(chartRef.current, data.subSkillAnalysis)
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data])
 
     const drawSubSkillChart = (canvas: HTMLCanvasElement, skills: typeof data.subSkillAnalysis) => {
@@ -163,10 +164,10 @@ export default function SubSkillAnalysis({ data }: SubSkillAnalysisProps) {
                                     </td>
                                     <td className="px-6 py-4 text-sm">
                                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${skill.category === 'exceptional' ? 'bg-blue-100 text-blue-800' :
-                                                skill.category === 'good' ? 'bg-green-100 text-green-800' :
-                                                    skill.category === 'average' ? 'bg-yellow-100 text-yellow-800' :
-                                                        skill.category === 'unsatisfactory' ? 'bg-red-100 text-red-800' :
-                                                            'bg-purple-100 text-purple-800'
+                                            skill.category === 'good' ? 'bg-green-100 text-green-800' :
+                                                skill.category === 'average' ? 'bg-yellow-100 text-yellow-800' :
+                                                    skill.category === 'unsatisfactory' ? 'bg-red-100 text-red-800' :
+                                                        'bg-purple-100 text-purple-800'
                                             }`}>
                                             {skill.category.charAt(0).toUpperCase() + skill.category.slice(1)}
                                         </span>

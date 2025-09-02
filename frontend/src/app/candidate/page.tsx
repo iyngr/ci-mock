@@ -35,7 +35,7 @@ export default function CandidateLogin() {
       } else {
         setError(data.message || "Invalid login code")
       }
-    } catch (err) {
+    } catch {
       setError("Failed to connect to server")
     } finally {
       setLoading(false)

@@ -39,6 +39,7 @@ export default function TestTakerDetails({ data }: TestTakerDetailsProps) {
         if (competencyChartRef.current) {
             drawCompetencyChart(competencyChartRef.current, data.competencyAnalysis)
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [data])
 
     const drawOverallScoreChart = (canvas: HTMLCanvasElement, score: number) => {

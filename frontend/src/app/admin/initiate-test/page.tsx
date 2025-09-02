@@ -176,7 +176,7 @@ export default function InitiateTest() {
         <div className="assessment-card">
           <div className="px-6 py-4 assessment-border">
             <h1 className="text-xl font-semibold assessment-text-primary">
-              Initiate New Assessment
+              Initiate Test
             </h1>
             <p className="mt-1 text-sm assessment-text-muted">
               Create a new assessment for a candidate by selecting questions and setting duration.
@@ -226,8 +226,8 @@ export default function InitiateTest() {
                   <div
                     key={question.id}
                     className={`border rounded-lg p-4 cursor-pointer transition-colors ${selectedQuestions.includes(question.id)
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-300 hover:border-gray-400"
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-300 hover:border-gray-400"
                       }`}
                     onClick={() => handleQuestionToggle(question.id)}
                   >

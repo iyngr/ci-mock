@@ -90,13 +90,13 @@ export default function AdminDashboard() {
   }
 
   const getStatusBadge = (status: string) => {
-    const statusColors = {
-      completed: "bg-green-100 text-green-800",
-      pending: "bg-yellow-100 text-yellow-800",
-      in_progress: "bg-blue-100 text-blue-800",
-      expired: "bg-red-100 text-red-800"
+    const statusStyles = {
+      completed: "bg-[rgb(var(--md-sys-color-tertiary-container))] text-[rgb(var(--md-sys-color-on-tertiary-container))]",
+      pending: "bg-[rgb(var(--md-sys-color-secondary-container))] text-[rgb(var(--md-sys-color-on-secondary-container))]",
+      in_progress: "bg-[rgb(var(--md-sys-color-primary-container))] text-[rgb(var(--md-sys-color-on-primary-container))]",
+      expired: "bg-[rgb(var(--md-sys-color-error-container))] text-[rgb(var(--md-sys-color-on-error-container))]"
     }
-    return statusColors[status as keyof typeof statusColors] || "bg-gray-100 text-gray-800"
+    return statusStyles[status as keyof typeof statusStyles] || "bg-[rgb(var(--md-sys-color-surface-variant))] text-[rgb(var(--md-sys-color-on-surface-variant))]"
   }
 
   const logout = () => {
@@ -107,35 +107,54 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen assessment-bg flex items-center justify-center">
+      <div className="min-h-screen surface-container-lowest flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-lg assessment-text-primary">Loading dashboard...</p>
+          <div className="w-16 h-16 mx-auto mb-4 surface-container-high rounded-full flex items-center justify-center"
+               style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+            <span className="material-symbols-outlined text-3xl text-primary animate-spin"
+                  style={{ animationDuration: '1s' }}>
+              sync
+            </span>
+          </div>
+          <p className="title-medium text-on-surface">Loading dashboard...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen assessment-bg">
-      {/* Header */}
-      <div className="assessment-card m-6">
+    <div className="min-h-screen surface-container-lowest">
+      {/* Material Design 3 Header */}
+      <div className="md-card-elevated surface-container-low m-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
-              <h1 className="text-xl font-semibold assessment-text-primary">
+              <span className="material-symbols-outlined text-primary mr-3">
+                dashboard
+              </span>
+              <h1 className="title-large text-on-surface">
                 Assessment Admin Portal
               </h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button
                 onClick={() => router.push("/admin/initiate-test")}
-                className="btn-assessment-primary"
+                className="flex items-center gap-2"
               >
-                Initiate New Test
+                <span className="material-symbols-outlined text-sm">
+                  add_circle
+                </span>
+                <span>Initiate New Test</span>
               </Button>
-              <Button onClick={logout} className="btn-assessment-secondary">
-                Logout
+              <Button 
+                variant="outline"
+                onClick={logout}
+                className="flex items-center gap-2"
+              >
+                <span className="material-symbols-outlined text-sm">
+                  logout
+                </span>
+                <span>Logout</span>
               </Button>
             </div>
           </div>
@@ -143,101 +162,110 @@ export default function AdminDashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {/* KPI Cards */}
+        {/* Material Design 3 KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">T</span>
-                  </div>
+          <div className="md-card-elevated surface-container-low p-5 md-animate-in">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center"
+                     style={{ backgroundColor: 'rgb(var(--md-sys-color-primary-container))', color: 'rgb(var(--md-sys-color-on-primary-container))' }}>
+                  <span className="material-symbols-outlined">
+                    assignment
+                  </span>
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Total Tests
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.totalTests || 0}
-                    </dd>
-                  </dl>
-                </div>
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="body-medium text-on-surface-variant truncate">
+                    Total Tests
+                  </dt>
+                  <dd className="headline-small text-on-surface">
+                    {stats?.totalTests || 0}
+                  </dd>
+                </dl>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-green-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">C</span>
-                  </div>
+          <div className="md-card-elevated surface-container-low p-5 md-animate-in" style={{ animationDelay: '0.1s' }}>
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center"
+                     style={{ backgroundColor: 'rgb(var(--md-sys-color-tertiary-container))', color: 'rgb(var(--md-sys-color-on-tertiary-container))' }}>
+                  <span className="material-symbols-outlined">
+                    check_circle
+                  </span>
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Completed
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.completedTests || 0}
-                    </dd>
-                  </dl>
-                </div>
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="body-medium text-on-surface-variant truncate">
+                    Completed
+                  </dt>
+                  <dd className="headline-small text-on-surface">
+                    {stats?.completedTests || 0}
+                  </dd>
+                </dl>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-yellow-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">P</span>
-                  </div>
+          <div className="md-card-elevated surface-container-low p-5 md-animate-in" style={{ animationDelay: '0.2s' }}>
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center"
+                     style={{ backgroundColor: 'rgb(var(--md-sys-color-secondary-container))', color: 'rgb(var(--md-sys-color-on-secondary-container))' }}>
+                  <span className="material-symbols-outlined">
+                    pending
+                  </span>
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Pending
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.pendingTests || 0}
-                    </dd>
-                  </dl>
-                </div>
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="body-medium text-on-surface-variant truncate">
+                    Pending
+                  </dt>
+                  <dd className="headline-small text-on-surface">
+                    {stats?.pendingTests || 0}
+                  </dd>
+                </dl>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-purple-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">A</span>
-                  </div>
+          <div className="md-card-elevated surface-container-low p-5 md-animate-in" style={{ animationDelay: '0.3s' }}>
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full flex items-center justify-center"
+                     style={{ backgroundColor: 'rgb(var(--md-sys-color-primary-container))', color: 'rgb(var(--md-sys-color-on-primary-container))' }}>
+                  <span className="material-symbols-outlined">
+                    analytics
+                  </span>
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Avg Score
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.averageScore?.toFixed(1) || 0}%
-                    </dd>
-                  </dl>
-                </div>
+              </div>
+              <div className="ml-5 w-0 flex-1">
+                <dl>
+                  <dt className="body-medium text-on-surface-variant truncate">
+                    Avg Score
+                  </dt>
+                  <dd className="headline-small text-on-surface">
+                    {stats?.averageScore?.toFixed(1) || 0}%
+                  </dd>
+                </dl>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Charts */}
+        {/* Material Design 3 Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Status Summary</h3>
+          <div className="md-card-elevated surface-container-low p-6 md-animate-in" style={{ animationDelay: '0.4s' }}>
+            <h3 className="title-medium text-on-surface mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">
+                pie_chart
+              </span>
+              Status Summary
+            </h3>
             <div className="w-full h-64 flex items-center justify-center">
               <Doughnut
                 data={statusData}
@@ -254,8 +282,13 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Performance Category</h3>
+          <div className="md-card-elevated surface-container-low p-6 md-animate-in" style={{ animationDelay: '0.5s' }}>
+            <h3 className="title-medium text-on-surface mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">
+                analytics
+              </span>
+              Performance Category
+            </h3>
             <div className="w-full h-64 flex items-center justify-center">
               <Doughnut
                 data={performanceData}
@@ -273,11 +306,14 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Tests Table */}
-        <div className="bg-white shadow rounded-lg">
+        {/* Material Design 3 Tests Table */}
+        <div className="md-card-elevated surface-container-low md-animate-in" style={{ animationDelay: '0.6s' }}>
           <div className="px-4 py-5 sm:p-6">
             <div className="sm:flex sm:items-center sm:justify-between mb-4">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">
+              <h3 className="title-medium text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">
+                  people
+                </span>
                 Test Takers
               </h3>
               <div className="mt-3 sm:mt-0 sm:ml-4">
@@ -291,57 +327,61 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-              <table className="min-w-full divide-y divide-gray-300">
-                <thead className="bg-gray-50">
+            <div className="overflow-hidden rounded-lg border border-[rgb(var(--md-sys-color-outline-variant))]">
+              <table className="min-w-full divide-y divide-[rgb(var(--md-sys-color-outline-variant))]">
+                <thead className="surface-container-high">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left label-small text-on-surface-variant uppercase tracking-wider">
                       Candidate
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left label-small text-on-surface-variant uppercase tracking-wider">
                       Status
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left label-small text-on-surface-variant uppercase tracking-wider">
                       Created
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left label-small text-on-surface-variant uppercase tracking-wider">
                       Score
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left label-small text-on-surface-variant uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="surface divide-y divide-[rgb(var(--md-sys-color-outline-variant))]">
                   {filteredTests.map((test) => (
-                    <tr key={test._id}>
+                    <tr key={test._id} className="hover:surface-container-highest transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="body-medium text-on-surface font-medium">
                           {test.candidateEmail}
                         </div>
-                        <div className="text-sm text-gray-500">
+                        <div className="body-small text-on-surface-variant">
                           Initiated by: {test.initiatedBy}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(test.status)}`}>
+                        <span className={`inline-flex px-3 py-1 label-small rounded-full ${getStatusBadge(test.status)}`}>
                           {test.status.replace('_', ' ').toUpperCase()}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap body-medium text-on-surface">
                         {new Date(test.createdAt).toLocaleDateString()}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      <td className="px-6 py-4 whitespace-nowrap body-medium text-on-surface">
                         {test.overallScore ? `${test.overallScore.toFixed(1)}%` : '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap">
                         {test.status === 'completed' && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => router.push(`/admin/report/${test._id}`)}
+                            className="flex items-center gap-1"
                           >
-                            View Report
+                            <span className="material-symbols-outlined text-sm">
+                              visibility
+                            </span>
+                            <span>View Report</span>
                           </Button>
                         )}
                       </td>

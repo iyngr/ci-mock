@@ -41,42 +41,77 @@ export default function Instructions() {
   ]
 
   return (
-    <div className="min-h-screen assessment-bg flex items-center justify-center p-4">
+    <div className="min-h-screen surface-container-lowest flex items-center justify-center p-4">
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="assessment-card p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-slide-in-right">
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
+             style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}>
+          <div className="md-card-elevated surface-container-low p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto md-animate-scale-in">
             <div className="text-center mb-6">
-              <div className="mx-auto w-16 h-16 bg-gradient-to-br from-green-500 to-blue-600 rounded-full flex items-center justify-center mb-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                </svg>
+              {/* Material Design 3 Instructions Icon */}
+              <div className="mx-auto w-16 h-16 rounded-full mb-6 tertiary-container flex items-center justify-center"
+                   style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+                <span className="material-symbols-outlined text-3xl text-[rgb(var(--md-sys-color-on-tertiary-container))]">
+                  assignment
+                </span>
               </div>
-              <h2 className="text-2xl font-bold assessment-text-primary">
+              
+              <h2 className="headline-small text-on-surface mb-2">
                 Assessment Instructions
               </h2>
             </div>
 
-            <div className="space-y-4 mb-8">
-              <h3 className="text-lg font-semibold text-green-600">Do's:</h3>
-              <ul className="list-disc list-inside space-y-2 text-sm assessment-text-primary">
-                {instructions.slice(0, 4).map((instruction, index) => (
-                  <li key={index}>{instruction}</li>
-                ))}
-              </ul>
+            <div className="space-y-6 mb-8">
+              {/* Do's Section */}
+              <div className="surface-container rounded-lg p-4">
+                <h3 className="title-medium mb-3 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[rgb(var(--md-sys-color-tertiary))]">
+                    check_circle
+                  </span>
+                  <span className="text-[rgb(var(--md-sys-color-tertiary))]">Guidelines to Follow</span>
+                </h3>
+                <ul className="space-y-2">
+                  {instructions.slice(0, 4).map((instruction, index) => (
+                    <li key={index} className="flex items-start gap-3 body-medium text-on-surface">
+                      <span className="material-symbols-outlined text-sm text-[rgb(var(--md-sys-color-tertiary))] mt-0.5">
+                        chevron_right
+                      </span>
+                      {instruction}
+                    </li>
+                  ))}
+                </ul>
+              </div>
 
-              <h3 className="text-lg font-semibold text-red-600">Don'ts:</h3>
-              <ul className="list-disc list-inside space-y-2 text-sm assessment-text-primary">
-                {instructions.slice(4).map((instruction, index) => (
-                  <li key={index}>{instruction}</li>
-                ))}
-              </ul>
+              {/* Important Notices */}
+              <div className="surface-container rounded-lg p-4">
+                <h3 className="title-medium mb-3 flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[rgb(var(--md-sys-color-error))]">
+                    warning
+                  </span>
+                  <span className="text-[rgb(var(--md-sys-color-error))]">Important Notices</span>
+                </h3>
+                <ul className="space-y-2">
+                  {instructions.slice(4).map((instruction, index) => (
+                    <li key={index} className="flex items-start gap-3 body-medium text-on-surface">
+                      <span className="material-symbols-outlined text-sm text-[rgb(var(--md-sys-color-error))] mt-0.5">
+                        chevron_right
+                      </span>
+                      {instruction}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
 
-            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
-              <div className="flex">
-                <div className="ml-3">
-                  <p className="text-sm text-yellow-700">
-                    <strong>Important:</strong> Once you start the assessment, it will enter fullscreen mode.
+            {/* Warning Card */}
+            <div className="p-4 rounded-lg mb-6" 
+                 style={{ backgroundColor: 'rgb(var(--md-sys-color-secondary-container))', color: 'rgb(var(--md-sys-color-on-secondary-container))' }}>
+              <div className="flex items-start gap-3">
+                <span className="material-symbols-outlined text-[rgb(var(--md-sys-color-secondary))] mt-0.5">
+                  info
+                </span>
+                <div>
+                  <p className="body-medium">
+                    <span className="label-medium">Important:</span> Once you start the assessment, it will enter fullscreen mode.
                     Any attempt to exit fullscreen or switch applications will be recorded.
                   </p>
                 </div>
@@ -86,20 +121,28 @@ export default function Instructions() {
             <div className="flex justify-center">
               <Button
                 onClick={startAssessment}
-                className="px-8 py-3 text-lg btn-assessment-primary"
+                className="px-8 h-12"
               >
-                I Understand - Start Assessment
+                <span className="label-large">I Understand - Start Assessment</span>
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">
+      <div className="text-center md-animate-in">
+        <div className="mx-auto w-20 h-20 rounded-full mb-8 surface-container-high flex items-center justify-center"
+             style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+          <span className="material-symbols-outlined text-4xl text-primary animate-spin"
+                style={{ animationDuration: '2s' }}>
+            hourglass_empty
+          </span>
+        </div>
+        
+        <h1 className="headline-medium text-on-surface mb-4">
           Preparing Your Assessment
         </h1>
-        <p className="text-gray-600">
+        <p className="body-large text-on-surface-variant">
           Please wait while we load the instructions...
         </p>
       </div>

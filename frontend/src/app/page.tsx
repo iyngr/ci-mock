@@ -19,7 +19,7 @@ export default function Home() {
     // Remove ripple after animation
     setTimeout(() => {
       setRipples(prev => prev.filter(ripple => ripple.id !== newRipple.id))
-    }, 600)
+    }, 400)
   }
 
   return (
@@ -40,12 +40,12 @@ export default function Home() {
           key={ripple.id}
           className="absolute pointer-events-none"
           style={{
-            left: ripple.x - 50,
-            top: ripple.y - 50,
+            left: ripple.x - 8,
+            top: ripple.y - 8,
           }}
         >
-          <div className="w-24 h-24 bg-primary/20 rounded-full animate-ping"></div>
-          <div className="absolute inset-0 w-24 h-24 bg-primary/10 rounded-full animate-pulse"></div>
+          <div className="w-4 h-4 bg-primary/20 rounded-full animate-ping"></div>
+          <div className="absolute inset-0 w-8 h-8 bg-primary/10 rounded-full animate-pulse"></div>
         </div>
       ))}
 
@@ -56,7 +56,7 @@ export default function Home() {
             Smart Mock
           </h1>
           <p className="text-xl text-muted-foreground mb-8 leading-relaxed">
-            Internal Technical Assessment Platform
+            Intelligent Technical Assessment
           </p>
           <div className="w-24 h-1 bg-gradient-to-r from-primary to-secondary mx-auto rounded-full"></div>
         </div>
@@ -73,8 +73,7 @@ export default function Home() {
               onClick={() => router.push('/candidate')}
             >
               <div className="flex flex-col items-center">
-                <span>Take Assessment</span>
-                <span className="text-sm opacity-90">Test Taker</span>
+                <span>Inerviewee</span>
               </div>
             </Button>
 
@@ -85,15 +84,14 @@ export default function Home() {
               onClick={() => router.push('/admin')}
             >
               <div className="flex flex-col items-center">
-                <span>Manage Tests</span>
-                <span className="text-sm opacity-90">Moderator</span>
+                <span>Moderator</span>
               </div>
             </Button>
           </div>
         </div>
 
         <div className="mt-12 text-sm text-muted-foreground">
-          <p>Employee Portal • Secure Assessment Environment</p>
+          <p>Secure Assessment</p>
         </div>
       </div>
     </div>

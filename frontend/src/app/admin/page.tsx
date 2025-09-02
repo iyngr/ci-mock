@@ -55,7 +55,7 @@ export default function AdminLogin() {
             </svg>
           </div>
           <h2 className="text-3xl font-bold assessment-text-primary mb-2">
-            Admin Portal
+            Moderate
           </h2>
           <p className="assessment-text-muted">
             Manage assessments and view analytics

@@ -52,7 +52,7 @@ export default function CandidateLogin() {
             </svg>
           </div>
           <h2 className="text-3xl font-bold assessment-text-primary mb-2">
-            Assessment Portal
+            Assessment
           </h2>
           <p className="assessment-text-muted">
             Enter your assessment code to begin

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 
 export default function Home() {
-  const [ripples, setRipples] = useState<Array<{ id: number; x: number; y: number }>>([])
+  const [activeRipples, setActiveRipples] = useState<Array<{ id: number; x: number; y: number }>>([])
   const router = useRouter()
 
   const createRipple = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -14,86 +14,113 @@ export default function Home() {
     const y = event.clientY - rect.top
     const newRipple = { id: Date.now(), x, y }
 
-    setRipples(prev => [...prev, newRipple])
+    setActiveRipples(prev => [...prev, newRipple])
 
-    // Remove ripple after animation
     setTimeout(() => {
-      setRipples(prev => prev.filter(ripple => ripple.id !== newRipple.id))
-    }, 600)
+      setActiveRipples(prev => prev.filter(ripple => ripple.id !== newRipple.id))
+    }, 800)
   }
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 relative overflow-hidden cursor-default"
+      className="min-h-screen surface-container-lowest flex items-center justify-center relative overflow-hidden cursor-default"
       onMouseMove={createRipple}
     >
-      {/* Animated background elements */}
+      {/* Material Design 3 Background Pattern */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-1/2 w-80 h-80 bg-pink-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+        {/* Geometric Material You shapes */}
+        <div className="absolute top-20 left-20 w-32 h-32 rounded-full opacity-20"
+             style={{ background: `rgb(var(--md-sys-color-primary))` }}></div>
+        <div className="absolute bottom-20 right-20 w-24 h-24 rounded-full opacity-15"
+             style={{ background: `rgb(var(--md-sys-color-secondary))` }}></div>
+        <div className="absolute top-1/2 left-1/4 w-20 h-20 rounded-full opacity-10"
+             style={{ background: `rgb(var(--md-sys-color-tertiary))` }}></div>
+        
+        {/* Material ripple effects */}
+        {activeRipples.map(ripple => (
+          <div
+            key={ripple.id}
+            className="absolute pointer-events-none"
+            style={{
+              left: ripple.x - 60,
+              top: ripple.y - 60,
+            }}
+          >
+            <div 
+              className="w-30 h-30 rounded-full animate-ping opacity-20"
+              style={{ background: `rgb(var(--md-sys-color-primary))` }}
+            ></div>
+          </div>
+        ))}
       </div>
 
-      {/* Ripple effects */}
-      {ripples.map(ripple => (
-        <div
-          key={ripple.id}
-          className="absolute pointer-events-none"
-          style={{
-            left: ripple.x - 50,
-            top: ripple.y - 50,
-          }}
-        >
-          <div className="w-24 h-24 bg-white/30 rounded-full animate-ping"></div>
-          <div className="absolute inset-0 w-24 h-24 bg-white/20 rounded-full animate-pulse"></div>
-        </div>
-      ))}
-
-      {/* Main content */}
-      <div className="relative z-10 max-w-2xl mx-auto text-center px-6">
-        <div className="mb-12">
-          <h1 className="text-6xl font-bold text-gray-900 mb-4 tracking-tight">
+      {/* Main content with Material Design 3 styling */}
+      <div className="relative z-10 max-w-2xl mx-auto text-center px-6 md-animate-slide-in-up">
+        <div className="mb-16">
+          {/* Material Design 3 Logo/Icon */}
+          <div className="mx-auto w-20 h-20 rounded-full mb-8 surface-container-high flex items-center justify-center"
+               style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+            <span className="material-symbols-outlined text-4xl text-primary">
+              psychology
+            </span>
+          </div>
+          
+          <h1 className="display-medium font-roboto text-on-surface mb-4 tracking-tight">
             Smart Mock
           </h1>
-          <p className="text-xl text-gray-600 mb-8 leading-relaxed">
-            Internal Technical Assessment Platform
+          
+          <p className="body-large text-on-surface-variant mb-8 leading-relaxed max-w-md mx-auto">
+            Internal Technical Assessment Platform built with Material Design 3
           </p>
-          <div className="w-24 h-1 bg-gradient-to-r from-blue-500 to-purple-500 mx-auto rounded-full"></div>
+          
+          {/* Material Design 3 accent line */}
+          <div className="w-24 h-1 mx-auto rounded-full"
+               style={{ background: `rgb(var(--md-sys-color-primary))` }}></div>
         </div>
 
-        <div className="space-y-6">
-          <p className="text-lg text-gray-700 mb-8">
+        <div className="space-y-8">
+          <p className="title-medium text-on-surface-variant mb-12">
             Choose your role to continue
           </p>
 
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
-            <Button
-              size="lg"
-              className="w-full sm:w-48 h-14 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+            {/* Material Design 3 Filled Button */}
+            <button
+              className="md-button-filled md-ripple w-full sm:w-56 h-14 flex flex-col items-center justify-center gap-1 md-animate-in"
               onClick={() => router.push('/candidate')}
+              style={{ animationDelay: '0.1s' }}
             >
-              <div className="flex flex-col items-center">
-                <span>Take Assessment</span>
-                <span className="text-sm opacity-90">Test Taker</span>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg">
+                  quiz
+                </span>
+                <span className="label-large">Take Assessment</span>
               </div>
-            </Button>
+              <span className="label-small opacity-90">Test Taker</span>
+            </button>
 
-            <Button
-              size="lg"
-              variant="outline"
-              className="w-full sm:w-48 h-14 text-lg font-semibold border-2 border-purple-600 text-purple-600 hover:bg-purple-600 hover:text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+            {/* Material Design 3 Outlined Button */}
+            <button
+              className="md-button-outlined md-ripple w-full sm:w-56 h-14 flex flex-col items-center justify-center gap-1 md-animate-in"
               onClick={() => router.push('/admin')}
+              style={{ animationDelay: '0.2s' }}
             >
-              <div className="flex flex-col items-center">
-                <span>Manage Tests</span>
-                <span className="text-sm opacity-90">Moderator</span>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg">
+                  admin_panel_settings
+                </span>
+                <span className="label-large">Manage Tests</span>
               </div>
-            </Button>
+              <span className="label-small opacity-90">Moderator</span>
+            </button>
           </div>
         </div>
 
-        <div className="mt-12 text-sm text-gray-500">
-          <p>Employee Portal • Secure Assessment Environment</p>
+        {/* Material Design 3 Footer */}
+        <div className="mt-16 text-on-surface-variant md-animate-in" style={{ animationDelay: '0.3s' }}>
+          <p className="body-small">
+            Employee Portal • Secure Assessment Environment
+          </p>
         </div>
       </div>
     </div>

@@ -43,18 +43,21 @@ export default function CandidateLogin() {
   }
 
   return (
-    <div className="min-h-screen assessment-bg flex items-center justify-center p-4">
-      <div className="assessment-card p-8 max-w-md w-full space-y-8 animate-fade-in-up">
+    <div className="min-h-screen surface-container-lowest flex items-center justify-center p-4">
+      <div className="md-card-elevated surface-container-low p-8 max-w-md w-full space-y-8 md-animate-slide-in-up">
         <div className="text-center">
-          <div className="mx-auto w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center mb-4">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+          {/* Material Design 3 Assessment Icon */}
+          <div className="mx-auto w-16 h-16 rounded-full mb-6 primary-container flex items-center justify-center"
+               style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+            <span className="material-symbols-outlined text-3xl text-[rgb(var(--md-sys-color-on-primary-container))]">
+              quiz
+            </span>
           </div>
-          <h2 className="text-3xl font-bold assessment-text-primary mb-2">
+          
+          <h2 className="headline-small text-on-surface mb-2">
             Assessment Portal
           </h2>
-          <p className="assessment-text-muted">
+          <p className="body-medium text-on-surface-variant">
             Enter your assessment code to begin
           </p>
         </div>
@@ -66,20 +69,26 @@ export default function CandidateLogin() {
               placeholder="Enter your login code"
               value={loginCode}
               onChange={(e) => setLoginCode(e.target.value)}
-              className="input-assessment text-center text-lg py-3"
+              className="text-center text-lg py-4"
               required
             />
           </div>
+          
           {error && (
-            <div className="text-red-600 text-sm text-center">{error}</div>
+            <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgb(var(--md-sys-color-error-container))', color: 'rgb(var(--md-sys-color-on-error-container))' }}>
+              <p className="body-small">{error}</p>
+            </div>
           )}
+          
           <div>
             <Button
               type="submit"
               disabled={loading || !loginCode.trim()}
-              className="w-full btn-assessment-primary"
+              className="w-full h-12"
             >
-              {loading ? "Verifying..." : "Start Assessment"}
+              <span className="label-large">
+                {loading ? "Verifying..." : "Start Assessment"}
+              </span>
             </Button>
           </div>
         </form>

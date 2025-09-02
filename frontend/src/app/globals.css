@@ -1,243 +1,608 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
 
+/* Material Design 3 Design Tokens */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222.2 84% 4.9%;
-  --primary: 221.2 83.2% 53.3%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 210 40% 96%;
-  --secondary-foreground: 222.2 84% 4.9%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --accent: 210 40% 96%;
-  --accent-foreground: 222.2 84% 4.9%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 221.2 83.2% 53.3%;
-  --radius: 0.75rem;
-
-  /* Assessment Theme Colors */
-  --assessment-primary: 221.2 83.2% 53.3%;
-  --assessment-secondary: 262.1 83.3% 57.8%;
-  --assessment-accent: 142.1 76.2% 36.3%;
-  --assessment-background: 210 20% 98%;
-  --assessment-surface: 0 0% 100%;
-  --assessment-text: 222.2 84% 4.9%;
-  --assessment-text-muted: 215.4 16.3% 46.9%;
-  --assessment-border: 214.3 31.8% 91.4%;
-  --assessment-success: 142.1 76.2% 36.3%;
-  --assessment-warning: 32.5 94.6% 43.7%;
-  --assessment-error: 0 84.2% 60.2%;
+  /* Material Design 3 Color System - Light Theme */
+  --md-sys-color-primary: 64 84 178; /* Material Blue */
+  --md-sys-color-on-primary: 255 255 255;
+  --md-sys-color-primary-container: 224 235 252;
+  --md-sys-color-on-primary-container: 25 32 71;
+  
+  --md-sys-color-secondary: 94 103 141;
+  --md-sys-color-on-secondary: 255 255 255;
+  --md-sys-color-secondary-container: 226 235 255;
+  --md-sys-color-on-secondary-container: 27 33 66;
+  
+  --md-sys-color-tertiary: 120 87 143;
+  --md-sys-color-on-tertiary: 255 255 255;
+  --md-sys-color-tertiary-container: 254 236 255;
+  --md-sys-color-on-tertiary-container: 49 21 71;
+  
+  --md-sys-color-error: 186 26 26;
+  --md-sys-color-on-error: 255 255 255;
+  --md-sys-color-error-container: 255 218 214;
+  --md-sys-color-on-error-container: 65 14 11;
+  
+  --md-sys-color-background: 253 252 252;
+  --md-sys-color-on-background: 28 27 31;
+  
+  --md-sys-color-surface: 253 252 252;
+  --md-sys-color-on-surface: 28 27 31;
+  --md-sys-color-surface-variant: 227 226 230;
+  --md-sys-color-on-surface-variant: 70 70 79;
+  
+  --md-sys-color-surface-container-lowest: 255 255 255;
+  --md-sys-color-surface-container-low: 247 246 250;
+  --md-sys-color-surface-container: 241 240 244;
+  --md-sys-color-surface-container-high: 236 235 239;
+  --md-sys-color-surface-container-highest: 230 229 233;
+  
+  --md-sys-color-outline: 121 116 126;
+  --md-sys-color-outline-variant: 198 197 202;
+  
+  /* Backward compatibility with current component classes */
+  --background: var(--md-sys-color-background);
+  --foreground: var(--md-sys-color-on-background);
+  --primary: var(--md-sys-color-primary);
+  --primary-foreground: var(--md-sys-color-on-primary);
+  --secondary: var(--md-sys-color-secondary-container);
+  --secondary-foreground: var(--md-sys-color-on-secondary-container);
+  --muted: var(--md-sys-color-surface-variant);
+  --muted-foreground: var(--md-sys-color-on-surface-variant);
+  --accent: var(--md-sys-color-tertiary-container);
+  --accent-foreground: var(--md-sys-color-on-tertiary-container);
+  --destructive: var(--md-sys-color-error);
+  --destructive-foreground: var(--md-sys-color-on-error);
+  --border: var(--md-sys-color-outline-variant);
+  --input: var(--md-sys-color-outline-variant);
+  --ring: var(--md-sys-color-primary);
+  --radius: 12px; /* Material Design 3 uses 12px border radius */
+  
+  /* Material Design 3 Elevation Shadows */
+  --md-sys-elevation-level0: none;
+  --md-sys-elevation-level1: 0px 1px 2px rgba(0, 0, 0, 0.3), 0px 1px 3px 1px rgba(0, 0, 0, 0.15);
+  --md-sys-elevation-level2: 0px 1px 2px rgba(0, 0, 0, 0.3), 0px 2px 6px 2px rgba(0, 0, 0, 0.15);
+  --md-sys-elevation-level3: 0px 1px 3px rgba(0, 0, 0, 0.3), 0px 4px 8px 3px rgba(0, 0, 0, 0.15);
+  --md-sys-elevation-level4: 0px 2px 3px rgba(0, 0, 0, 0.3), 0px 6px 10px 4px rgba(0, 0, 0, 0.15);
+  --md-sys-elevation-level5: 0px 4px 4px rgba(0, 0, 0, 0.3), 0px 8px 12px 6px rgba(0, 0, 0, 0.15);
 }
 
+/* Material Design 3 Dark Theme */
 .dark {
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222.2 84% 4.9%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 98%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 217.2 32.6% 17.5%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --accent: 217.2 32.6% 17.5%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217.2 32.6% 17.5%;
-  --input: 217.2 32.6% 17.5%;
-  --ring: 212.7 26.8% 83.9%;
-
-  /* Dark Assessment Theme Colors */
-  --assessment-primary: 217.2 91.2% 59.8%;
-  --assessment-secondary: 263.4 70% 50.4%;
-  --assessment-accent: 142.1 70.6% 45.3%;
-  --assessment-background: 222.2 84% 4.9%;
-  --assessment-surface: 217.2 32.6% 17.5%;
-  --assessment-text: 210 40% 98%;
-  --assessment-text-muted: 215 20.2% 65.1%;
-  --assessment-border: 217.2 32.6% 17.5%;
-  --assessment-success: 142.1 70.6% 45.3%;
-  --assessment-warning: 32.5 94.6% 43.7%;
-  --assessment-error: 0 62.8% 30.6%;
+  --md-sys-color-primary: 166 200 255;
+  --md-sys-color-on-primary: 0 25 69;
+  --md-sys-color-primary-container: 27 50 123;
+  --md-sys-color-on-primary-container: 224 235 252;
+  
+  --md-sys-color-secondary: 198 206 235;
+  --md-sys-color-on-secondary: 48 54 87;
+  --md-sys-color-secondary-container: 70 78 114;
+  --md-sys-color-on-secondary-container: 226 235 255;
+  
+  --md-sys-color-tertiary: 226 187 248;
+  --md-sys-color-on-tertiary: 71 43 94;
+  --md-sys-color-tertiary-container: 95 65 118;
+  --md-sys-color-on-tertiary-container: 254 236 255;
+  
+  --md-sys-color-error: 255 180 171;
+  --md-sys-color-on-error: 105 0 5;
+  --md-sys-color-error-container: 147 0 10;
+  --md-sys-color-on-error-container: 255 218 214;
+  
+  --md-sys-color-background: 16 16 20;
+  --md-sys-color-on-background: 230 225 229;
+  
+  --md-sys-color-surface: 16 16 20;
+  --md-sys-color-on-surface: 230 225 229;
+  --md-sys-color-surface-variant: 70 70 79;
+  --md-sys-color-on-surface-variant: 198 197 202;
+  
+  --md-sys-color-surface-container-lowest: 11 11 15;
+  --md-sys-color-surface-container-low: 24 24 29;
+  --md-sys-color-surface-container: 28 27 31;
+  --md-sys-color-surface-container-high: 38 37 41;
+  --md-sys-color-surface-container-highest: 49 48 51;
+  
+  --md-sys-color-outline: 142 145 153;
+  --md-sys-color-outline-variant: 70 70 79;
+  
+  /* Update compatibility variables for dark mode */
+  --background: var(--md-sys-color-background);
+  --foreground: var(--md-sys-color-on-background);
+  --primary: var(--md-sys-color-primary);
+  --primary-foreground: var(--md-sys-color-on-primary);
+  --secondary: var(--md-sys-color-secondary-container);
+  --secondary-foreground: var(--md-sys-color-on-secondary-container);
+  --muted: var(--md-sys-color-surface-variant);
+  --muted-foreground: var(--md-sys-color-on-surface-variant);
+  --accent: var(--md-sys-color-tertiary-container);
+  --accent-foreground: var(--md-sys-color-on-tertiary-container);
+  --destructive: var(--md-sys-color-error);
+  --destructive-foreground: var(--md-sys-color-on-error);
+  --border: var(--md-sys-color-outline-variant);
+  --input: var(--md-sys-color-outline-variant);
+  --ring: var(--md-sys-color-primary);
 }
 
+/* Base Styles */
 * {
-  border-color: hsl(var(--border));
+  border-color: rgb(var(--md-sys-color-outline-variant));
+}
+
+.font-roboto {
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  background-color: rgb(var(--md-sys-color-background));
+  color: rgb(var(--md-sys-color-on-background));
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-weight: 400;
 }
 
-/* Assessment Theme Styles */
-.assessment-bg {
-  background: linear-gradient(135deg, hsl(var(--assessment-background)) 0%, hsl(210 40% 96%) 100%);
+/* Material Design 3 Typography Scale */
+.display-large {
+  font-size: 57px;
+  line-height: 64px;
+  font-weight: 400;
+  letter-spacing: -0.25px;
 }
 
-.assessment-card {
-  background: hsl(var(--assessment-surface));
-  border: 1px solid hsl(var(--assessment-border));
+.display-medium {
+  font-size: 45px;
+  line-height: 52px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.display-small {
+  font-size: 36px;
+  line-height: 44px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.headline-large {
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.headline-medium {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.headline-small {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.title-large {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 400;
+  letter-spacing: 0px;
+}
+
+.title-medium {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  letter-spacing: 0.15px;
+}
+
+.title-small {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+
+.body-large {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+}
+
+.body-medium {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 400;
+  letter-spacing: 0.25px;
+}
+
+.body-small {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0.4px;
+}
+
+.label-large {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+
+.label-medium {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.label-small {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+/* Material Design 3 Color Utilities */
+.surface {
+  background-color: rgb(var(--md-sys-color-surface));
+  color: rgb(var(--md-sys-color-on-surface));
+}
+
+.surface-variant {
+  background-color: rgb(var(--md-sys-color-surface-variant));
+  color: rgb(var(--md-sys-color-on-surface-variant));
+}
+
+.surface-container-lowest {
+  background-color: rgb(var(--md-sys-color-surface-container-lowest));
+}
+
+.surface-container-low {
+  background-color: rgb(var(--md-sys-color-surface-container-low));
+}
+
+.surface-container {
+  background-color: rgb(var(--md-sys-color-surface-container));
+}
+
+.surface-container-high {
+  background-color: rgb(var(--md-sys-color-surface-container-high));
+}
+
+.surface-container-highest {
+  background-color: rgb(var(--md-sys-color-surface-container-highest));
+}
+
+.primary-container {
+  background-color: rgb(var(--md-sys-color-primary-container));
+  color: rgb(var(--md-sys-color-on-primary-container));
+}
+
+.secondary-container {
+  background-color: rgb(var(--md-sys-color-secondary-container));
+  color: rgb(var(--md-sys-color-on-secondary-container));
+}
+
+.tertiary-container {
+  background-color: rgb(var(--md-sys-color-tertiary-container));
+  color: rgb(var(--md-sys-color-on-tertiary-container));
+}
+
+.text-primary {
+  color: rgb(var(--md-sys-color-primary));
+}
+
+.text-on-surface {
+  color: rgb(var(--md-sys-color-on-surface));
+}
+
+.text-on-surface-variant {
+  color: rgb(var(--md-sys-color-on-surface-variant));
+}
+
+/* Material Design 3 Component Styles */
+.md-card {
+  background-color: rgb(var(--md-sys-color-surface-container-low));
   border-radius: var(--radius);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--md-sys-elevation-level1);
+  border: 1px solid rgb(var(--md-sys-color-outline-variant));
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
 }
 
-.assessment-gradient {
-  background: linear-gradient(135deg, hsl(var(--assessment-primary)) 0%, hsl(var(--assessment-secondary)) 100%);
+.md-card:hover {
+  box-shadow: var(--md-sys-elevation-level2);
 }
 
-.assessment-text-primary {
-  color: hsl(var(--assessment-text));
-}
-
-.assessment-text-muted {
-  color: hsl(var(--assessment-text-muted));
-}
-
-.assessment-border {
-  border-color: hsl(var(--assessment-border));
-}
-
-/* Button Enhancements */
-.btn-assessment-primary {
-  background: linear-gradient(135deg, hsl(var(--assessment-primary)) 0%, hsl(var(--assessment-secondary)) 100%);
+.md-card-elevated {
+  background-color: rgb(var(--md-sys-color-surface-container-low));
+  box-shadow: var(--md-sys-elevation-level1);
   border: none;
-  color: white;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 14px 0 rgba(0, 118, 255, 0.39);
 }
 
-.btn-assessment-primary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 118, 255, 0.23);
+.md-card-filled {
+  background-color: rgb(var(--md-sys-color-surface-container-highest));
+  border: none;
 }
 
-.btn-assessment-secondary {
-  background: hsl(var(--assessment-surface));
-  border: 2px solid hsl(var(--assessment-primary));
-  color: hsl(var(--assessment-primary));
-  font-weight: 600;
-  transition: all 0.3s ease;
+.md-card-outlined {
+  background-color: rgb(var(--md-sys-color-surface));
+  border: 1px solid rgb(var(--md-sys-color-outline-variant));
+  box-shadow: none;
 }
 
-.btn-assessment-secondary:hover {
-  background: hsl(var(--assessment-primary));
-  color: white;
-  transform: translateY(-2px);
+/* Material Design 3 Button Styles */
+.md-button-filled {
+  background-color: rgb(var(--md-sys-color-primary));
+  color: rgb(var(--md-sys-color-on-primary));
+  border: none;
+  border-radius: 20px;
+  padding: 10px 24px;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.1px;
+  min-height: 40px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+  box-shadow: var(--md-sys-elevation-level0);
+  position: relative;
+  overflow: hidden;
 }
 
-/* Form Enhancements */
-.form-assessment {
-  background: hsl(var(--assessment-surface));
-  border: 1px solid hsl(var(--assessment-border));
-  border-radius: var(--radius);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+.md-button-filled:hover {
+  box-shadow: var(--md-sys-elevation-level1);
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 92%, white);
 }
 
-.input-assessment {
-  border: 2px solid hsl(var(--assessment-border));
-  border-radius: calc(var(--radius) - 0.25rem);
-  transition: all 0.3s ease;
+.md-button-filled:active {
+  box-shadow: var(--md-sys-elevation-level0);
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 88%, white);
 }
 
-.input-assessment:focus {
-  border-color: hsl(var(--assessment-primary));
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+.md-button-filled:disabled {
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-on-surface)) 12%, transparent);
+  color: color-mix(in srgb, rgb(var(--md-sys-color-on-surface)) 38%, transparent);
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
-/* Smart Mock Home Page Animations */
-@keyframes blob {
-  0% {
-    transform: translate(0px, 0px) scale(1);
-  }
-
-  33% {
-    transform: translate(30px, -50px) scale(1.1);
-  }
-
-  66% {
-    transform: translate(-20px, 20px) scale(0.9);
-  }
-
-  100% {
-    transform: translate(0px, 0px) scale(1);
-  }
+.md-button-outlined {
+  background-color: transparent;
+  color: rgb(var(--md-sys-color-primary));
+  border: 1px solid rgb(var(--md-sys-color-outline));
+  border-radius: 20px;
+  padding: 10px 24px;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.1px;
+  min-height: 40px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
 }
 
-.animate-blob {
-  animation: blob 7s infinite;
+.md-button-outlined:hover {
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 8%, transparent);
 }
 
-.animation-delay-2000 {
-  animation-delay: 2s;
+.md-button-outlined:active {
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 12%, transparent);
 }
 
-.animation-delay-4000 {
-  animation-delay: 4s;
+.md-button-text {
+  background-color: transparent;
+  color: rgb(var(--md-sys-color-primary));
+  border: none;
+  border-radius: 20px;
+  padding: 10px 12px;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.1px;
+  min-height: 40px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
 }
 
-/* Assessment-specific animations */
-@keyframes fadeInUp {
+.md-button-text:hover {
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 8%, transparent);
+}
+
+.md-button-text:active {
+  background-color: color-mix(in srgb, rgb(var(--md-sys-color-primary)) 12%, transparent);
+}
+
+/* Material Design 3 Form Components */
+.md-text-field {
+  position: relative;
+  border-radius: 4px;
+  background-color: rgb(var(--md-sys-color-surface-container-highest));
+  border: 1px solid rgb(var(--md-sys-color-outline));
+  transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.md-text-field:hover {
+  border-color: rgb(var(--md-sys-color-on-surface));
+}
+
+.md-text-field:focus-within {
+  border-color: rgb(var(--md-sys-color-primary));
+  border-width: 2px;
+  outline: none;
+  background-color: rgb(var(--md-sys-color-surface-container-high));
+}
+
+.md-text-field input,
+.md-text-field textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 16px;
+  color: rgb(var(--md-sys-color-on-surface));
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+}
+
+.md-text-field input::placeholder,
+.md-text-field textarea::placeholder {
+  color: rgb(var(--md-sys-color-on-surface-variant));
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+  letter-spacing: 0.5px;
+}
+
+/* Material Design 3 Icon Styles */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Material Motion Animations */
+@keyframes md-fade-in {
   from {
     opacity: 0;
-    transform: translateY(30px);
+    transform: translateY(8px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
   }
 }
 
-.animate-fade-in-up {
-  animation: fadeInUp 0.6s ease-out;
-}
-
-@keyframes slideInRight {
+@keyframes md-scale-in {
   from {
     opacity: 0;
-    transform: translateX(30px);
+    transform: scale(0.8);
   }
-
   to {
     opacity: 1;
-    transform: translateX(0);
+    transform: scale(1);
   }
 }
 
-.animate-slide-in-right {
-  animation: slideInRight 0.6s ease-out;
+@keyframes md-slide-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* Custom scrollbar */
+.md-animate-in {
+  animation: md-fade-in 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.md-animate-scale-in {
+  animation: md-scale-in 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.md-animate-slide-in-up {
+  animation: md-slide-in-up 0.4s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+/* Ripple Effect for Material Components */
+.md-ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.md-ripple::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+  transform: translate(-50%, -50%);
+  transition: width 0.6s cubic-bezier(0.4, 0.0, 0.2, 1), height 0.6s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+
+.md-ripple:active::before {
+  width: 300px;
+  height: 300px;
+}
+
+/* Custom Material Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--assessment-background));
+  background: rgb(var(--md-sys-color-surface-container));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--assessment-primary));
+  background: rgb(var(--md-sys-color-outline));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--assessment-secondary));
+  background: rgb(var(--md-sys-color-outline-variant));
+}
+
+/* Legacy compatibility classes for existing components */
+.assessment-bg {
+  background: rgb(var(--md-sys-color-surface-container-lowest));
+}
+
+.assessment-card {
+  background: rgb(var(--md-sys-color-surface-container-low));
+  border: 1px solid rgb(var(--md-sys-color-outline-variant));
+  border-radius: var(--radius);
+  box-shadow: var(--md-sys-elevation-level1);
+}
+
+.btn-assessment-primary {
+  @apply md-button-filled;
+}
+
+.btn-assessment-secondary {
+  @apply md-button-outlined;
+}
+
+.input-assessment {
+  @apply md-text-field;
+}
+
+.form-assessment {
+  @apply md-card;
+}
+
+.animate-fade-in-up {
+  @apply md-animate-slide-in-up;
+}
+
+.animate-slide-in-right {
+  @apply md-animate-in;
 }

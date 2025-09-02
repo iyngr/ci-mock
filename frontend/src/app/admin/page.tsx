@@ -45,19 +45,21 @@ export default function AdminLogin() {
   }
 
   return (
-    <div className="min-h-screen assessment-bg flex items-center justify-center p-4">
-      <div className="assessment-card p-8 max-w-md w-full space-y-8 animate-fade-in-up">
+    <div className="min-h-screen surface-container-lowest flex items-center justify-center p-4">
+      <div className="md-card-elevated surface-container-low p-8 max-w-md w-full space-y-8 md-animate-slide-in-up">
         <div className="text-center">
-          <div className="mx-auto w-16 h-16 bg-gradient-to-br from-purple-500 to-blue-600 rounded-full flex items-center justify-center mb-4">
-            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
+          {/* Material Design 3 Admin Icon */}
+          <div className="mx-auto w-16 h-16 rounded-full mb-6 surface-container-high flex items-center justify-center"
+               style={{ boxShadow: 'var(--md-sys-elevation-level2)' }}>
+            <span className="material-symbols-outlined text-3xl text-primary">
+              admin_panel_settings
+            </span>
           </div>
-          <h2 className="text-3xl font-bold assessment-text-primary mb-2">
+          
+          <h2 className="headline-small text-on-surface mb-2">
             Admin Portal
           </h2>
-          <p className="assessment-text-muted">
+          <p className="body-medium text-on-surface-variant">
             Manage assessments and view analytics
           </p>
         </div>
@@ -70,7 +72,6 @@ export default function AdminLogin() {
                 placeholder="Email address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="input-assessment"
                 required
               />
             </div>
@@ -80,25 +81,33 @@ export default function AdminLogin() {
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input-assessment"
                 required
               />
             </div>
           </div>
+          
           {error && (
-            <div className="text-red-600 text-sm text-center">{error}</div>
+            <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgb(var(--md-sys-color-error-container))', color: 'rgb(var(--md-sys-color-on-error-container))' }}>
+              <p className="body-small">{error}</p>
+            </div>
           )}
+          
           <div>
             <Button
               type="submit"
               disabled={loading || !email.trim() || !password.trim()}
-              className="w-full btn-assessment-primary"
+              className="w-full h-12"
             >
-              {loading ? "Signing in..." : "Sign In"}
+              <span className="label-large">
+                {loading ? "Signing in..." : "Sign In"}
+              </span>
             </Button>
           </div>
-          <div className="text-xs assessment-text-muted text-center">
-            Demo credentials: admin@example.com / admin123
+          
+          <div className="p-3 rounded-lg surface-container-highest text-center">
+            <p className="body-small text-on-surface-variant">
+              Demo credentials: admin@example.com / admin123
+            </p>
           </div>
         </form>
       </div>

@@ -1,16 +1,29 @@
 import * as React from "react"
+import "@material/web/textfield/outlined-text-field.js"
 
 import { cn } from "@/lib/utils"
 
 export interface TextareaProps
-  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
+  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  // Custom props can be added here if needed
+}
 
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, ...props }, ref) => {
     return (
       <textarea
         className={cn(
-          "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+          // Material 3 text area styling
+          "flex min-h-[120px] w-full rounded-xl border-2 border-input bg-background px-4 py-3 text-base",
+          "ring-offset-background placeholder:text-muted-foreground",
+          "focus-visible:outline-none focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/20",
+          "disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-muted",
+          // Material 3 transition effects
+          "transition-all duration-200 ease-out",
+          // Material 3 elevation
+          "shadow-sm focus-visible:shadow-md",
+          // Resize behavior
+          "resize-vertical",
           className
         )}
         ref={ref}

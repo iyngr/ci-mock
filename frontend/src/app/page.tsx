@@ -24,17 +24,17 @@ export default function Home() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 relative overflow-hidden cursor-default"
+      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-assessment-background via-accent/10 to-secondary/20 relative overflow-hidden cursor-default"
       onMouseMove={createRipple}
     >
-      {/* Animated background elements */}
+      {/* Material 3 Expressive animated background elements */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-blue-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
-        <div className="absolute top-40 left-1/2 w-80 h-80 bg-pink-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/30 rounded-full mix-blend-multiply filter blur-xl opacity-60 animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-secondary/40 rounded-full mix-blend-multiply filter blur-xl opacity-60 animate-blob animation-delay-2000"></div>
+        <div className="absolute top-40 left-1/2 w-80 h-80 bg-tertiary/30 rounded-full mix-blend-multiply filter blur-xl opacity-60 animate-blob animation-delay-4000"></div>
       </div>
 
-      {/* Ripple effects */}
+      {/* Ripple effects with Material 3 colors */}
       {ripples.map(ripple => (
         <div
           key={ripple.id}
@@ -44,32 +44,32 @@ export default function Home() {
             top: ripple.y - 50,
           }}
         >
-          <div className="w-24 h-24 bg-white/30 rounded-full animate-ping"></div>
-          <div className="absolute inset-0 w-24 h-24 bg-white/20 rounded-full animate-pulse"></div>
+          <div className="w-24 h-24 bg-primary/20 rounded-full animate-ping"></div>
+          <div className="absolute inset-0 w-24 h-24 bg-primary/10 rounded-full animate-pulse"></div>
         </div>
       ))}
 
       {/* Main content */}
       <div className="relative z-10 max-w-2xl mx-auto text-center px-6">
         <div className="mb-12">
-          <h1 className="text-6xl font-bold text-gray-900 mb-4 tracking-tight">
+          <h1 className="text-6xl font-bold text-foreground mb-4 tracking-tight font-fraunces">
             Smart Mock
           </h1>
-          <p className="text-xl text-gray-600 mb-8 leading-relaxed">
+          <p className="text-xl text-muted-foreground mb-8 leading-relaxed">
             Internal Technical Assessment Platform
           </p>
-          <div className="w-24 h-1 bg-gradient-to-r from-blue-500 to-purple-500 mx-auto rounded-full"></div>
+          <div className="w-24 h-1 bg-gradient-to-r from-primary to-secondary mx-auto rounded-full"></div>
         </div>
 
         <div className="space-y-6">
-          <p className="text-lg text-gray-700 mb-8">
+          <p className="text-lg text-muted-foreground mb-8">
             Choose your role to continue
           </p>
 
           <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
             <Button
               size="lg"
-              className="w-full sm:w-48 h-14 text-lg font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+              className="w-full sm:w-48 h-14 text-lg font-semibold shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
               onClick={() => router.push('/candidate')}
             >
               <div className="flex flex-col items-center">
@@ -81,7 +81,7 @@ export default function Home() {
             <Button
               size="lg"
               variant="outline"
-              className="w-full sm:w-48 h-14 text-lg font-semibold border-2 border-purple-600 text-purple-600 hover:bg-purple-600 hover:text-white shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+              className="w-full sm:w-48 h-14 text-lg font-semibold shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
               onClick={() => router.push('/admin')}
             >
               <div className="flex flex-col items-center">
@@ -92,7 +92,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-12 text-sm text-gray-500">
+        <div className="mt-12 text-sm text-muted-foreground">
           <p>Employee Portal • Secure Assessment Environment</p>
         </div>
       </div>

@@ -8,10 +8,20 @@ router = APIRouter()
 
 @router.post("/run-code")
 async def run_code(request: CodeExecutionRequest):
-    """Execute code using Judge0 API (mock implementation for now)"""
+    """Execute code using Judge0 API or mock for development"""
     
-    # Mock code execution for development
-    # In production, this would call the actual Judge0 API
+    # Toggle between mock and Judge0 based on environment
+    USE_JUDGE0 = False  # Set to True when Judge0 is configured
+    
+    if USE_JUDGE0:
+        return await execute_with_judge0(request)
+    else:
+        # Mock implementation for development
+        return await mock_code_execution(request)
+
+
+async def mock_code_execution(request: CodeExecutionRequest):
+    """Mock code execution for development"""
     await asyncio.sleep(1)  # Simulate execution time
     
     if "error" in request.code.lower():
@@ -21,18 +31,120 @@ async def run_code(request: CodeExecutionRequest):
             "executionTime": 0.5
         }
     
-    # Mock successful execution
-    mock_output = "Output from code execution"
-    if "print" in request.code.lower():
-        mock_output = "Hello, World!"
-    elif "return" in request.code.lower():
-        mock_output = "Function executed successfully"
-    
+    # Mock successful execution based on language and code content
+    mock_output = generate_mock_output(request.code, request.language)
     return {
         "success": True,
         "output": mock_output,
         "executionTime": 1.2
     }
+
+
+def generate_mock_output(code: str, language: str) -> str:
+    """Generate realistic mock output based on code content and language"""
+    code_lower = code.lower()
+    
+    if language == "python":
+        if "print" in code_lower:
+            return "Hello, World!" if "hello" in code_lower else "Output from Python code"
+        elif "return" in code_lower:
+            return "42" if any(num in code_lower for num in ["42", "sum", "add"]) else "True"
+        elif "def" in code_lower:
+            return "Function defined successfully"
+        else:
+            return "Python code executed successfully"
+    
+    elif language == "javascript":
+        if "console.log" in code_lower:
+            return "Hello, World!" if "hello" in code_lower else "Output from JavaScript code"
+        elif "return" in code_lower:
+            return "42" if any(num in code_lower for num in ["42", "sum", "add"]) else "true"
+        elif "function" in code_lower:
+            return "Function defined successfully"
+        else:
+            return "JavaScript code executed successfully"
+    
+    elif language == "java":
+        if "system.out.print" in code_lower:
+            return "Hello, World!" if "hello" in code_lower else "Output from Java code"
+        elif "return" in code_lower:
+            return "42" if any(num in code_lower for num in ["42", "sum", "add"]) else "true"
+        elif "public static void main" in code_lower:
+            return "Main method executed successfully"
+        else:
+            return "Java code executed successfully"
+    
+    else:
+        return f"{language.title()} code executed successfully"
+
+
+async def execute_with_judge0(request: CodeExecutionRequest):
+    """Execute code using Judge0 API"""
+    
+    # Judge0 language mappings
+    language_ids = {
+        "python": 71,      # Python 3.8.1
+        "javascript": 63,  # JavaScript (Node.js 12.14.0)
+        "java": 62,        # Java (OpenJDK 13.0.1)
+        "cpp": 54,         # C++ (GCC 9.2.0)
+        "c": 50,           # C (GCC 9.2.0)
+        "typescript": 74   # TypeScript (3.7.4)
+    }
+    
+    language_id = language_ids.get(request.language.lower(), 71)  # Default to Python
+    
+    try:
+        # Judge0 API configuration
+        judge0_url = "https://judge0-ce.p.rapidapi.com"
+        headers = {
+            "content-type": "application/json",
+            "X-RapidAPI-Key": "YOUR_JUDGE0_API_KEY",  # Replace with actual key
+            "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com"
+        }
+        
+        # Submit code for execution
+        submission_data = {
+            "source_code": request.code,
+            "language_id": language_id,
+            "stdin": request.stdin or "",
+            "expected_output": ""
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Submit the code
+            response = await client.post(
+                f"{judge0_url}/submissions",
+                json=submission_data,
+                headers=headers,
+                params={"base64_encoded": "false", "wait": "true"}
+            )
+            
+            if response.status_code != 201:
+                raise HTTPException(status_code=500, detail="Failed to submit code to Judge0")
+            
+            result = response.json()
+            
+            # Parse Judge0 response
+            if result.get("status", {}).get("id") == 3:  # Accepted
+                return {
+                    "success": True,
+                    "output": result.get("stdout", "").strip(),
+                    "error": None,
+                    "executionTime": float(result.get("time", 0))
+                }
+            else:
+                error_msg = result.get("stderr", "") or result.get("compile_output", "") or "Execution failed"
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": error_msg.strip(),
+                    "executionTime": float(result.get("time", 0))
+                }
+                
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=408, detail="Code execution timeout")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Judge0 execution failed: {str(e)}")
 
 
 @router.post("/evaluate")

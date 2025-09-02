@@ -88,18 +88,23 @@ pnpm dev
 
 ## 🚀 Deployment
 
-### Azure Functions Deployment
+### Auto-Submit Service Deployment
 ```bash
 # Deploy auto-submit service
-cd azure-functions
+cd auto-submit
 func azure functionapp publish func-assessment-autosubmit
 ```
 
-### Backend (Docker)
+### Backend Setup
 ```bash
 cd backend
-docker build -t assessment-api .
-docker run -p 8000:8000 assessment-api
+# Copy environment template and configure
+cp .env.example .env
+# Edit .env with your Judge0 API key and other settings
+
+# Install dependencies and run
+uv sync
+uv run uvicorn main:app --reload
 ```
 
 ### Frontend (Vercel)
@@ -172,7 +177,8 @@ This platform implements a **server-authoritative assessment timing system** for
 ### Documentation
 - [📖 Server-Authoritative System Documentation](./docs/server-authoritative-assessment.md)
 - [🧪 Testing Guide](./docs/testing-guide.md)
-- [🚀 Azure Function Deployment](./azure-functions/deployment.md)
+- [🚀 Auto-Submit Service Deployment](./auto-submit/deployment.md)
+- [⚡ Judge0 Setup Guide](./docs/judge0-setup.md)
 
 ## 🎯 Current Status
 

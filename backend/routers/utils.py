@@ -2,18 +2,25 @@ from fastapi import APIRouter, HTTPException
 from models import CodeExecutionRequest, EvaluationRequest
 import httpx
 import asyncio
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 router = APIRouter()
+
+# Judge0 Configuration
+JUDGE0_API_URL = os.getenv("JUDGE0_API_URL", "https://judge0-ce.p.rapidapi.com")
+JUDGE0_API_KEY = os.getenv("JUDGE0_API_KEY", "")
+USE_JUDGE0 = os.getenv("USE_JUDGE0", "false").lower() == "true"
 
 
 @router.post("/run-code")
 async def run_code(request: CodeExecutionRequest):
     """Execute code using Judge0 API or mock for development"""
     
-    # Toggle between mock and Judge0 based on environment
-    USE_JUDGE0 = False  # Set to True when Judge0 is configured
-    
-    if USE_JUDGE0:
+    if USE_JUDGE0 and JUDGE0_API_KEY:
         return await execute_with_judge0(request)
     else:
         # Mock implementation for development
@@ -94,11 +101,10 @@ async def execute_with_judge0(request: CodeExecutionRequest):
     language_id = language_ids.get(request.language.lower(), 71)  # Default to Python
     
     try:
-        # Judge0 API configuration
-        judge0_url = "https://judge0-ce.p.rapidapi.com"
+        # Judge0 API headers
         headers = {
             "content-type": "application/json",
-            "X-RapidAPI-Key": "YOUR_JUDGE0_API_KEY",  # Replace with actual key
+            "X-RapidAPI-Key": JUDGE0_API_KEY,
             "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com"
         }
         
@@ -113,7 +119,7 @@ async def execute_with_judge0(request: CodeExecutionRequest):
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Submit the code
             response = await client.post(
-                f"{judge0_url}/submissions",
+                f"{JUDGE0_API_URL}/submissions",
                 json=submission_data,
                 headers=headers,
                 params={"base64_encoded": "false", "wait": "true"}

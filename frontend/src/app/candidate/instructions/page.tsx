@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 
 export default function Instructions() {
   const [showModal, setShowModal] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -19,14 +20,50 @@ export default function Instructions() {
     setTimeout(() => setShowModal(true), 500)
   }, [router])
 
-  const startAssessment = () => {
-    // Enter fullscreen mode
-    if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen()
-    }
+  const startAssessment = async () => {
+    setIsStarting(true)
 
-    // Navigate to assessment
-    router.push("/candidate/assessment")
+    try {
+      const testId = localStorage.getItem("testId")
+      if (!testId) {
+        throw new Error("No test ID found")
+      }
+
+      // Call the start assessment endpoint
+      const response = await fetch("http://localhost:8000/api/candidate/assessment/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assessment_id: testId,
+          candidate_id: "candidate@example.com" // In real app, get from auth context
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to start assessment")
+      }
+
+      const data = await response.json()
+
+      // Store submission data in localStorage
+      localStorage.setItem("submissionId", data.submission_id)
+      localStorage.setItem("expirationTime", data.expiration_time)
+      localStorage.setItem("durationMinutes", data.duration_minutes.toString())
+
+      // Enter fullscreen mode
+      if (document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen().catch(err => {
+          console.log("Could not enter fullscreen:", err)
+        })
+      }
+
+      // Navigate to assessment
+      router.push("/candidate/assessment")
+    } catch (error) {
+      console.error("Failed to start assessment:", error)
+      alert("Failed to start assessment. Please try again.")
+      setIsStarting(false)
+    }
   }
 
   const instructions = [
@@ -86,9 +123,10 @@ export default function Instructions() {
             <div className="flex justify-center">
               <Button
                 onClick={startAssessment}
+                disabled={isStarting}
                 className="px-8 py-3 text-lg btn-assessment-primary"
               >
-                I Understand - Start Assessment
+                {isStarting ? "Starting Assessment..." : "I Understand - Start Assessment"}
               </Button>
             </div>
           </div>

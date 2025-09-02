@@ -122,7 +122,7 @@ class Answer(BaseModel):
     code_submissions: Optional[List[Dict[str, Any]]] = None  # For coding questions
 
 
-class Result(BaseModel):
+class Submission(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True,
@@ -132,8 +132,27 @@ class Result(BaseModel):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     test_id: str
     candidate_email: str
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    start_time: datetime = Field(default_factory=datetime.utcnow)
+    expiration_time: datetime
+    status: str = "in-progress"  # "in-progress", "completed", "completed_auto_submitted"
+    answers: List[Answer] = []
+    proctoring_events: List[ProctoringEvent] = []
+    submitted_at: Optional[datetime] = None
+
+
+class Result(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+    
+    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
+    submission_id: str
+    test_id: str
+    candidate_email: str
+    started_at: datetime
+    completed_at: datetime
     proctoring_events: List[ProctoringEvent] = []
     answers: List[Answer] = []
     overall_score: Optional[float] = None
@@ -154,6 +173,23 @@ class TestInitiationRequest(BaseModel):
     candidate_email: str
     question_ids: List[str]
     duration_hours: int = 2
+
+
+class StartAssessmentRequest(BaseModel):
+    assessment_id: str
+    candidate_id: str
+
+
+class StartAssessmentResponse(BaseModel):
+    submission_id: str
+    expiration_time: datetime
+    duration_minutes: int
+
+
+class UpdateSubmissionRequest(BaseModel):
+    submission_id: str
+    answers: List[Answer]
+    proctoring_events: List[ProctoringEvent] = []
 
 
 class SubmissionRequest(BaseModel):

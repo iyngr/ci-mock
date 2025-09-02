@@ -67,7 +67,7 @@ export default function Assessment() {
   const [questions, setQuestions] = useState<Question[]>([])
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [answers, setAnswers] = useState<Answer[]>([])
-  const [timeLeft, setTimeLeft] = useState(2 * 60 * 60) // 2 hours in seconds
+  const [timeLeft, setTimeLeft] = useState(0) // Will be calculated from server expiration time
   const [loading, setLoading] = useState(true)
   const [proctoringEvents, setProctoringEvents] = useState<ProctoringEvent[]>([])
   const [codeOutput, setCodeOutput] = useState("")
@@ -77,6 +77,8 @@ export default function Assessment() {
   const [notification, setNotification] = useState<string | null>(null)
   const [showIncompleteModal, setShowIncompleteModal] = useState(false)
   const [unansweredIndices, setUnansweredIndices] = useState<number[]>([])
+  const [submissionId, setSubmissionId] = useState<string | null>(null)
+  const [expirationTime, setExpirationTime] = useState<string | null>(null)
 
   // Role-based state
   const [selectedRole, setSelectedRole] = useState<DeveloperRole | null>(null)
@@ -205,8 +207,11 @@ export default function Assessment() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    const testId = localStorage.getItem("testId")
-    if (!testId) return
+    const storedSubmissionId = localStorage.getItem("submissionId")
+    if (!storedSubmissionId) {
+      console.error("No submission ID found")
+      return
+    }
 
     setIsSubmitting(true) // Disable proctoring during submission
     isSubmittingRef.current = true
@@ -239,11 +244,11 @@ export default function Assessment() {
     }))
 
     try {
-      const response = await fetch("http://localhost:8000/api/candidate/submit", {
+      const response = await fetch("http://localhost:8000/api/candidate/assessment/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          test_id: testId,
+          submission_id: storedSubmissionId,
           answers: mappedAnswers,
           proctoring_events: mappedEvents
         })
@@ -253,6 +258,9 @@ export default function Assessment() {
 
       if (data.success) {
         localStorage.removeItem("testId")
+        localStorage.removeItem("submissionId")
+        localStorage.removeItem("expirationTime")
+        localStorage.removeItem("durationMinutes")
         localStorage.removeItem("assessment_autosave")
         router.push("/candidate/success")
       } else {
@@ -287,10 +295,23 @@ export default function Assessment() {
 
   useEffect(() => {
     const testId = localStorage.getItem("testId")
-    if (!testId) {
+    const storedSubmissionId = localStorage.getItem("submissionId")
+    const storedExpirationTime = localStorage.getItem("expirationTime")
+
+    if (!testId || !storedSubmissionId || !storedExpirationTime) {
       router.push("/candidate")
       return
     }
+
+    // Set state from localStorage
+    setSubmissionId(storedSubmissionId)
+    setExpirationTime(storedExpirationTime)
+
+    // Calculate initial time left based on server expiration time
+    const expirationDate = new Date(storedExpirationTime)
+    const now = new Date()
+    const timeLeftSeconds = Math.max(0, Math.floor((expirationDate.getTime() - now.getTime()) / 1000))
+    setTimeLeft(timeLeftSeconds)
 
     // Only fetch assessment data once on mount
     let isMounted = true;
@@ -359,16 +380,19 @@ export default function Assessment() {
       });
     }
 
-    // Setup timer
+    // Setup timer - now using server-provided expiration time
     const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          // Time's up - auto submit
-          handleSubmit()
-          return 0
-        }
-        return prev - 1
-      })
+      const currentTime = new Date()
+      const expiration = new Date(storedExpirationTime)
+      const remainingTime = Math.max(0, Math.floor((expiration.getTime() - currentTime.getTime()) / 1000))
+
+      setTimeLeft(remainingTime)
+
+      if (remainingTime <= 0) {
+        // Time's up - auto submit
+        handleSubmit()
+        clearInterval(timer)
+      }
     }, 1000)
 
     // Setup proctoring

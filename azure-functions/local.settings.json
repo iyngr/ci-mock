@@ -1,0 +1,13 @@
+{
+    "IsEncrypted": false,
+    "Values": {
+        "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+        "FUNCTIONS_WORKER_RUNTIME": "python",
+        "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+        "COSMOS_DB_ENDPOINT": "https://your-cosmosdb-account.documents.azure.com:443/",
+        "COSMOS_DB_CONNECTION_STRING": "AccountEndpoint=https://your-cosmosdb-account.documents.azure.com:443/;AccountKey=your-account-key;",
+        "COSMOS_DB_NAME": "assessment-platform",
+        "COSMOS_DB_KEY": "your-cosmos-db-key",
+        "AI_SCORING_ENDPOINT": "https://your-api-endpoint.com/api/utils/evaluate"
+    }
+}

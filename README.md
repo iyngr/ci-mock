@@ -1,12 +1,13 @@
 # AI-Powered Technical Assessment Platform
 
-A comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation and real-time proctoring.
+A comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation, real-time proctoring, and **server-authoritative session management**.
 
 ## 🏗️ Architecture
 
 - **Frontend**: Next.js 14 with TypeScript, Tailwind CSS, and Shadcn/UI
 - **Backend**: Python 3.12 with FastAPI and Pydantic
 - **Database**: Azure Cosmos DB (NoSQL API) with motor driver
+- **Auto-Submit Service**: Azure Functions with timer triggers
 - **LLM Integration**: Azure OpenAI Service (GPT-4o)
 - **Code Execution**: Judge0 API
 - **Package Management**: PNPM (frontend), UV (backend)
@@ -16,12 +17,13 @@ A comprehensive technical assessment platform built with Next.js 14 and FastAPI,
 ### For Candidates
 - ✅ Secure login with unique assessment codes
 - ✅ Interactive instructions with fullscreen mode
+- ✅ **Server-controlled assessment timing** (tamper-resistant)
 - ✅ Multi-question type support (MCQ, Descriptive, Coding)
 - ✅ Monaco Editor for coding questions with syntax highlighting
 - ✅ Real-time code execution and testing
 - ✅ Timer and navigation controls
 - ✅ Proctoring features (fullscreen monitoring, tab switching detection)
-- ✅ Auto-submission on time expiry
+- ✅ **Automatic submission on server-side expiry**
 
 ### For Administrators
 - ✅ Secure admin authentication
@@ -31,6 +33,14 @@ A comprehensive technical assessment platform built with Next.js 14 and FastAPI,
 - ✅ Searchable test-taker table
 - ✅ Detailed candidate reports
 - ✅ AI-powered evaluation and scoring
+- ✅ **Auto-submission monitoring and reporting**
+
+### Security & Integrity
+- 🔒 **Server-authoritative timing** - Backend controls all session lifecycle
+- 🔒 **Auto-submission service** - Azure Function handles abandoned sessions
+- 🔒 **Tamper-resistant** - Frontend cannot modify assessment duration
+- 🔒 **Audit trail** - Complete session tracking and logging
+- 🔒 **Time synchronization** - All timing based on server clock
 
 ## 📸 Screenshots
 
@@ -78,6 +88,13 @@ pnpm dev
 
 ## 🚀 Deployment
 
+### Azure Functions Deployment
+```bash
+# Deploy auto-submit service
+cd azure-functions
+func azure functionapp publish func-assessment-autosubmit
+```
+
 ### Backend (Docker)
 ```bash
 cd backend
@@ -93,10 +110,12 @@ vercel --prod
 
 ## 📝 API Endpoints
 
-### Candidate Routes
+### Candidate Routes (NEW: Server-Authoritative)
 - `POST /api/candidate/login` - Validate login code
+- `POST /api/candidate/assessment/start` - **NEW**: Start assessment session
 - `GET /api/candidate/assessment/{test_id}` - Get assessment questions
-- `POST /api/candidate/submit` - Submit assessment answers
+- `POST /api/candidate/assessment/submit` - **NEW**: Submit with submission ID
+- `POST /api/candidate/submit` - Legacy submit endpoint (deprecated)
 
 ### Admin Routes
 - `POST /api/admin/login` - Admin authentication
@@ -107,6 +126,11 @@ vercel --prod
 ### Utility Routes
 - `POST /api/utils/run-code` - Execute code via Judge0
 - `POST /api/utils/evaluate` - AI-powered evaluation
+
+### Azure Function (Auto-Submit Service)
+- **Timer Trigger**: Runs every 5 minutes to auto-submit expired assessments
+- **Database**: Queries Cosmos DB for expired in-progress submissions
+- **Action**: Updates status to `completed_auto_submitted`
 
 ## 🔧 Configuration
 
@@ -121,14 +145,43 @@ JUDGE0_API_KEY=your-judge0-key
 
 # Frontend
 NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Azure Function Environment Variables
+COSMOS_DB_ENDPOINT=https://your-cosmos.documents.azure.com:443/
+COSMOS_DB_NAME=assessment-db
+AI_SCORING_ENDPOINT=https://your-api.com/api/utils/evaluate
 ```
+
+## 🔧 Server-Authoritative System
+
+This platform implements a **server-authoritative assessment timing system** for enhanced security and integrity:
+
+### Key Benefits
+- **Tamper Resistance**: Assessment duration cannot be modified client-side
+- **Automatic Cleanup**: Abandoned sessions are automatically closed
+- **Audit Trail**: Complete session lifecycle tracking
+- **Time Synchronization**: All timing decisions made by trusted server
+
+### Architecture Flow
+1. **Start Assessment**: Frontend calls `/api/candidate/assessment/start`
+2. **Server Control**: Backend creates session with expiration time
+3. **Timer Display**: Frontend shows countdown to server expiration
+4. **Auto-Submit**: Azure Function auto-submits expired sessions
+5. **Final Submission**: Uses submission ID instead of test ID
+
+### Documentation
+- [📖 Server-Authoritative System Documentation](./docs/server-authoritative-assessment.md)
+- [🧪 Testing Guide](./docs/testing-guide.md)
+- [🚀 Azure Function Deployment](./azure-functions/deployment.md)
 
 ## 🎯 Current Status
 
 - ✅ **Task 1**: Project Setup & Database Schema
 - ✅ **Task 2**: Candidate Assessment Module (Frontend)
 - ✅ **Task 3**: Admin Portal Module (Frontend)
-- ✅ **Task 4**: Backend Application (FastAPI) - Basic Implementation
+- ✅ **Task 4**: Backend Application (FastAPI) - Complete Implementation
+- ✅ **Task 5**: Server-Authoritative Assessment System
+- ✅ **Task 6**: Auto-Submit Azure Function
 - ⏳ **Task 5**: Detailed Candidate Report Module
 - ⏳ **Task 6**: Production Deployment
 

@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "azure-cosmos>=4.9.0",
+    "azure-functions>=1.23.0",
     "fastapi>=0.116.1",
     "httpx>=0.28.1",
     "motor>=3.7.1",

@@ -1,0 +1,30 @@
+[project]
+name = "llm-agent"
+version = "0.1.0"
+description = "LLM Agent for CI Assessment Platform"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.1",
+    "uvicorn>=0.35.0",
+    "python-dotenv>=1.0.1",
+    "azure-cosmos>=4.5.1",
+    "azure-identity>=1.15.0",
+    "autogen-agentchat>=0.4.0",
+    "autogen-ext[openai,azure]>=0.4.0",
+    "pyyaml>=6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_agent"]  # Add this to specify
+
+[tool.uv]
+dev-dependencies = [
+    "autogenstudio",
+    "pytest>=8.0.0",
+    "black>=24.0.0",
+    "ruff>=0.6.0",
+]

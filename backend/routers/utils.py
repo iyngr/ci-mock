@@ -193,7 +193,42 @@ async def evaluate_result(
     request: EvaluationRequest,
     db: CosmosDBService = Depends(get_cosmosdb)
 ):
-    """Evaluate a completed test using AI (mock implementation)"""
+    """Evaluate a completed test using hybrid scoring (redirects to new scoring service)"""
+    
+    try:
+        # Import the new scoring service
+        from routers.scoring import ScoringTriageService
+        
+        # Use the new hybrid scoring system
+        triage_service = ScoringTriageService(db)
+        result = await triage_service.process_submission(request.submission_id)
+        
+        # Convert to legacy format for backward compatibility
+        legacy_evaluation = {
+            "overallScore": result.percentage_score,
+            "totalPoints": result.total_score,
+            "maxPoints": result.max_possible_score,
+            "mcqResults": len(result.mcq_results),
+            "llmResults": len(result.llm_results),
+            "evaluationTime": result.evaluation_time,
+            "costBreakdown": result.cost_breakdown,
+            "finalSummary": f"Assessment completed using hybrid scoring. MCQ questions: {len(result.mcq_results)}, LLM evaluated: {len(result.llm_results)}. Total score: {result.percentage_score:.1f}%"
+        }
+        
+        return {
+            "success": True,
+            "evaluation": legacy_evaluation,
+            "message": "Result evaluated successfully using hybrid scoring system"
+        }
+        
+    except Exception as e:
+        # Fallback to mock evaluation if hybrid scoring fails
+        print(f"Hybrid scoring failed, falling back to mock: {e}")
+        return await _legacy_mock_evaluation(request, db)
+
+
+async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBService):
+    """Legacy mock evaluation for fallback"""
     
     # Mock AI evaluation
     await asyncio.sleep(2)  # Simulate AI processing time
@@ -243,5 +278,5 @@ async def evaluate_result(
     return {
         "success": True,
         "evaluation": mock_evaluation,
-        "message": "Result evaluated successfully"
+        "message": "Result evaluated successfully (legacy mock)"
     }

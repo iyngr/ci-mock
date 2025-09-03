@@ -19,8 +19,8 @@ class CosmosDocument(BaseModel):
     
     # Azure Cosmos DB standard fields
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id", description="Document ID")
-    _etag: Optional[str] = Field(None, description="Cosmos DB ETag for optimistic concurrency")
-    _ts: Optional[float] = Field(None, description="Cosmos DB timestamp")
+    etag: Optional[str] = Field(None, alias="_etag", description="Cosmos DB ETag for optimistic concurrency")
+    ts: Optional[float] = Field(None, alias="_ts", description="Cosmos DB timestamp")
     
     @computed_field
     @property
@@ -303,6 +303,63 @@ class UpdateSubmissionRequest(BaseModel):
     """Request model for updating submission answers"""
     answers: List[Answer]
     proctoring_events: Optional[List[ProctoringEvent]] = Field(None, alias="proctoringEvents")
+
+
+# ===========================
+# SCORING SYSTEM MODELS
+# ===========================
+
+class MCQScoreResult(BaseModel):
+    """Result of MCQ direct validation"""
+    question_id: str = Field(..., alias="questionId")
+    correct: bool = Field(..., description="Whether the answer is correct")
+    selected_option_id: str = Field(..., alias="selectedOptionId")
+    correct_option_id: str = Field(..., alias="correctOptionId")
+    points_awarded: float = Field(..., alias="pointsAwarded")
+
+
+class LLMScoreResult(BaseModel):
+    """Result of LLM-based scoring for descriptive/coding questions"""
+    question_id: str = Field(..., alias="questionId")
+    score: float = Field(..., description="Score from 0.0 to 1.0")
+    feedback: Optional[str] = Field(None, description="AI-generated feedback")
+    rubric_breakdown: Optional[Dict[str, float]] = Field(None, alias="rubricBreakdown")
+    points_awarded: float = Field(..., alias="pointsAwarded")
+
+
+class ScoringTriageRequest(BaseModel):
+    """Request for hybrid scoring workflow"""
+    submission_id: str = Field(..., alias="submissionId")
+
+
+class ScoringTriageResponse(BaseModel):
+    """Response from hybrid scoring workflow"""
+    submission_id: str = Field(..., alias="submissionId")
+    total_score: float = Field(..., alias="totalScore")
+    max_possible_score: float = Field(..., alias="maxPossibleScore")
+    percentage_score: float = Field(..., alias="percentageScore")
+    mcq_results: List[MCQScoreResult] = Field(default_factory=list, alias="mcqResults")
+    llm_results: List[LLMScoreResult] = Field(default_factory=list, alias="llmResults")
+    evaluation_time: float = Field(..., alias="evaluationTime", description="Total evaluation time in seconds")
+    cost_breakdown: Dict[str, Any] = Field(default_factory=dict, alias="costBreakdown")
+
+
+class MCQValidationRequest(BaseModel):
+    """Request for single MCQ validation"""
+    question_id: str = Field(..., alias="questionId")
+    selected_option_id: str = Field(..., alias="selectedOptionId")
+
+
+class MCQBatchValidationRequest(BaseModel):
+    """Request for batch MCQ validation"""
+    mcq_answers: List[MCQValidationRequest] = Field(..., alias="mcqAnswers")
+
+
+class MCQBatchValidationResponse(BaseModel):
+    """Response for batch MCQ validation"""
+    results: List[MCQScoreResult]
+    total_correct: int = Field(..., alias="totalCorrect")
+    total_questions: int = Field(..., alias="totalQuestions")
 
 
 # ===========================

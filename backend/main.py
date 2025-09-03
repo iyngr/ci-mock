@@ -5,7 +5,7 @@ from azure.cosmos.cosmos_client import ConnectionPolicy
 from azure.identity import DefaultAzureCredential
 import os
 from contextlib import asynccontextmanager
-from routers import candidate, admin, utils
+from routers import candidate, admin, utils, scoring
 
 # Cosmos DB connection
 cosmos_client = None
@@ -85,8 +85,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AI Technical Assessment Platform API",
-    description="Backend API for the AI-powered technical assessment platform",
+    title="Smart Mock",
+    description="Backend API for the Smart Mock platform",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -213,6 +213,7 @@ async def reset_metrics():
 app.include_router(candidate.router, prefix="/api/candidate", tags=["candidate"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(utils.router, prefix="/api/utils", tags=["utils"])
+app.include_router(scoring.router, prefix="/api/scoring", tags=["scoring"])
 
 
 def main():

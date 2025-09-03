@@ -1,14 +1,19 @@
 import asyncio
-import logging
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any
 from autogen_agentchat.ui import Console
+from autogen_agentchat.conditions import MaxMessageTermination
 from agents import create_assessment_team, create_question_generation_team, model_client
 from logging_config import get_logger
 
 # Configure application logger
 logger = get_logger("main")
+
+# Debug mode configuration
+DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+CONSOLE_UI_ENABLED = os.getenv("CONSOLE_UI_ENABLED", "false").lower() == "true"
 
 app = FastAPI(
     title="Smart Mock AI Service",
@@ -18,11 +23,18 @@ app = FastAPI(
 # Pydantic models for request validation
 class GenerateReportRequest(BaseModel):
     submission_id: str
+    debug_mode: bool = False  # Allow per-request debug mode
 
 class GenerateQuestionRequest(BaseModel):
     skill: str
     question_type: str
     difficulty: str
+    debug_mode: bool = False  # Allow per-request debug mode
+
+class DebugInteractionRequest(BaseModel):
+    """Request model for debug console interactions"""
+    task: str
+    team_type: str = "assessment"  # "assessment" or "question_generation"
 
 @app.on_event("startup")
 async def startup_event():
@@ -36,12 +48,12 @@ async def shutdown_event():
     logger.info("Smart Mock AI Service shutdown complete")
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, Any]:
     """Health check endpoint"""
     return {"status": "healthy", "service": "Smart Mock AI Service"}
 
 @app.post("/generate-report")
-async def generate_report(request: GenerateReportRequest):
+async def generate_report(request: GenerateReportRequest) -> Dict[str, Any]:
     """
     Initiates a multi-agent workflow to score and generate a report for a submission.
     
@@ -57,6 +69,12 @@ async def generate_report(request: GenerateReportRequest):
         # Define the task for the team
         task = f"Please generate a comprehensive assessment report for submission_id: '{request.submission_id}'. Follow the complete workflow: fetch data, score MCQs, analyze coding and text responses, then synthesize the final report."
         
+        # Initialize console for debug mode if enabled
+        console = None
+        if request.debug_mode or DEBUG_MODE:
+            console = Console()
+            logger.info("Debug mode enabled - agent conversations will be displayed")
+        
         # Run the assessment workflow
         result_stream = assessment_team.run_stream(task=task)
         
@@ -65,6 +83,10 @@ async def generate_report(request: GenerateReportRequest):
         final_report = "No report generated."
         
         async for message in result_stream:
+            # Debug console output if enabled
+            if console:
+                console.print(message)
+                
             conversation_messages.append({
                 "source": message.source if hasattr(message, 'source') else "system",
                 "content": message.content if hasattr(message, 'content') else str(message)
@@ -89,7 +111,7 @@ async def generate_report(request: GenerateReportRequest):
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 @app.post("/generate-question")
-async def generate_question(request: GenerateQuestionRequest):
+async def generate_question(request: GenerateQuestionRequest) -> Dict[str, Any]:
     """
     Uses a multi-agent workflow to generate a new assessment question.
     
@@ -184,7 +206,7 @@ async def assess_submission(request: GenerateReportRequest):
         raise HTTPException(status_code=500, detail=f"Assessment failed: {str(e)}")
 
 @app.get("/agents/status")
-async def get_agents_status():
+async def get_agents_status() -> Dict[str, Any]:
     """
     Get the status of all available agents and their capabilities.
     """
@@ -226,6 +248,84 @@ async def get_agents_status():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+@app.post("/debug/console-interaction")
+async def debug_console_interaction(request: DebugInteractionRequest) -> Dict[str, Any]:
+    """
+    Debug endpoint for console-based agent interactions.
+    Allows interactive debugging of agent conversations.
+    """
+    if not (DEBUG_MODE or CONSOLE_UI_ENABLED):
+        raise HTTPException(status_code=403, detail="Debug mode is disabled")
+    
+    try:
+        logger.info(f"Starting debug console interaction for task: {request.task}")
+        
+        # Create the appropriate team
+        if request.team_type == "question_generation":
+            team = create_question_generation_team()
+        else:
+            team = create_assessment_team()
+        
+        # Initialize console UI for debugging
+        console = Console()
+        
+        if CONSOLE_UI_ENABLED:
+            # Run with console UI (will show in terminal)
+            result_stream = team.run_stream(
+                task=request.task,
+                termination_condition=MaxMessageTermination(max_messages=5)
+            )
+            
+            # Process messages for both console display and API response
+            messages = []
+            async for message in result_stream:
+                # Display in console for debugging
+                console.print(message)
+                
+                # Collect for API response
+                messages.append({
+                    "source": getattr(message, 'source', 'system'),
+                    "content": getattr(message, 'content', str(message)),
+                    "timestamp": str(asyncio.get_event_loop().time())
+                })
+        else:
+            # API-only mode without console output
+            result_stream = team.run_stream(task=request.task)
+            messages = []
+            async for message in result_stream:
+                messages.append({
+                    "source": getattr(message, 'source', 'system'), 
+                    "content": getattr(message, 'content', str(message)),
+                    "timestamp": str(asyncio.get_event_loop().time())
+                })
+        
+        return {
+            "task": request.task,
+            "team_type": request.team_type,
+            "messages": messages,
+            "console_enabled": CONSOLE_UI_ENABLED,
+            "debug_mode": DEBUG_MODE,
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Debug console interaction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Debug interaction failed: {str(e)}")
+
+
+@app.get("/debug/status")
+async def debug_status() -> Dict[str, Any]:
+    """Get debug mode and console UI status"""
+    return {
+        "debug_mode": DEBUG_MODE,
+        "console_ui_enabled": CONSOLE_UI_ENABLED,
+        "environment_vars": {
+            "DEBUG_MODE": os.getenv("DEBUG_MODE", "false"),
+            "CONSOLE_UI_ENABLED": os.getenv("CONSOLE_UI_ENABLED", "false")
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

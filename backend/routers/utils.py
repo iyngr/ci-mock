@@ -1,9 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from models import CodeExecutionRequest, EvaluationRequest
 import httpx
 import asyncio
 import os
 from dotenv import load_dotenv
+from database import CosmosDBService, get_cosmosdb_service
+from datetime import datetime
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -16,15 +19,47 @@ JUDGE0_API_KEY = os.getenv("JUDGE0_API_KEY", "")
 USE_JUDGE0 = os.getenv("USE_JUDGE0", "false").lower() == "true"
 
 
+# Database dependency
+async def get_cosmosdb() -> CosmosDBService:
+    """Get Cosmos DB service dependency"""
+    from main import database_client
+    if database_client is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    return await get_cosmosdb_service(database_client)
+
+
 @router.post("/run-code")
-async def run_code(request: CodeExecutionRequest):
+async def run_code(
+    request: CodeExecutionRequest,
+    db: CosmosDBService = Depends(get_cosmosdb)
+):
     """Execute code using Judge0 API or mock for development"""
     
+    # Execute the code
     if USE_JUDGE0 and JUDGE0_API_KEY:
-        return await execute_with_judge0(request)
+        result = await execute_with_judge0(request)
     else:
         # Mock implementation for development
-        return await mock_code_execution(request)
+        result = await mock_code_execution(request)
+    
+    # Store execution result in Cosmos DB for analytics and debugging
+    try:
+        execution_record = {
+            "id": str(uuid.uuid4()),
+            "language": request.language,
+            "code": request.code,
+            "stdin": request.stdin,
+            "result": result,
+            "timestamp": datetime.utcnow().isoformat(),
+            "execution_type": "judge0" if USE_JUDGE0 and JUDGE0_API_KEY else "mock"
+        }
+        
+        await db.create_item("code_executions", execution_record, partition_key=request.language)
+    except Exception as e:
+        # Don't fail the execution if storage fails, just log it
+        print(f"Failed to store execution result: {e}")
+    
+    return result
 
 
 async def mock_code_execution(request: CodeExecutionRequest):
@@ -154,7 +189,10 @@ async def execute_with_judge0(request: CodeExecutionRequest):
 
 
 @router.post("/evaluate")
-async def evaluate_result(request: EvaluationRequest):
+async def evaluate_result(
+    request: EvaluationRequest,
+    db: CosmosDBService = Depends(get_cosmosdb)
+):
     """Evaluate a completed test using AI (mock implementation)"""
     
     # Mock AI evaluation
@@ -175,6 +213,32 @@ async def evaluate_result(request: EvaluationRequest):
         },
         "finalSummary": "The candidate demonstrated strong technical skills with excellent programming abilities. Shows good understanding of algorithms and data structures. Could improve on system design concepts."
     }
+    
+    # Store evaluation result in Cosmos DB
+    try:
+        evaluation_record = {
+            "id": str(uuid.uuid4()),
+            "submission_id": request.submission_id,
+            "evaluation": mock_evaluation,
+            "timestamp": datetime.utcnow().isoformat(),
+            "evaluator": "ai_mock"
+        }
+        
+        await db.create_item("evaluations", evaluation_record, partition_key=request.submission_id)
+        
+        # Update the submission with the evaluation results
+        await db.update_item(
+            "submissions",
+            request.submission_id,
+            {
+                "score": mock_evaluation["overallScore"],
+                "evaluation": mock_evaluation,
+                "evaluated_at": datetime.utcnow().isoformat()
+            },
+            partition_key=request.submission_id
+        )
+    except Exception as e:
+        print(f"Failed to store evaluation result: {e}")
     
     return {
         "success": True,

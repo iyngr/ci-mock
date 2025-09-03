@@ -104,11 +104,14 @@ def check_autogen_studio_installation():
     """
     Check if AutoGen Studio is installed and available.
     """
-    try:
-        import autogen_studio
+    import importlib.util
+    
+    # Use importlib.util.find_spec to check availability without importing
+    spec = importlib.util.find_spec("autogen_studio")
+    if spec is not None:
         print("✓ AutoGen Studio is installed")
         return True
-    except ImportError:
+    else:
         print("❌ AutoGen Studio is not installed")
         print("   Install it with: uv add --dev autogen-studio")
         return False

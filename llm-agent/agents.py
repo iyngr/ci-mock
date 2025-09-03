@@ -297,3 +297,79 @@ Always format your output as valid JSON with the question structure expected by 
     )
     
     return question_team
+
+
+# --- ASYNC TEAM OPERATIONS (AutoGen v0.4 patterns) ---
+
+async def create_assessment_team_async() -> SelectorGroupChat:
+    """
+    Async version of team creation following AutoGen v0.4 patterns.
+    Creates the multi-agent assessment team with async initialization.
+    """
+    # Initialize team asynchronously (if agents need async setup)
+    await asyncio.sleep(0)  # Placeholder for async agent initialization
+    
+    # Use the existing sync creation but with async wrapper
+    team = create_assessment_team()
+    return team
+
+
+async def run_assessment_async(submission_id: str) -> List[BaseChatMessage]:
+    """
+    Run assessment team operations asynchronously.
+    Returns list of messages from the conversation.
+    """
+    team = await create_assessment_team_async()
+    
+    # Create initial message for the assessment
+    initial_message = f"Please process assessment for submission_id: {submission_id}"
+    
+    # Run the team conversation asynchronously
+    result = await team.run_stream_async(
+        task=initial_message,
+        termination_condition=MaxMessageTermination(max_messages=10)
+    )
+    
+    # Collect messages from the conversation
+    messages: List[BaseChatMessage] = []
+    async for message in result:
+        if isinstance(message, BaseChatMessage):
+            messages.append(message)
+    
+    return messages
+
+
+async def generate_questions_async(skill: str, question_type: str, difficulty: str) -> List[BaseChatMessage]:
+    """
+    Generate questions asynchronously using the question generation team.
+    Uses the generate_question_from_ai tool for enhanced question creation.
+    """
+    # Create question generation team
+    team = create_question_generation_team()
+    
+    # Generate question using the AI tool first
+    ai_question = generate_question_from_ai(skill, question_type, difficulty)
+    
+    # Create task message for the team
+    task_message = f"""
+    Generate a {difficulty} {question_type} question about {skill}.
+    
+    AI-generated baseline: {ai_question}
+    
+    Please review, enhance, and provide a final polished question.
+    End with COMPLETE when done.
+    """
+    
+    # Run team conversation asynchronously  
+    result = await team.run_stream_async(
+        task=task_message,
+        termination_condition=TextMentionTermination("COMPLETE")
+    )
+    
+    # Collect generated questions as messages
+    messages: List[BaseChatMessage] = []
+    async for message in result:
+        if isinstance(message, BaseChatMessage):
+            messages.append(message)
+    
+    return messages

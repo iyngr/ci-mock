@@ -1,8 +1,32 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional, Any, Dict, Union, Annotated
-from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Any, Dict, Union, Annotated, Literal
+from pydantic import BaseModel, Field, ConfigDict, computed_field
 import uuid
+
+
+# ===========================
+# COSMOS DB SPECIFIC MODELS
+# ===========================
+
+class CosmosDocument(BaseModel):
+    """Base class for all Cosmos DB documents"""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        extra="forbid"
+    )
+    
+    # Azure Cosmos DB standard fields
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id", description="Document ID")
+    _etag: Optional[str] = Field(None, description="Cosmos DB ETag for optimistic concurrency")
+    _ts: Optional[float] = Field(None, description="Cosmos DB timestamp")
+    
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Override in subclasses to define partition key"""
+        return self.id
 
 
 # ===========================
@@ -58,7 +82,7 @@ class ProctoringEventType(str, Enum):
 # USERS CONTAINER MODELS
 # ===========================
 
-class User(BaseModel):
+class User(CosmosDocument):
     """User model for both admins and candidates"""
     model_config = ConfigDict(
         populate_by_name=True,
@@ -74,12 +98,17 @@ class User(BaseModel):
         }
     )
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
     name: str = Field(..., description="Full name of the user")
     email: str = Field(..., description="Email address")
     role: UserRole = Field(..., description="User role: admin or candidate")
     developer_role: Optional[DeveloperRole] = Field(None, alias="developerRole", description="Role candidate is interviewing for (only for candidates)")
     created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Partition by user role for efficient queries"""
+        return self.role.value
 
 
 class CreateUserRequest(BaseModel):
@@ -106,24 +135,54 @@ class TestCase(BaseModel):
     expected_output: str = Field(..., description="Expected output", alias="expectedOutput")
 
 
-class Question(BaseModel):
-    """Base question model"""
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+class Question(CosmosDocument):
+    """Base question model with common fields"""
     type: QuestionType = Field(..., description="Type of question")
-    text: str = Field(..., description="Question text/prompt")
+    text: str = Field(..., alias="prompt", description="Question text/prompt")
     skill: str = Field(..., description="Skill being tested")
+    points: int = Field(default=1, description="Points for this question")
+    difficulty: str = Field(default="medium", description="Question difficulty")
+    tags: List[str] = Field(default_factory=list, description="Question tags")
+    role: Optional[str] = Field(None, description="Target developer role")
     
-    # MCQ specific fields
-    options: Optional[List[MCQOption]] = Field(None, description="Options for MCQ")
-    correct_answer: Optional[str] = Field(None, alias="correctAnswer", description="Correct answer ID for MCQ")
-    
-    # Coding specific fields
-    starter_code: Optional[str] = Field(None, alias="starterCode", description="Starter code for coding questions")
-    test_cases: Optional[List[TestCase]] = Field(None, alias="testCases", description="Test cases for coding questions")
-    programming_language: Optional[ProgrammingLanguage] = Field(None, alias="programmingLanguage", description="Programming language for coding questions")
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Partition by question type for efficient queries"""
+        return self.type.value
 
 
-class Assessment(BaseModel):
+class MCQQuestion(Question):
+    """Multiple Choice Question model"""
+    type: Literal["mcq"] = Field(default="mcq", description="Always MCQ type")
+    options: Annotated[List[MCQOption], Field(min_length=2, max_length=6, description="2-6 answer options required")] = Field(..., description="List of answer options")
+    correct_answer: str = Field(..., alias="correctAnswer", description="Correct answer option ID")
+
+
+class DescriptiveQuestion(Question):
+    """Descriptive/Essay Question model"""
+    type: Literal["descriptive"] = Field(default="descriptive", description="Always descriptive type")
+    max_words: Optional[Annotated[int, Field(gt=0, le=5000)]] = Field(None, alias="maxWords", description="Word limit (1-5000)")
+    rubric: Optional[Annotated[str, Field(min_length=10, max_length=2000)]] = Field(None, description="Evaluation rubric (10-2000 chars)")
+
+
+class CodingQuestion(Question):
+    """Coding Question model"""
+    type: Literal["coding"] = Field(default="coding", description="Always coding type")
+    starter_code: Annotated[str, Field(min_length=1, max_length=10000)] = Field(..., alias="starter_code", description="Initial code template (1-10k chars)")
+    test_cases: Annotated[List[TestCase], Field(min_length=1, max_length=20)] = Field(..., alias="testCases", description="1-20 test cases required")
+    programming_language: ProgrammingLanguage = Field(..., alias="programmingLanguage", description="Required programming language")
+    time_limit: Annotated[int, Field(gt=0, le=300)] = Field(default=30, alias="timeLimit", description="Execution time limit (1-300 seconds)")
+
+
+# Union type for polymorphic questions - this is the key feature!
+QuestionUnion = Annotated[
+    Union[MCQQuestion, DescriptiveQuestion, CodingQuestion],
+    Field(discriminator='type', description="Polymorphic question type")
+]
+
+
+class Assessment(CosmosDocument):
     """Assessment template model"""
     model_config = ConfigDict(
         populate_by_name=True,
@@ -141,14 +200,19 @@ class Assessment(BaseModel):
         }
     )
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
-    title: str = Field(..., description="Assessment title")
-    description: str = Field(..., description="Assessment description")
-    duration: int = Field(..., description="Duration in minutes")
+    title: Annotated[str, Field(min_length=3, max_length=200)] = Field(..., description="Assessment title (3-200 chars)")
+    description: Annotated[str, Field(min_length=10, max_length=1000)] = Field(..., description="Assessment description (10-1000 chars)") 
+    duration: Annotated[int, Field(gt=0, le=480)] = Field(..., description="Duration in minutes (1-480 max 8 hours)")
     target_role: Optional[DeveloperRole] = Field(None, alias="targetRole", description="Target developer role for this assessment")
     created_by: str = Field(..., alias="createdBy", description="User ID of the admin who created this")
     created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
-    questions: List[Question] = Field(default_factory=list, description="List of questions")
+    questions: Annotated[List[QuestionUnion], Field(min_length=1, max_length=50)] = Field(default_factory=list, description="1-50 polymorphic questions")
+    
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Partition by target role for efficient role-based queries"""
+        return self.target_role.value if self.target_role else "general"
 
 
 class CreateAssessmentRequest(BaseModel):
@@ -186,7 +250,7 @@ class ProctoringEvent(BaseModel):
     details: Optional[Dict[str, Any]] = Field(None, description="Additional event details")
 
 
-class Submission(BaseModel):
+class Submission(CosmosDocument):
     """Submission model for assessment results"""
     model_config = ConfigDict(
         populate_by_name=True,
@@ -206,7 +270,6 @@ class Submission(BaseModel):
         }
     )
     
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()), alias="_id")
     assessment_id: str = Field(..., alias="assessmentId", description="ID of the assessment template")
     candidate_id: str = Field(..., alias="candidateId", description="ID of the candidate user")
     status: SubmissionStatus = Field(..., description="Current status of the submission")
@@ -220,6 +283,12 @@ class Submission(BaseModel):
     # Assessment session management
     login_code: str = Field(..., alias="loginCode", description="Unique code for candidate access")
     created_by: str = Field(..., alias="createdBy", description="Admin who initiated this assessment")
+    
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Partition by assessment ID for efficient queries"""
+        return self.assessment_id
 
 
 class CreateSubmissionRequest(BaseModel):

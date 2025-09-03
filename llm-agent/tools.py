@@ -77,6 +77,9 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
     print(f"TOOL: Generating new AI question for skill: {skill}")
     prompt = f"Generate a {difficulty} {question_type} question about {skill}."
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
+    
+    # Use the prompt hash for caching and identification
+    print(f"Question prompt hash: {prompt_hash[:8]}... (for caching)")
 
     # In a real implementation, you would query generated_questions_container here.
     # For now, we simulate calling OpenAI and returning a new question.
@@ -85,6 +88,7 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
     # For simplicity in this tool definition, we are returning a mock response.
     mock_ai_question = {
         "text": f"This is a newly generated {difficulty} {question_type} question about {skill}.",
+        "prompt_hash": prompt_hash,  # Include hash for question tracking
         # ... other fields like options, correct answer etc.
     }
     

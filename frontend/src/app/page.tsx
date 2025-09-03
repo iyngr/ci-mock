@@ -5,14 +5,17 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 
 export default function Home() {
-  const [ripples, setRipples] = useState<Array<{ id: number; x: number; y: number }>>([])
+  const [ripples, setRipples] = useState<Array<{ id: string; x: number; y: number }>>([])
   const router = useRouter()
 
   const createRipple = (event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
-    const newRipple = { id: Date.now(), x, y }
+
+    // Create truly unique ID using crypto.randomUUID() or Math.random()
+    const uniqueId = `ripple-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    const newRipple = { id: uniqueId, x, y }
 
     setRipples(prev => [...prev, newRipple])
 
@@ -73,7 +76,7 @@ export default function Home() {
               onClick={() => router.push('/candidate')}
             >
               <div className="flex flex-col items-center">
-                <span>Inerviewee</span>
+                <span>Interviewee</span>
               </div>
             </Button>
 

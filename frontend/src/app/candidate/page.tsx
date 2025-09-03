@@ -23,14 +23,19 @@ export default function CandidateLogin() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ login_code: loginCode } as LoginRequest),
+        body: JSON.stringify({ loginCode: loginCode }),
       })
 
       const data = await response.json()
 
       if (data.success) {
-        // Store test ID and redirect to instructions
+        // Store authentication data and test info
+        localStorage.setItem("candidateToken", data.token)
+        localStorage.setItem("candidateId", data.candidateId)
+        localStorage.setItem("submissionId", data.submissionId)
         localStorage.setItem("testId", data.testId)
+        localStorage.setItem("testTitle", data.testTitle)
+        localStorage.setItem("durationMinutes", data.duration.toString())
         router.push("/candidate/instructions")
       } else {
         setError(data.message || "Invalid login code")

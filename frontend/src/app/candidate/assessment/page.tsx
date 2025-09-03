@@ -222,13 +222,13 @@ export default function Assessment() {
       } catch { /* ignore */ }
     }
 
-    // Map frontend camelCase keys to backend expected snake_case keys
+    // Map frontend camelCase keys to backend expected format  
     const mappedAnswers = answers.map(a => ({
-      question_id: a.questionId,
-      question_type: a.questionType,
-      answer: a.answer,
-      time_spent: a.timeSpent,
-      code_submissions: a.codeSubmissions?.map((cs: CodeSubmission) => ({
+      questionId: a.questionId,
+      questionType: a.questionType,
+      submittedAnswer: a.submittedAnswer,
+      timeSpent: a.timeSpent,
+      codeSubmissions: a.codeSubmissions?.map((cs: CodeSubmission) => ({
         code: cs.code,
         timestamp: cs.timestamp,
         output: cs.output,
@@ -238,18 +238,30 @@ export default function Assessment() {
 
     const mappedEvents = proctoringEvents.map(e => ({
       timestamp: e.timestamp,
-      event_type: e.eventType,
+      eventType: e.eventType,
       details: e.details
     }))
 
     try {
-      const response = await fetch("http://localhost:8000/api/candidate/assessment/submit", {
+      const candidateToken = localStorage.getItem("candidateToken")
+
+      // Determine if this is an auto-submission due to violations
+      const isAutoSubmitted = violationCount >= 3
+      const currentTimestamp = new Date().toISOString()
+
+      const response = await fetch(`http://localhost:8000/api/candidate/assessment/${storedSubmissionId}/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${candidateToken}`
+        },
         body: JSON.stringify({
-          submission_id: storedSubmissionId,
           answers: mappedAnswers,
-          proctoring_events: mappedEvents
+          proctoringEvents: mappedEvents,
+          autoSubmitted: isAutoSubmitted,
+          violationCount: violationCount,
+          autoSubmitReason: isAutoSubmitted ? "exceeded_violation_limit" : null,
+          autoSubmitTimestamp: isAutoSubmitted ? currentTimestamp : null
         })
       })
 
@@ -280,9 +292,9 @@ export default function Assessment() {
       const q = questions[idx]
       if (!q) return
       if (q.type === QuestionType.MCQ) {
-        if (ans.answer === -1 || ans.answer === undefined || ans.answer === null) incomplete.push(idx)
+        if (ans.submittedAnswer === "-1" || ans.submittedAnswer === undefined || ans.submittedAnswer === null) incomplete.push(idx)
       } else if (q.type === QuestionType.CODING || q.type === QuestionType.DESCRIPTIVE) {
-        const content = (ans.answer as string || '').trim()
+        const content = (ans.submittedAnswer || '').trim()
         if (content.replace(/\s+/g, ' ').trim().length < 5) incomplete.push(idx)
       }
     })
@@ -315,8 +327,21 @@ export default function Assessment() {
 
     const fetchAssessmentData = async () => {
       try {
-        const response = await fetch(`http://localhost:8000/api/candidate/assessment/${testId}`)
+        console.log("Fetching assessment data for testId:", testId)
+        const response = await fetch(`http://localhost:8000/api/candidate/assessment/${testId}`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
         const data = await response.json()
+        console.log("Assessment data received:", data)
 
         if (data.success && isMounted) {
           setQuestions(data.questions)
@@ -334,7 +359,7 @@ export default function Assessment() {
           const initialAnswers: Answer[] = data.questions.map((q: Question) => ({
             questionId: q._id!,
             questionType: q.type,
-            answer: q.type === QuestionType.MCQ ? -1 : (q.starter_code || ""),
+            submittedAnswer: q.type === QuestionType.MCQ ? "-1" : (q.starter_code || ""),
             timeSpent: 0,
             codeSubmissions: q.type === QuestionType.CODING ? [] : undefined
           }))
@@ -384,7 +409,7 @@ export default function Assessment() {
           // Defer merge until questions fetched
           const interval = setInterval(() => {
             if (questions.length > 0 && parsed.answers.length === questions.length) {
-              setAnswers(prev => prev.map((a, i) => ({ ...a, answer: parsed.answers[i]?.answer ?? a.answer })))
+              setAnswers(prev => prev.map((a, i) => ({ ...a, submittedAnswer: parsed.answers[i]?.submittedAnswer ?? a.submittedAnswer })))
               setLastSavedAt(parsed.savedAt)
               clearInterval(interval)
             }
@@ -572,11 +597,11 @@ export default function Assessment() {
     }
   }
 
-  const updateAnswer = (value: number | string) => {
+  const updateAnswer = (value: string) => {
     const updatedAnswers = [...answers]
     updatedAnswers[currentQuestionIndex] = {
       ...updatedAnswers[currentQuestionIndex],
-      answer: value
+      submittedAnswer: value
     }
     setAnswers(updatedAnswers)
   }
@@ -594,7 +619,7 @@ export default function Assessment() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           language: currentQuestion.language || roleConfig?.defaultLanguage || "javascript",
-          code: currentAnswer.answer,
+          code: currentAnswer.submittedAnswer,
           stdin: ""
         })
       })
@@ -611,7 +636,7 @@ export default function Assessment() {
       const updatedAnswers = [...answers]
       const codeSubmissions = updatedAnswers[currentQuestionIndex].codeSubmissions || []
       codeSubmissions.push({
-        code: currentAnswer.answer as string,
+        code: currentAnswer.submittedAnswer,
         timestamp: new Date().toISOString(),
         output: data.output,
         error: data.error
@@ -636,7 +661,7 @@ export default function Assessment() {
       // Use LiveReactEditor for frontend roles
       return (
         <LiveReactEditor
-          initialCode={currentAnswer.answer as string}
+          initialCode={currentAnswer.submittedAnswer}
           onChange={(code) => updateAnswer(code)}
           onRun={runCode}
           showNotification={showNotification}
@@ -651,7 +676,7 @@ export default function Assessment() {
             <Editor
               height="400px"
               defaultLanguage={currentQuestion.language || roleConfig?.defaultLanguage || "javascript"}
-              value={currentAnswer.answer as string}
+              value={currentAnswer.submittedAnswer}
               onChange={(value) => updateAnswer(value || "")}
               theme={roleConfig?.editorTheme || "vs-dark"}
               options={{
@@ -776,12 +801,12 @@ export default function Assessment() {
     if (!ans) return false
     const q = questions[idx]
     if (!q) return false
-    if (q.type === QuestionType.MCQ) return ans.answer !== -1 && ans.answer !== undefined && ans.answer !== null
+    if (q.type === QuestionType.MCQ) return ans.submittedAnswer !== "-1" && ans.submittedAnswer !== undefined && ans.submittedAnswer !== null
     if (q.type === QuestionType.CODING || q.type === QuestionType.DESCRIPTIVE) {
-      const content = (ans.answer as string || '').trim()
+      const content = (ans.submittedAnswer || '').trim()
       return content.replace(/\s+/g, ' ').trim().length >= 5
     }
-    return !!ans.answer
+    return !!ans.submittedAnswer
   }
   const answeredCount = answers.reduce((acc, _, i) => acc + (isAnswered(i) ? 1 : 0), 0)
   const progressPercent = Math.round((answeredCount / questions.length) * 100)
@@ -960,8 +985,8 @@ export default function Assessment() {
                       type="radio"
                       name={`question-${currentQuestionIndex}`}
                       value={index}
-                      checked={currentAnswer.answer === index}
-                      onChange={() => updateAnswer(index)}
+                      checked={currentAnswer.submittedAnswer === index.toString()}
+                      onChange={() => updateAnswer(index.toString())}
                       className="w-4 h-4 text-blue-600"
                     />
                     <span>{option}</span>
@@ -972,7 +997,7 @@ export default function Assessment() {
 
             {currentQuestion.type === QuestionType.DESCRIPTIVE && (
               <Textarea
-                value={currentAnswer.answer as string}
+                value={currentAnswer.submittedAnswer}
                 onChange={(e) => updateAnswer(e.target.value)}
                 onPaste={(e) => {
                   e.preventDefault();

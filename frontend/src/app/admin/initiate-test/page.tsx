@@ -54,10 +54,19 @@ export default function InitiateTest() {
     }
 
     try {
+      const adminToken = localStorage.getItem("adminToken")
+
+      if (!adminToken) {
+        setError("Not authenticated. Please log in again.")
+        setLoading(false)
+        return
+      }
+
       const response = await fetch("http://localhost:8000/api/admin/tests", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${adminToken}`
         },
         body: JSON.stringify({
           candidate_email: candidateEmail,

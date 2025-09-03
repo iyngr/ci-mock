@@ -63,7 +63,20 @@ export default function CandidateReport() {
 
     const fetchReportData = async (id: string) => {
         try {
-            const response = await fetch(`http://localhost:8000/api/admin/report/${id}`)
+            const adminToken = localStorage.getItem("adminToken")
+
+            if (!adminToken) {
+                console.error("No admin token found")
+                setLoading(false)
+                return
+            }
+
+            const response = await fetch(`http://localhost:8000/api/admin/report/${id}`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${adminToken}`
+                }
+            })
             const data = await response.json()
 
             if (data.success) {

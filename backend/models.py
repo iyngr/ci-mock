@@ -149,7 +149,9 @@ class Question(CosmosDocument):
     @property
     def partition_key(self) -> str:
         """Partition by question type for efficient queries"""
-        return self.type.value
+        if hasattr(self.type, 'value'):
+            return self.type.value
+        return str(self.type)
 
 
 class MCQQuestion(Question):
@@ -239,7 +241,9 @@ class AnswerEvaluation(BaseModel):
 class Answer(BaseModel):
     """Individual answer within a submission"""
     question_id: str = Field(..., alias="questionId", description="ID of the question being answered")
+    question_type: QuestionType = Field(..., alias="questionType", description="Type of the question")
     submitted_answer: str = Field(..., alias="submittedAnswer", description="The candidate's answer")
+    time_spent: int = Field(..., alias="timeSpent", description="Time spent on this question in seconds")
     evaluation: Optional[AnswerEvaluation] = Field(None, description="Evaluation results for coding questions")
 
 
@@ -265,7 +269,11 @@ class Submission(CosmosDocument):
                 "endTime": "2025-09-01T14:55:00Z",
                 "score": 85.5,
                 "answers": [],
-                "proctoringEvents": []
+                "proctoringEvents": [],
+                "autoSubmitted": False,
+                "violationCount": 2,
+                "autoSubmitReason": None,
+                "autoSubmitTimestamp": None
             }
         }
     )
@@ -279,6 +287,12 @@ class Submission(CosmosDocument):
     score: Optional[float] = Field(None, description="Overall score (0-100)")
     answers: List[Answer] = Field(default_factory=list, description="List of candidate answers")
     proctoring_events: List[ProctoringEvent] = Field(default_factory=list, alias="proctoringEvents", description="Proctoring events during assessment")
+    
+    # Proctoring violation tracking
+    auto_submitted: bool = Field(default=False, alias="autoSubmitted", description="Whether test was auto-submitted due to violations")
+    violation_count: int = Field(default=0, alias="violationCount", description="Total number of proctoring violations")
+    auto_submit_reason: Optional[str] = Field(None, alias="autoSubmitReason", description="Reason for auto-submission (e.g., 'exceeded_violation_limit', 'suspicious_activity')")
+    auto_submit_timestamp: Optional[datetime] = Field(None, alias="autoSubmitTimestamp", description="When auto-submission occurred")
     
     # Assessment session management
     login_code: str = Field(..., alias="loginCode", description="Unique code for candidate access")
@@ -484,3 +498,9 @@ class SubmissionRequest(BaseModel):
     test_id: str
     answers: List[Answer]
     proctoring_events: List[ProctoringEvent] = Field(default_factory=list, alias="proctoringEvents")
+    
+    # Auto-submission tracking
+    auto_submitted: bool = Field(default=False, alias="autoSubmitted", description="Whether test was auto-submitted due to violations")
+    violation_count: int = Field(default=0, alias="violationCount", description="Total number of proctoring violations")
+    auto_submit_reason: Optional[str] = Field(None, alias="autoSubmitReason", description="Reason for auto-submission")
+    auto_submit_timestamp: Optional[datetime] = Field(None, alias="autoSubmitTimestamp", description="When auto-submission occurred")

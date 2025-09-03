@@ -25,17 +25,23 @@ export default function Instructions() {
 
     try {
       const testId = localStorage.getItem("testId")
-      if (!testId) {
-        throw new Error("No test ID found")
+      const candidateToken = localStorage.getItem("candidateToken")
+      const candidateId = localStorage.getItem("candidateId")
+
+      if (!testId || !candidateToken || !candidateId) {
+        throw new Error("Missing authentication data")
       }
 
-      // Call the start assessment endpoint
+      // Call the start assessment endpoint with authentication
       const response = await fetch("http://localhost:8000/api/candidate/assessment/start", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${candidateToken}`
+        },
         body: JSON.stringify({
           assessment_id: testId,
-          candidate_id: "candidate@example.com" // In real app, get from auth context
+          candidate_id: candidateId
         })
       })
 
@@ -47,8 +53,9 @@ export default function Instructions() {
 
       // Store submission data in localStorage
       localStorage.setItem("submissionId", data.submission_id)
-      localStorage.setItem("expirationTime", data.expiration_time)
-      localStorage.setItem("durationMinutes", data.duration_minutes.toString())
+      localStorage.setItem("expirationTime", data.expirationTime)
+      localStorage.setItem("durationMinutes", data.durationMinutes.toString())
+      localStorage.setItem("assessmentStartTime", new Date().toISOString())
 
       // Enter fullscreen mode
       if (document.documentElement.requestFullscreen) {

@@ -1,11 +1,17 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from azure.cosmos import CosmosClient
 from azure.cosmos.cosmos_client import ConnectionPolicy
 from azure.identity import DefaultAzureCredential
 import os
+import logging
+import time
 from contextlib import asynccontextmanager
 from routers import candidate, admin, utils, scoring
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Cosmos DB connection
 cosmos_client = None
@@ -133,14 +139,36 @@ def get_settings():
         "environment": os.getenv("ENVIRONMENT", "development")
     }
 
-# CORS middleware
+# Enhanced CORS middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://*.vercel.app"],  # Frontend URLs
+    allow_origins=[
+        "http://localhost:3000",  # Next.js dev server
+        "http://127.0.0.1:3000",  # Alternative localhost
+        "https://*.vercel.app",   # Vercel deployments
+        "http://localhost:3001",  # Alternative dev port
+        "*"  # Allow all origins for development
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+    max_age=600,  # Cache preflight response for 10 minutes
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all requests for debugging"""
+    start_time = time.time()
+    logger.info(f"Request: {request.method} {request.url}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    
+    response = await call_next(request)
+    
+    process_time = time.time() - start_time
+    logger.info(f"Response: {response.status_code} in {process_time:.4f}s")
+    
+    return response
 
 
 @app.get("/")

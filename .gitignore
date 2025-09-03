@@ -217,3 +217,5 @@ backend/venv/
 
 # Temporary files
 /tmp/
+.playwright-mcp/homepage.png
+.playwright-mcp/instructions.png

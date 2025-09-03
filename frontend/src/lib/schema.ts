@@ -52,7 +52,7 @@ export interface CodeSubmission {
 export interface Answer {
     questionId: string
     questionType: QuestionType | string
-    answer: number | string
+    submittedAnswer: string  // Changed from 'answer' to match backend, only string type
     timeSpent: number
     codeSubmissions?: CodeSubmission[]
 }
@@ -64,7 +64,7 @@ export interface ProctoringEvent {
 }
 
 export interface LoginRequest {
-    login_code: string
+    loginCode: string  // Fixed: Changed from login_code to loginCode to match backend alias
 }
 
 export interface AdminLoginRequest {

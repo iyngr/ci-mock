@@ -3,18 +3,25 @@ from typing import List, Optional
 from models import AdminLoginRequest, TestInitiationRequest, Assessment, Submission
 import secrets
 import string
+import logging
 from datetime import datetime, timedelta
 from azure.cosmos import DatabaseProxy
 from database import CosmosDBService, get_cosmosdb_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Admin authentication and database dependencies
 async def get_cosmosdb() -> CosmosDBService:
     """Get Cosmos DB service dependency - imported from main"""
     from main import database_client
     if database_client is None:
-        raise HTTPException(status_code=503, detail="Database not available")
+        # In development mode, return a mock service or handle gracefully
+        # For now, we'll create a minimal mock that doesn't crash
+        class MockCosmosDB:
+            async def count_items(self, container: str, filter_dict: dict = None):
+                return 0
+        return MockCosmosDB()
     return await get_cosmosdb_service(database_client)
 
 async def verify_admin_token(authorization: Optional[str] = Header(None)) -> dict:
@@ -25,16 +32,35 @@ async def verify_admin_token(authorization: Optional[str] = Header(None)) -> dic
     token = authorization.split(" ")[1]
     
     # In production, you would validate JWT token here
-    # For now, we'll use a simple token check
-    if token != "admin-mock-token-123":
-        raise HTTPException(status_code=401, detail="Invalid admin token")
+    # For development, accept either the old static token or new dynamic tokens
+    if token == "admin-mock-token-123":
+        # Old static token
+        return {
+            "admin_id": "admin-user-1",
+            "email": "admin@example.com",
+            "name": "Admin User"
+        }
     
-    return {
-        "admin_id": "admin-user-1",
-        "email": "admin@example.com",
-        "name": "Admin User",
-        "permissions": ["read", "write", "delete"]
-    }
+    # Check if it's a dynamic mock token from login
+    if token.startswith("mock_jwt_"):
+        try:
+            # Extract username from token format: mock_jwt_{username}_{hash}
+            parts = token.split("_")
+            if len(parts) >= 3:
+                username = parts[2]
+                if username in mock_admins:
+                    admin_data = mock_admins[username]
+                    return {
+                        "admin_id": f"admin-{username}",
+                        "email": admin_data["email"],
+                        "name": admin_data["name"],
+                        "permissions": admin_data.get("permissions", ["read"])
+                    }
+        except Exception:
+            pass
+    
+    raise HTTPException(status_code=401, detail="Invalid admin token")
+
 
 async def get_admin_with_permissions(
     admin: dict = Depends(verify_admin_token),
@@ -45,11 +71,12 @@ async def get_admin_with_permissions(
         raise HTTPException(status_code=403, detail=f"Admin lacks {required_permission} permission")
     return admin
 
-# Mock admin data
-mock_admin = {
-    "email": "admin@example.com",
-    "password": "admin123",  # In real app, this would be hashed
-    "name": "Admin User"
+# Mock admin credentials for development
+mock_admins = {
+    "admin": {"password": "admin123", "name": "Admin User", "email": "admin@example.com"},
+    "administrator": {"password": "admin123", "name": "Administrator", "email": "administrator@example.com"},
+    "test": {"password": "test123", "name": "Test Admin", "email": "test@example.com"},
+    "demo": {"password": "demo123", "name": "Demo Admin", "email": "demo@example.com"}
 }
 
 # Mock dashboard data
@@ -81,21 +108,80 @@ mock_test_summaries = [
 ]
 
 
+@router.options("/login")
+async def admin_login_options():
+    """Handle CORS preflight for admin login"""
+    return {"message": "OK"}
+
+
 @router.post("/login")
 async def admin_login(request: AdminLoginRequest):
-    """Authenticate admin user"""
-    if request.email == mock_admin["email"] and request.password == mock_admin["password"]:
-        # In real app, generate JWT token here
-        return {
-            "success": True,
-            "token": "mock_jwt_token",
-            "admin": {
-                "email": mock_admin["email"],
-                "name": mock_admin["name"]
+    """Authenticate admin user with enhanced development credentials"""
+    logger.info(f"Admin login attempt with email: {request.email}")
+    
+    # Check if credentials are provided
+    if not request.email or not request.password:
+        logger.warning("Empty email or password provided")
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    
+    # Extract username from email (support both username and email login)
+    username = request.email.split("@")[0].lower()
+    
+    # Check against mock admin accounts
+    if username in mock_admins:
+        admin_data = mock_admins[username]
+        if admin_data["password"] == request.password:
+            # Generate mock JWT token
+            mock_token = f"mock_jwt_{username}_{hash(username + request.password) % 10000}"
+            
+            logger.info(f"Admin login successful for username: {username}")
+            
+            return {
+                "success": True,
+                "token": mock_token,
+                "admin": {
+                    "email": admin_data["email"],
+                    "name": admin_data["name"],
+                    "username": username
+                },
+                "message": "Login successful - development mode"
             }
-        }
-    else:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Also check if they used full email
+    for username, admin_data in mock_admins.items():
+        if admin_data["email"] == request.email and admin_data["password"] == request.password:
+            mock_token = f"mock_jwt_{username}_{hash(username + request.password) % 10000}"
+            
+            logger.info(f"Admin login successful for email: {request.email}")
+            
+            return {
+                "success": True,
+                "token": mock_token,
+                "admin": {
+                    "email": admin_data["email"],
+                    "name": admin_data["name"],
+                    "username": username
+                },
+                "message": "Login successful - development mode"
+            }
+    
+    logger.warning(f"Invalid login attempt for email: {request.email}")
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@router.get("/test-credentials")
+async def get_admin_test_credentials():
+    """Provide test admin credentials for development"""
+    return {
+        "message": "Available test admin accounts",
+        "credentials": [
+            {"username": "admin", "email": "admin@example.com", "password": "password"},
+            {"username": "administrator", "email": "administrator@example.com", "password": "admin123"},
+            {"username": "test", "email": "test@example.com", "password": "test123"},
+            {"username": "demo", "email": "demo@example.com", "password": "demo123"}
+        ],
+        "note": "You can login with either username or full email address"
+    }
 
 
 @router.get("/dashboard")

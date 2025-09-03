@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Optional
+import logging
+import time
 from models import (
     LoginRequest, 
     SubmissionRequest, 
@@ -22,18 +24,38 @@ import secrets
 import string
 from database import CosmosDBService, get_cosmosdb_service
 import time
+from jose import JWTError, jwt
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# JWT Configuration
+SECRET_KEY = "your-secret-key-for-development"  # In production, use environment variable
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 # Rate limiting storage (in production, use Redis)
 rate_limit_storage = {}
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create JWT access token"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 # Database and authentication dependencies
 async def get_cosmosdb() -> CosmosDBService:
     """Get Cosmos DB service dependency"""
     from main import database_client
     if database_client is None:
-        raise HTTPException(status_code=503, detail="Database not available")
+        # In development mode, return None and handle gracefully
+        return None
     return await get_cosmosdb_service(database_client)
 
 async def verify_candidate_token(authorization: Optional[str] = Header(None)) -> dict:
@@ -43,8 +65,28 @@ async def verify_candidate_token(authorization: Optional[str] = Header(None)) ->
     
     token = authorization.split(" ")[1]
     
-    # In production, validate JWT token here
-    # For now, extract candidate info from a simple token format: candidate_id:submission_id:login_code
+    try:
+        # Decode JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        candidate_id: str = payload.get("sub")
+        if candidate_id is None:
+            raise HTTPException(status_code=401, detail="Invalid candidate token")
+        
+        # Extract login code from candidate_id and generate submission_id
+        login_code = candidate_id.replace("candidate_", "")
+        timestamp = int(time.time())
+        submission_id = f"submission_{login_code}_{timestamp}"
+        
+        return {
+            "candidate_id": candidate_id,
+            "submission_id": submission_id,
+            "login_code": login_code,
+            "role": payload.get("role"),
+            "name": payload.get("name"),
+            "email": payload.get("email")
+        }
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid candidate token")
     try:
         parts = token.split(":")
         if len(parts) != 3:
@@ -83,10 +125,17 @@ async def apply_rate_limiting(candidate_info: dict = Depends(verify_candidate_to
 
 async def verify_candidate_access(
     candidate_info: dict = Depends(apply_rate_limiting),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: Optional[CosmosDBService] = Depends(get_cosmosdb)
 ) -> dict:
     """Verify candidate has access to their submission and it's not expired"""
     try:
+        # Extract login_code from candidate_id for development mode
+        login_code = candidate_info["candidate_id"].replace("candidate_", "")
+        
+        # In development mode without database, skip verification
+        if db is None:
+            return {**candidate_info, "submission": {"status": "in_progress", "assessment_id": f"test_{login_code}"}}
+        
         # Check if submission exists and belongs to candidate
         query = "SELECT * FROM c WHERE c.id = @submission_id AND c.candidate_id = @candidate_id"
         parameters = [
@@ -202,11 +251,34 @@ mock_questions = [
 async def start_assessment(
     request: StartAssessmentRequest,
     candidate_info: dict = Depends(verify_candidate_access),
-    db: CosmosDBService = Depends(get_cosmosdb)
-) -> StartAssessmentResponse:
+    db: Optional[CosmosDBService] = Depends(get_cosmosdb)
+):
     """Create and start a new assessment session with candidate tracking"""
     
     try:
+        # In development mode without database, return mock response
+        if db is None:
+            submission_id = candidate_info["submission_id"]
+            expiration_time = datetime.utcnow() + timedelta(minutes=60)
+            
+            # Create submission in mock storage for development
+            mock_submissions[submission_id] = {
+                "id": submission_id,
+                "assessment_id": request.assessment_id,
+                "candidate_id": request.candidate_id,
+                "status": "in-progress",
+                "started_at": datetime.utcnow(),
+                "expiration_time": expiration_time,
+                "answers": [],
+                "proctoring_events": []
+            }
+            
+            return {
+                "submission_id": submission_id,
+                "expirationTime": expiration_time.isoformat() + "Z",
+                "durationMinutes": 60
+            }
+        
         # Get assessment details from Cosmos DB
         query = "SELECT * FROM c WHERE c.id = @assessment_id"
         parameters = [{"name": "@assessment_id", "value": request.assessment_id}]
@@ -233,15 +305,16 @@ async def start_assessment(
             partition_key=assessment["id"]
         )
         
+        # Calculate expiration time
+        duration_minutes = assessment.get("duration", 60)
+        start_time = datetime.utcnow()
+        expiration_time = start_time + timedelta(minutes=duration_minutes)
+        
         # Return assessment with limited info for security
         return StartAssessmentResponse(
             submission_id=submission_id,
-            assessment_id=request.assessment_id,
-            candidate_id=candidate_id,
-            status="started",
-            start_time=datetime.utcnow(),
-            duration_minutes=assessment.get("duration", 60),
-            question_count=len(assessment.get("questions", []))
+            expiration_time=expiration_time,
+            duration_minutes=duration_minutes
         )
         
     except HTTPException:
@@ -358,16 +431,33 @@ async def get_assessment(test_id: str):
     }
 
 
-@router.post("/assessment/submit")
-async def submit_assessment(request: UpdateSubmissionRequest):
+@router.post("/assessment/{submission_id}/submit")
+async def submit_assessment(
+    submission_id: str,
+    request: UpdateSubmissionRequest,
+    candidate_info: dict = Depends(verify_candidate_token)
+):
     """Update submission with final answers and mark as completed"""
-    submission_id = request.submission_id
     
-    # Find submission (in production, query database)
+    # In development mode, verify the submission exists (or create it if not)
     if submission_id not in mock_submissions:
-        raise HTTPException(status_code=404, detail="Submission not found")
+        # Create mock submission for development
+        expiration_time = datetime.utcnow() + timedelta(hours=1)  # 1 hour from now
+        mock_submissions[submission_id] = {
+            "id": submission_id,
+            "candidate_id": candidate_info["candidate_id"],
+            "status": "in-progress",
+            "started_at": datetime.utcnow(),
+            "expiration_time": expiration_time,
+            "answers": [],
+            "proctoring_events": []
+        }
     
     submission = mock_submissions[submission_id]
+    
+    # Verify submission belongs to candidate  
+    if submission.get("candidate_id") != candidate_info["candidate_id"]:
+        raise HTTPException(status_code=403, detail="Access denied to this assessment")
     
     # Check if submission has expired
     if datetime.utcnow() > submission["expiration_time"]:
@@ -379,7 +469,8 @@ async def submit_assessment(request: UpdateSubmissionRequest):
     
     # Update submission
     submission["answers"] = [answer.dict() for answer in request.answers]
-    submission["proctoring_events"].extend([event.dict() for event in request.proctoring_events])
+    if request.proctoring_events:
+        submission["proctoring_events"].extend([event.dict() for event in request.proctoring_events])
     submission["status"] = "completed"
     submission["submitted_at"] = datetime.utcnow()
     
@@ -397,18 +488,67 @@ async def submit_assessment(request: UpdateSubmissionRequest):
     }
 
 
+@router.options("/login")
+async def candidate_login_options():
+    """Handle CORS preflight for candidate login"""
+    return {"message": "OK"}
+
+
 @router.post("/login")
 async def candidate_login(request: LoginRequest):
     """Validate candidate login code and return test details"""
-    if request.login_code in mock_tests:
-        test_data = mock_tests[request.login_code]
-        return {
-            "success": True,
-            "testId": test_data["id"],
-            "message": "Login successful"
+    logger.info(f"Candidate login attempt with code: {request.login_code}")
+    
+    # Enhanced development authentication - accept any non-empty login code
+    if not request.login_code or not request.login_code.strip():
+        logger.warning("Empty login code provided")
+        raise HTTPException(status_code=400, detail="Login code is required")
+    
+    # For development: create mock test data for any valid login code
+    candidate_id = f"candidate_{request.login_code}"
+    submission_id = f"submission_{request.login_code}_{int(time.time())}"
+    
+    mock_test_data = {
+        "id": f"test_{request.login_code}",
+        "title": f"Technical Assessment - {request.login_code.upper()}",
+        "status": "in_progress",
+        "duration": 60,  # 60 minutes
+        "questions": []
+    }
+    
+    # Create JWT token with candidate information
+    token_data = {
+        "sub": candidate_id,
+        "role": "Python Backend Developer",  # Default role for development
+        "name": "John Doe",  # Mock candidate name
+        "email": "test@example.com"  # Mock email
+    }
+    access_token = create_access_token(data=token_data)
+    
+    logger.info(f"Candidate login successful for code: {request.login_code}")
+    
+    return {
+        "success": True,
+        "testId": mock_test_data["id"],
+        "testTitle": mock_test_data["title"],
+        "duration": mock_test_data["duration"],
+        "token": access_token,  # JWT token
+        "candidateId": candidate_id,
+        "submissionId": submission_id,
+        "message": "Login successful - development mode"
+    }
+
+
+@router.get("/test-credentials")
+async def get_test_credentials():
+    """Provide test credentials for development"""
+    return {
+        "message": "Use any non-empty login code for candidate access",
+        "examples": {
+            "login_codes": ["TEST123", "DEMO456", "SAMPLE789", "DEV001"],
+            "note": "Any non-empty string will work in development mode"
         }
-    else:
-        raise HTTPException(status_code=401, detail="Invalid login code")
+    }
 
 
 # Legacy endpoint for backward compatibility

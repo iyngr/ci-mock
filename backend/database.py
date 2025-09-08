@@ -148,6 +148,9 @@ class CosmosDBService:
             "submissions": "/assessment_id", 
             "users": "/role",
             "questions": "/type",
+            # Containers for AI-generated content and semantic search
+            "generated_questions": "/skill",
+            "knowledge_base": "/source_type",
             "code_executions": "/language",
             "evaluations": "/submission_id"
         }

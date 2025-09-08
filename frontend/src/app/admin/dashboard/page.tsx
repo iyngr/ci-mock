@@ -136,6 +136,12 @@ export default function AdminDashboard() {
             </div>
             <div className="flex items-center space-x-4">
               <Button
+                onClick={() => router.push("/admin/add-questions")}
+                className="btn-assessment-secondary"
+              >
+                Add Questions
+              </Button>
+              <Button
                 onClick={() => router.push("/admin/initiate-test")}
                 className="btn-assessment-primary"
               >

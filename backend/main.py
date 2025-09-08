@@ -7,7 +7,7 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
-from routers import candidate, admin, utils, scoring
+from routers import candidate, admin, utils, scoring, rag
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -242,6 +242,7 @@ app.include_router(candidate.router, prefix="/api/candidate", tags=["candidate"]
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(utils.router, prefix="/api/utils", tags=["utils"])
 app.include_router(scoring.router, prefix="/api/scoring", tags=["scoring"])
+app.include_router(rag.router, prefix="/api", tags=["rag"])
 
 
 def main():

@@ -8,7 +8,15 @@ from autogen_agentchat.teams import SelectorGroupChat
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 from azure.identity import DefaultAzureCredential
 from autogen_ext.auth.azure import AzureTokenProvider
-from tools import fetch_submission_data, score_mcqs, generate_question_from_ai
+from tools import fetch_submission_data, score_mcqs, generate_question_from_ai, query_cosmosdb_for_rag, validate_question
+
+# RAG imports
+try:
+    from autogen_agentchat.agents import RetrieveUserProxyAgent
+    RAG_AVAILABLE = True
+except ImportError:
+    print("Warning: RetrieveUserProxyAgent not available in this AutoGen version")
+    RAG_AVAILABLE = False
 
 # Configure Azure OpenAI client
 def create_model_client():
@@ -163,6 +171,62 @@ user_proxy_agent = UserProxyAgent(
     description="A proxy agent that executes tools and handles administrative tasks.",
 )
 
+# 6. RAG-Enabled Agent - Handles knowledge base queries and context retrieval
+def create_rag_agent():
+    """
+    Creates a RAG-enabled agent for knowledge base queries.
+    Falls back to regular AssistantAgent if RetrieveUserProxyAgent is not available.
+    """
+    if RAG_AVAILABLE:
+        try:
+            # Configure RetrieveUserProxyAgent with Azure Cosmos DB backend
+            rag_agent = RetrieveUserProxyAgent(
+                name="RAG_Knowledge_Agent",
+                description="A RAG-enabled agent that retrieves context from the knowledge base to answer questions.",
+                retrieve_config={
+                    "task": "qa",  # Question-answering task
+                    "chunk_token_size": 1000,
+                    "model": model_client,
+                    "client": None,  # Will use our custom query function
+                    "embedding_model": "text-embedding-ada-002",
+                    "get_or_create": False,  # Don't create new collections
+                    "custom_function": query_cosmosdb_for_rag,  # Our RAG retrieval function
+                },
+                code_execution_config=False,  # Disable code execution for security
+                human_input_mode="NEVER",  # Fully automated
+                max_consecutive_auto_reply=3,
+            )
+            return rag_agent
+        except Exception as e:
+            print(f"Warning: Could not create RetrieveUserProxyAgent: {e}")
+            print("Falling back to regular AssistantAgent with RAG tools")
+    
+    # Fallback: Regular AssistantAgent with RAG tools
+    rag_fallback_agent = AssistantAgent(
+        name="RAG_Knowledge_Agent",
+        description="A knowledge agent that uses RAG tools to answer questions based on the knowledge base.",
+        model_client=model_client,
+        tools=[query_cosmosdb_for_rag],  # Add RAG tool
+        system_message="""You are a knowledge assistant powered by a RAG (Retrieval-Augmented Generation) system. 
+
+Your capabilities:
+1. Answer questions about technical assessment topics
+2. Retrieve relevant context from the knowledge base using vector similarity search
+3. Provide informed responses based on existing questions and solutions
+
+When a user asks a question:
+1. Use the query_cosmosdb_for_rag tool to retrieve relevant context
+2. Analyze the retrieved information carefully
+3. Provide a comprehensive answer that combines the retrieved context with your knowledge
+4. If no relevant context is found, provide a general response based on your training
+
+Always be helpful, accurate, and acknowledge when information comes from the knowledge base vs. general knowledge."""
+    )
+    return rag_fallback_agent
+
+# Initialize RAG agent
+rag_agent = create_rag_agent()
+
 # Note: In AutoGen v0.4, tools are registered with AssistantAgents, not UserProxyAgent
 
 # --- TERMINATION CONDITIONS ---
@@ -268,6 +332,47 @@ Select the most appropriate agent to continue this workflow."""
     return assessment_team
 
 # --- QUESTION GENERATION TEAM ---
+def create_question_rewriting_team() -> SelectorGroupChat:
+    """
+    Create a specialized team for question rewriting and enhancement.
+    Uses a single expert agent focused on grammar, clarity, and tagging.
+    """
+    
+    # Question Enhancement Agent - specialized in improving question quality
+    question_enhancer = AssistantAgent(
+        name="Question_Enhancer",
+        description="An expert technical writer specializing in question enhancement and skill tagging.",
+        model_client=model_client,
+        system_message="""You are an expert technical writer and assessment specialist. Your task is to enhance technical assessment questions.
+
+When given a question, you must:
+1. Correct any grammatical errors and improve clarity to avoid ambiguity
+2. Determine the most appropriate job role (e.g., 'Frontend Developer', 'Backend Developer', 'Data Scientist', 'Full Stack Developer', 'DevOps Engineer', 'Mobile Developer')
+3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins', 'Docker', 'REST APIs')
+
+CRITICAL: Your response MUST be a single, minified JSON object with this exact schema:
+{"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}
+
+Do not include any other text, explanation, or formatting. Only return the JSON object."""
+    )
+    
+    # User proxy for managing the conversation
+    user_proxy = UserProxyAgent(
+        name="Question_Rewrite_Coordinator",
+        description="Coordinates the question rewriting process."
+    )
+    
+    # Create the rewriting team
+    participants = [question_enhancer, user_proxy]
+    
+    return SelectorGroupChat(
+        participants=participants,
+        model_client=model_client,
+        selector_prompt="Select the Question_Enhancer to improve the question quality and provide skill tags.",
+        termination_condition=MaxMessageTermination(max_messages=3)
+    )
+
+
 def create_question_generation_team() -> SelectorGroupChat:
     """
     Creates a simplified team for question generation tasks.
@@ -297,6 +402,91 @@ Always format your output as valid JSON with the question structure expected by 
     )
     
     return question_team
+
+
+def create_rag_question_team() -> SelectorGroupChat:
+    """
+    Creates a RAG-powered team for intelligent question answering and validation.
+    Combines question generation with knowledge base retrieval.
+    """
+    
+    # Enhanced Question Validator with RAG capabilities
+    rag_validator_agent = AssistantAgent(
+        name="RAG_Question_Validator",
+        description="An expert question validator powered by RAG knowledge retrieval.",
+        model_client=model_client,
+        tools=[validate_question, query_cosmosdb_for_rag],
+        system_message="""You are an expert question validator with access to a comprehensive knowledge base.
+
+Your capabilities:
+1. Validate new questions for duplicates using both exact matching and semantic similarity
+2. Query the knowledge base to provide context-aware recommendations
+3. Suggest improvements based on existing high-quality questions
+4. Ensure questions meet quality standards and avoid redundancy
+
+When validating a question:
+1. First use validate_question to check for exact or similar duplicates
+2. If similar questions exist, use query_cosmosdb_for_rag to get additional context
+3. Provide detailed feedback on uniqueness, quality, and improvement suggestions
+4. Recommend whether the question should be added, modified, or rejected
+
+Always provide clear, actionable feedback with specific examples from the knowledge base when relevant."""
+    )
+    
+    # Question Answering Agent with RAG
+    rag_qa_agent = AssistantAgent(
+        name="RAG_QA_Agent", 
+        description="A question-answering agent powered by RAG knowledge retrieval.",
+        model_client=model_client,
+        tools=[query_cosmosdb_for_rag],
+        system_message="""You are a technical question-answering assistant with access to a comprehensive knowledge base.
+
+Your role:
+1. Answer technical questions using retrieved context from the knowledge base
+2. Provide accurate, detailed explanations based on existing assessment content
+3. Cite relevant examples and similar questions when helpful
+4. Acknowledge when information is not available in the knowledge base
+
+Process for answering questions:
+1. Use query_cosmosdb_for_rag to retrieve relevant context
+2. Analyze the retrieved information and identify key points
+3. Formulate a comprehensive answer that combines retrieved context with general knowledge
+4. Provide examples or references to similar content when available
+5. Be transparent about the source of information (knowledge base vs. general knowledge)
+
+Always strive to be helpful, accurate, and comprehensive in your responses."""
+    )
+    
+    # Create RAG team with specialized agents
+    rag_team = SelectorGroupChat(
+        participants=[
+            rag_validator_agent,
+            rag_qa_agent, 
+            rag_agent,  # The main RAG agent
+            user_proxy_agent
+        ],
+        model_client=model_client,
+        termination_condition=MaxMessageTermination(max_messages=15),
+        selector_prompt="""You are managing a RAG-powered question management system.
+
+Available agents:
+{roles}
+
+Current conversation:
+{history}
+
+Select the most appropriate agent from {participants} based on the task:
+
+- RAG_Question_Validator: For validating new questions and checking duplicates
+- RAG_QA_Agent: For answering technical questions using knowledge base context
+- RAG_Knowledge_Agent: For general knowledge base queries and context retrieval
+- Admin_User_Proxy: For tool execution and administrative tasks
+
+Choose the agent best suited to handle the current request.""",
+        allow_repeated_speaker=True,
+    )
+    
+    return rag_team
 
 
 # --- ASYNC TEAM OPERATIONS (AutoGen v0.4 patterns) ---
@@ -367,6 +557,71 @@ async def generate_questions_async(skill: str, question_type: str, difficulty: s
     )
     
     # Collect generated questions as messages
+    messages: List[BaseChatMessage] = []
+    async for message in result:
+        if isinstance(message, BaseChatMessage):
+            messages.append(message)
+    
+    return messages
+
+
+async def rag_query_async(user_question: str) -> List[BaseChatMessage]:
+    """
+    Process user questions using the RAG-powered team.
+    Retrieves context from knowledge base and provides informed answers.
+    """
+    team = create_rag_question_team()
+    
+    # Create task message for RAG processing
+    task_message = f"""
+    User Question: {user_question}
+    
+    Please use the knowledge base to provide a comprehensive answer to this question.
+    Retrieve relevant context and provide an informed response.
+    """
+    
+    # Run RAG team conversation asynchronously
+    result = await team.run_stream_async(
+        task=task_message,
+        termination_condition=MaxMessageTermination(max_messages=10)
+    )
+    
+    # Collect messages from the RAG conversation
+    messages: List[BaseChatMessage] = []
+    async for message in result:
+        if isinstance(message, BaseChatMessage):
+            messages.append(message)
+    
+    return messages
+
+
+async def validate_question_async(question_text: str) -> List[BaseChatMessage]:
+    """
+    Validate questions using the RAG-powered validation team.
+    Checks for duplicates and provides quality feedback.
+    """
+    team = create_rag_question_team()
+    
+    # Create validation task message
+    task_message = f"""
+    Question to Validate: {question_text}
+    
+    Please validate this question for:
+    1. Exact duplicates in the database
+    2. Similar questions using semantic search
+    3. Quality and clarity assessment
+    4. Recommendations for improvement or approval
+    
+    Provide detailed validation results and recommendations.
+    """
+    
+    # Run validation team conversation asynchronously
+    result = await team.run_stream_async(
+        task=task_message,
+        termination_condition=MaxMessageTermination(max_messages=8)
+    )
+    
+    # Collect validation messages
     messages: List[BaseChatMessage] = []
     async for message in result:
         if isinstance(message, BaseChatMessage):

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 from autogen_agentchat.ui import Console
 from autogen_agentchat.conditions import MaxMessageTermination
-from agents import create_assessment_team, create_question_generation_team, model_client
+from agents import create_assessment_team, create_question_generation_team, create_question_rewriting_team, model_client
 from logging_config import get_logger
 
 # Configure application logger
@@ -35,6 +35,14 @@ class DebugInteractionRequest(BaseModel):
     """Request model for debug console interactions"""
     task: str
     team_type: str = "assessment"  # "assessment" or "question_generation"
+
+class QuestionValidationRequest(BaseModel):
+    """Request model for question validation"""
+    question_text: str
+
+class QuestionRewriteRequest(BaseModel):
+    """Request model for question rewriting and enhancement"""
+    question_text: str
 
 @app.on_event("startup")
 async def startup_event():
@@ -250,6 +258,146 @@ async def get_agents_status() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
 
 
+@app.post("/questions/validate")
+async def validate_question(request: QuestionValidationRequest) -> Dict[str, Any]:
+    """
+    Two-phase validation for questions:
+    Phase 1: Exact match using SHA256 hash
+    Phase 2: Semantic similarity using vector embeddings
+    """
+    try:
+        logger.info(f"Starting question validation for: {request.question_text[:50]}...")
+        
+        # Import the validation tools
+        from tools import validate_question_exact_match, validate_question_similarity
+        
+        # Phase 1: Exact match validation
+        exact_match_result = validate_question_exact_match(request.question_text)
+        
+        if exact_match_result["status"] == "exact_duplicate":
+            logger.info("Exact duplicate found")
+            return exact_match_result
+        
+        # Phase 2: Semantic similarity validation
+        similarity_result = validate_question_similarity(request.question_text)
+        
+        logger.info(f"Question validation completed with status: {similarity_result['status']}")
+        return similarity_result
+        
+    except Exception as e:
+        logger.error(f"Error in validate_question: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to validate question: {str(e)}")
+
+@app.post("/questions/rewrite")
+async def rewrite_question(request: QuestionRewriteRequest) -> Dict[str, Any]:
+    """
+    AI-powered question enhancement and auto-tagging.
+    Uses LLM to improve grammar, clarity, and suggest role/skill tags.
+    Falls back to rule-based enhancement if AI service is unavailable.
+    """
+    try:
+        logger.info(f"Starting question rewriting for: {request.question_text[:50]}...")
+        
+        # Try AI-based rewriting first
+        try:
+            # Create a specialized question rewriting team
+            rewrite_team = create_question_rewriting_team()
+            
+            # Define the rewriting task with specific instructions
+            task = f"""
+            Please analyze and enhance the following assessment question:
+            
+            QUESTION: "{request.question_text}"
+            
+            Your task is to:
+            1. Correct any grammatical errors and improve clarity to avoid ambiguity
+            2. Determine the most appropriate job role (e.g., 'Frontend Developer', 'Backend Developer', 'Data Scientist')
+            3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins')
+            
+            IMPORTANT: Your response MUST be a single, minified JSON object with this exact schema:
+            {{"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}}
+            
+            Do not include any other text or explanation in your response.
+            """
+            
+            # Run the rewriting workflow
+            result_stream = rewrite_team.run_stream(task=task)
+            
+            # Collect the response and extract the JSON
+            final_response = ""
+            async for message in result_stream:
+                if hasattr(message, 'content') and isinstance(message.content, str):
+                    final_response = message.content
+            
+            # Parse the JSON response
+            import json
+            rewrite_result = json.loads(final_response.strip())
+            
+            # Validate the response structure
+            required_keys = ["rewritten_text", "suggested_role", "suggested_tags"]
+            if all(key in rewrite_result for key in required_keys):
+                logger.info("Question rewriting completed successfully with AI")
+                return rewrite_result
+            else:
+                raise ValueError("Invalid AI response structure")
+                
+        except Exception as ai_error:
+            logger.warning(f"AI-based rewriting failed: {ai_error}, falling back to rule-based enhancement")
+            
+            # Fallback to rule-based enhancement for development
+            enhanced_text = request.question_text.strip()
+            
+            # Basic text cleanup
+            if enhanced_text and not enhanced_text[0].isupper():
+                enhanced_text = enhanced_text[0].upper() + enhanced_text[1:]
+            if enhanced_text and not enhanced_text.endswith(('?', '.', '!')):
+                enhanced_text += "?"
+            
+            # Rule-based role and tag suggestions
+            text_lower = request.question_text.lower()
+            suggested_role = "General Developer"
+            suggested_tags = ["general", "assessment"]
+            
+            # Frontend keywords
+            if any(keyword in text_lower for keyword in ["react", "javascript", "html", "css", "frontend", "ui", "component"]):
+                suggested_role = "Frontend Developer"
+                suggested_tags = ["frontend", "javascript"]
+                if "react" in text_lower:
+                    suggested_tags.append("react")
+            
+            # Backend keywords  
+            elif any(keyword in text_lower for keyword in ["python", "java", "backend", "api", "server", "database", "sql"]):
+                suggested_role = "Backend Developer"
+                suggested_tags = ["backend", "api"]
+                if "python" in text_lower:
+                    suggested_tags.append("python")
+                elif "java" in text_lower:
+                    suggested_tags.append("java")
+            
+            # Algorithm/Data Structure keywords
+            elif any(keyword in text_lower for keyword in ["algorithm", "complexity", "sorting", "search", "tree", "array"]):
+                suggested_role = "Software Engineer"
+                suggested_tags = ["algorithms", "programming"]
+                if "complexity" in text_lower:
+                    suggested_tags.append("complexity")
+            
+            # DevOps keywords
+            elif any(keyword in text_lower for keyword in ["docker", "kubernetes", "aws", "deployment", "ci/cd"]):
+                suggested_role = "DevOps Engineer"
+                suggested_tags = ["devops", "infrastructure"]
+            
+            logger.info("Question rewriting completed with rule-based fallback")
+            return {
+                "rewritten_text": enhanced_text,
+                "suggested_role": suggested_role,
+                "suggested_tags": suggested_tags[:3]  # Limit to 3 tags
+            }
+        
+    except Exception as e:
+        logger.error(f"Error in rewrite_question: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to rewrite question: {str(e)}")
+
+
 @app.post("/debug/console-interaction")
 async def debug_console_interaction(request: DebugInteractionRequest) -> Dict[str, Any]:
     """
@@ -326,6 +474,193 @@ async def debug_status() -> Dict[str, Any]:
             "CONSOLE_UI_ENABLED": os.getenv("CONSOLE_UI_ENABLED", "false")
         }
     }
+
+
+# ===========================
+# RAG SYSTEM ENDPOINTS
+# ===========================
+
+class RAGQueryRequest(BaseModel):
+    """Request model for RAG queries"""
+    question: str
+    context_limit: int = 5
+    similarity_threshold: float = 0.7
+
+
+class EmbeddingGenerationRequest(BaseModel):
+    """Request model for embedding generation"""
+    text: str
+
+
+@app.post("/rag/query")
+async def rag_query(request: RAGQueryRequest) -> Dict[str, Any]:
+    """
+    Process RAG queries using the RAG-powered agent team.
+    Retrieves context and generates informed answers.
+    """
+    try:
+        logger.info(f"Processing RAG query: {request.question[:100]}...")
+        
+        # Import RAG functions
+        from agents import rag_query_async
+        
+        # Process the query using RAG team
+        messages = await rag_query_async(request.question)
+        
+        # Extract answer from the conversation
+        answer = ""
+        context_documents = []
+        confidence_score = None
+        
+        for message in messages:
+            if hasattr(message, 'content') and message.content:
+                # Look for the final answer in the conversation
+                if "answer:" in message.content.lower() or "response:" in message.content.lower():
+                    answer = message.content
+                    break
+        
+        # If no specific answer found, use the last message as answer
+        if not answer and messages:
+            answer = messages[-1].content if hasattr(messages[-1], 'content') else str(messages[-1])
+        
+        # Try to extract context documents from tools (if available)
+        # This would be populated by the query_cosmosdb_for_rag tool results
+        context_documents = []  # Placeholder - would be extracted from tool results
+        
+        return {
+            "success": True,
+            "answer": answer or "I couldn't find specific information about that question.",
+            "context_documents": context_documents,
+            "confidence_score": confidence_score,
+            "messages_count": len(messages),
+            "query_processed": True
+        }
+        
+    except Exception as e:
+        logger.error(f"RAG query processing failed: {str(e)}")
+        return {
+            "success": False,
+            "answer": None,
+            "context_documents": [],
+            "confidence_score": None,
+            "error": str(e)
+        }
+
+
+@app.post("/rag/search")
+async def rag_search(request: RAGQueryRequest) -> Dict[str, Any]:
+    """
+    Perform vector similarity search in the knowledge base.
+    Returns relevant documents without generating an answer.
+    """
+    try:
+        logger.info(f"Processing RAG search: {request.question[:100]}...")
+        
+        # Import RAG tools
+        from tools import query_cosmosdb_for_rag
+        
+        # Perform the search
+        context = await query_cosmosdb_for_rag(request.question)
+        
+        # Parse context to extract documents (if structured)
+        documents = []
+        if context and context != f"Mock context for query: {request.question}":
+            # Try to parse structured context
+            try:
+                # Context should contain numbered sections
+                sections = context.split("\n")
+                current_doc = {}
+                
+                for line in sections:
+                    line = line.strip()
+                    if line.startswith(("1.", "2.", "3.", "4.", "5.")):
+                        if current_doc:
+                            documents.append(current_doc)
+                        current_doc = {"content": line}
+                    elif "Skill:" in line:
+                        current_doc["skill"] = line.replace("Skill:", "").strip()
+                    elif "Content:" in line:
+                        current_doc["content"] = line.replace("Content:", "").strip()
+                    elif "Relevance:" in line:
+                        current_doc["relevance"] = line.replace("Relevance:", "").strip()
+                
+                if current_doc:
+                    documents.append(current_doc)
+                    
+            except Exception as parse_error:
+                logger.warning(f"Could not parse context structure: {parse_error}")
+                documents = [{"content": context, "skill": "unknown", "relevance": "N/A"}]
+        
+        return {
+            "success": True,
+            "results": documents,
+            "total_found": len(documents),
+            "search_type": "vector_similarity",
+            "message": f"Found {len(documents)} relevant documents"
+        }
+        
+    except Exception as e:
+        logger.error(f"RAG search failed: {str(e)}")
+        return {
+            "success": False,
+            "results": [],
+            "total_found": 0,
+            "error": str(e)
+        }
+
+
+@app.post("/embeddings/generate")
+async def generate_embedding(request: EmbeddingGenerationRequest) -> Dict[str, Any]:
+    """
+    Generate embedding for given text using Azure OpenAI.
+    """
+    try:
+        logger.info(f"Generating embedding for text: {request.text[:100]}...")
+        
+        # Import embedding generation
+        import openai
+        
+        # Get Azure OpenAI configuration
+        openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+        openai_key = os.getenv('AZURE_OPENAI_API_KEY')
+        
+        if not openai_endpoint or not openai_key:
+            return {
+                "success": False,
+                "embedding": None,
+                "error": "Azure OpenAI not configured"
+            }
+        
+        # Create OpenAI client
+        client = openai.AsyncAzureOpenAI(
+            azure_endpoint=openai_endpoint,
+            api_key=openai_key,
+            api_version="2024-02-15-preview"
+        )
+        
+        # Generate embedding
+        response = await client.embeddings.create(
+            model="text-embedding-ada-002",
+            input=request.text
+        )
+        
+        embedding = response.data[0].embedding
+        
+        return {
+            "success": True,
+            "embedding": embedding,
+            "dimensions": len(embedding),
+            "model": "text-embedding-ada-002"
+        }
+        
+    except Exception as e:
+        logger.error(f"Embedding generation failed: {str(e)}")
+        return {
+            "success": False,
+            "embedding": None,
+            "error": str(e)
+        }
+
 
 if __name__ == "__main__":
     import uvicorn

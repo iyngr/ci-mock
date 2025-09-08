@@ -34,6 +34,11 @@ A comprehensive technical assessment platform built with Next.js 14 and FastAPI,
 - ✅ Detailed candidate reports
 - ✅ AI-powered evaluation and scoring
 - ✅ **Auto-submission monitoring and reporting**
+- ✅ **NEW: AI-Enhanced Question Management**
+  - Single question addition with automatic enhancement
+  - Bulk CSV upload with duplicate detection
+  - Grammar correction and skill tagging
+  - Semantic similarity validation
 
 ### Security & Integrity
 - 🔒 **Server-authoritative timing** - Backend controls all session lifecycle
@@ -127,6 +132,17 @@ vercel --prod
 - `GET /api/admin/dashboard` - Dashboard statistics
 - `POST /api/admin/tests` - Create new test
 - `GET /api/admin/report/{result_id}` - Detailed report
+- **NEW: Question Management**
+  - `POST /api/admin/questions/add-single` - Add single question with AI enhancement
+  - `POST /api/admin/questions/bulk-validate` - Validate bulk CSV upload
+  - `POST /api/admin/questions/bulk-confirm` - Confirm bulk question import
+
+### AI Service Routes (NEW: LLM Agent)
+- `GET /health` - AI service health check
+- `POST /questions/validate` - Two-phase question validation (exact + semantic)
+- `POST /questions/rewrite` - AI-powered question enhancement and tagging
+- `POST /generate-question` - AI question generation
+- `POST /generate-report` - Multi-agent assessment scoring
 
 ### Utility Routes
 - `POST /api/utils/run-code` - Execute code via Judge0

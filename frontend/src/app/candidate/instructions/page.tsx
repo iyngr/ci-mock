@@ -21,6 +21,85 @@ export default function Instructions() {
     setTimeout(() => setShowModal(true), 500)
   }, [router])
 
+  // Cross-browser fullscreen function with retry mechanism
+  const enterFullscreen = async (retries = 3) => {
+    const element = document.documentElement
+
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        // Standard fullscreen API (Chrome, Edge, Firefox, Safari)
+        if (element.requestFullscreen) {
+          await element.requestFullscreen()
+          return
+        }
+
+        // WebKit prefixed (older Safari)
+        if ((element as any).webkitRequestFullscreen) {
+          await (element as any).webkitRequestFullscreen()
+          return
+        }
+
+        // Mozilla prefixed (older Firefox)
+        if ((element as any).mozRequestFullScreen) {
+          await (element as any).mozRequestFullScreen()
+          return
+        }
+
+        // Microsoft prefixed (older IE/Edge)
+        if ((element as any).msRequestFullscreen) {
+          await (element as any).msRequestFullscreen()
+          return
+        }
+
+        console.warn("Fullscreen API not supported in this browser")
+      } catch (error) {
+        console.error("Failed to enter fullscreen mode:", error)
+
+        // For Chrome, try alternative approaches
+        try {
+          if (navigator.userAgent.includes("Chrome")) {
+            // Chrome sometimes needs screen capture permission first
+            const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+            stream.getTracks().forEach((track) => track.stop()) // Stop immediately
+
+            // Retry fullscreen after permission
+            if (element.requestFullscreen) {
+              await element.requestFullscreen()
+              return
+            }
+          }
+        } catch (mediaError) {
+          console.error("Chrome fullscreen with media permission failed:", mediaError)
+
+          // Try with keyboard event simulation (best-effort)
+          try {
+            const keyEvent = new KeyboardEvent("keydown", {
+              key: "F11",
+              code: "F11",
+              keyCode: 122,
+              which: 122,
+              bubbles: true,
+              cancelable: true,
+            })
+            document.dispatchEvent(keyEvent)
+          } catch (keyError) {
+            console.error("Chrome F11 simulation failed:", keyError)
+          }
+        }
+      }
+    }
+  }
+
+  // Check if fullscreen is supported
+  const isFullscreenSupported = () => {
+    return !!(
+      document.documentElement.requestFullscreen ||
+      (document.documentElement as any).webkitRequestFullscreen ||
+      (document.documentElement as any).mozRequestFullScreen ||
+      (document.documentElement as any).msRequestFullscreen
+    )
+  }
+
   const startAssessment = async () => {
     setIsStarting(true)
 
@@ -38,12 +117,12 @@ export default function Instructions() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${candidateToken}`
+          Authorization: `Bearer ${candidateToken}`,
         },
         body: JSON.stringify({
           assessment_id: testId,
-          candidate_id: candidateId
-        })
+          candidate_id: candidateId,
+        }),
       })
 
       if (!response.ok) {
@@ -58,12 +137,20 @@ export default function Instructions() {
       localStorage.setItem("durationMinutes", data.durationMinutes.toString())
       localStorage.setItem("assessmentStartTime", new Date().toISOString())
 
-      // Enter fullscreen mode
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen().catch(err => {
-          console.log("Could not enter fullscreen:", err)
-        })
+      // Check if we're on HTTPS (required by some browsers for fullscreen)
+      if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        console.warn("HTTPS required for fullscreen API in some browsers")
       }
+
+      // Check if fullscreen is supported
+      if (!isFullscreenSupported()) {
+        alert(
+          "Your browser doesn't support fullscreen mode. The assessment may not work properly. Please use a modern browser like Chrome, Edge, Firefox, or Safari."
+        )
+      }
+
+      // Enter fullscreen mode with browser-specific handling
+      await enterFullscreen()
 
       // Navigate to assessment
       router.push("/candidate/assessment")
@@ -81,8 +168,8 @@ export default function Instructions() {
         "Ensure you have a stable internet connection throughout the assessment",
         "Answer all questions to the best of your ability",
         "Use the provided code execution environment for programming questions",
-        "Manage your time wisely - the time limit will be enforced"
-      ]
+        "Manage your time wisely - the time limit will be enforced",
+      ],
     },
     {
       type: "dont",
@@ -90,9 +177,9 @@ export default function Instructions() {
         "Do not switch tabs or minimize the browser window",
         "Do not use external resources or assistance",
         "Do not attempt to copy or paste from external sources",
-        "Do not exit fullscreen mode during the assessment"
-      ]
-    }
+        "Do not exit fullscreen mode during the assessment",
+      ],
+    },
   ]
 
   return (
@@ -107,9 +194,7 @@ export default function Instructions() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                   </svg>
                 </div>
-                <h2 className="text-3xl font-light text-warm-brown mb-3 tracking-tight">
-                  Assessment Guidelines
-                </h2>
+                <h2 className="text-3xl font-light text-warm-brown mb-3 tracking-tight">Assessment Guidelines</h2>
                 <div className="w-24 h-px bg-warm-brown/30 mx-auto"></div>
               </div>
 
@@ -172,12 +257,7 @@ export default function Instructions() {
               </div>
 
               <div className="text-center">
-                <Button
-                  onClick={startAssessment}
-                  disabled={isStarting}
-                  size="lg"
-                  className="h-14 px-12 text-lg font-light tracking-wide"
-                >
+                <Button onClick={startAssessment} disabled={isStarting} size="lg" className="h-14 px-12 text-lg font-light tracking-wide">
                   {isStarting ? (
                     <div className="flex items-center gap-3">
                       <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
@@ -196,12 +276,8 @@ export default function Instructions() {
       <div className="text-center">
         <AnimateOnScroll animation="fadeInUp">
           <div className="w-16 h-16 border-4 border-warm-brown/20 border-t-warm-brown rounded-full animate-spin mx-auto mb-6"></div>
-          <h1 className="text-3xl font-light text-warm-brown mb-4 tracking-tight">
-            Preparing Your Assessment
-          </h1>
-          <p className="text-warm-brown/60 font-light">
-            Please wait while we load the instructions...
-          </p>
+          <h1 className="text-3xl font-light text-warm-brown mb-4 tracking-tight">Preparing Your Assessment</h1>
+          <p className="text-warm-brown/60 font-light">Please wait while we load the instructions...</p>
         </AnimateOnScroll>
       </div>
     </div>

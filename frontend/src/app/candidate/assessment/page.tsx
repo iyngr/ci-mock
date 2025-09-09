@@ -141,6 +141,82 @@ export default function Assessment() {
   const isProcessingRef = useRef(false)
   const router = useRouter()
 
+  // Cross-browser fullscreen function
+  const enterFullscreen = async () => {
+    const element = document.documentElement
+
+    try {
+      // Standard fullscreen API (Chrome, Edge, Firefox, Safari)
+      if (element.requestFullscreen) {
+        await element.requestFullscreen()
+        return
+      }
+
+      // WebKit prefixed (older Safari)
+      if ((element as any).webkitRequestFullscreen) {
+        await (element as any).webkitRequestFullscreen()
+        return
+      }
+
+      // Mozilla prefixed (older Firefox)
+      if ((element as any).mozRequestFullScreen) {
+        await (element as any).mozRequestFullScreen()
+        return
+      }
+
+      // Microsoft prefixed (older IE/Edge)
+      if ((element as any).msRequestFullscreen) {
+        await (element as any).msRequestFullscreen()
+        return
+      }
+
+      console.warn("Fullscreen API not supported in this browser")
+    } catch (error) {
+      console.error("Failed to enter fullscreen mode:", error)
+
+      // For Chrome, try alternative approaches
+      if (navigator.userAgent.includes('Chrome')) {
+        try {
+          // Chrome sometimes needs screen capture permission first
+          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+          stream.getTracks().forEach(track => track.stop()) // Stop immediately
+
+          // Retry fullscreen after permission
+          if (element.requestFullscreen) {
+            await element.requestFullscreen()
+          }
+        } catch (mediaError) {
+          console.error("Chrome fullscreen with media permission failed:", mediaError)
+
+          // Try with keyboard event simulation (Chrome workaround)
+          try {
+            const keyEvent = new KeyboardEvent('keydown', {
+              key: 'F11',
+              code: 'F11',
+              keyCode: 122,
+              which: 122,
+              bubbles: true,
+              cancelable: true
+            })
+            document.dispatchEvent(keyEvent)
+          } catch (keyError) {
+            console.error("Chrome F11 simulation failed:", keyError)
+          }
+        }
+      }
+    }
+  }
+
+  // Check if fullscreen is supported
+  const isFullscreenSupported = () => {
+    return !!(
+      document.documentElement.requestFullscreen ||
+      (document.documentElement as any).webkitRequestFullscreen ||
+      (document.documentElement as any).mozRequestFullScreen ||
+      (document.documentElement as any).msRequestFullscreen
+    )
+  }
+
   // Update ref whenever state changes
   useEffect(() => {
     violationCountRef.current = violationCount
@@ -205,11 +281,9 @@ export default function Assessment() {
       setShowWarningModal(true);
 
       // Force back to fullscreen after a brief delay
-      setTimeout(() => {
+      setTimeout(async () => {
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(err => {
-            console.log("Could not re-enter fullscreen:", err);
-          });
+          await enterFullscreen()
         }
       }, 100);
     }
@@ -222,26 +296,22 @@ export default function Assessment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logProctoringEvent]);
 
-  const handleReturnToTest = useCallback(() => {
+  const handleReturnToTest = useCallback(async () => {
     setShowWarningModal(false);
     // Force back to fullscreen when returning to test
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(err => {
-        console.log("Could not enter fullscreen:", err);
-      });
+      await enterFullscreen()
     }
   }, []);
 
-  const handleRoleSelection = useCallback((role: DeveloperRole) => {
+  const handleRoleSelection = useCallback(async (role: DeveloperRole) => {
     setSelectedRole(role)
     setRoleConfig(getRoleConfig(role))
     setShowRoleSelection(false)
 
     // Force fullscreen after role selection
     if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(err => {
-        console.log("Could not enter fullscreen after role selection:", err);
-      });
+      await enterFullscreen()
     }
   }, []);
 

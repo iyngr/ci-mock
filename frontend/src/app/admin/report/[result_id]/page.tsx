@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
+import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import AssessmentOverview from "@/components/report/AssessmentOverview"
 import TestTakerDetails from "@/components/report/TestTakerDetails"
 import SubSkillAnalysis from "@/components/report/SubSkillAnalysis"
@@ -42,6 +43,7 @@ interface ReportData {
 
 export default function CandidateReport() {
     const params = useParams()
+    const router = useRouter()
     const resultId = params.result_id as string
     const [reportData, setReportData] = useState<ReportData | null>(null)
     const [loading, setLoading] = useState(true)
@@ -215,82 +217,118 @@ export default function CandidateReport() {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
-                <div className="text-center">
-                    <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-4 text-lg">Loading candidate report...</p>
-                </div>
+            <div className="min-h-screen bg-warm-background flex items-center justify-center">
+                <AnimateOnScroll animation="fadeInUp">
+                    <div className="text-center">
+                        <div className="w-16 h-16 border-4 border-warm-brown/20 border-t-warm-brown rounded-full animate-spin mx-auto mb-6"></div>
+                        <p className="text-lg font-light text-warm-brown">Loading candidate report...</p>
+                    </div>
+                </AnimateOnScroll>
             </div>
         )
     }
 
     if (!reportData) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
-                <div className="text-center">
-                    <p className="text-xl text-red-600">Report not found</p>
-                </div>
+            <div className="min-h-screen bg-warm-background flex items-center justify-center">
+                <AnimateOnScroll animation="fadeInUp">
+                    <div className="text-center">
+                        <p className="text-xl text-red-600 font-light">Report not found</p>
+                        <Button
+                            variant="ghost"
+                            onClick={() => router.push("/admin/dashboard")}
+                            className="mt-4 text-warm-brown/60 hover:text-warm-brown"
+                        >
+                            ← Back to Dashboard
+                        </Button>
+                    </div>
+                </AnimateOnScroll>
             </div>
         )
     }
 
     return (
-        <div className="min-h-screen assessment-bg">
+        <div className="min-h-screen bg-warm-background">
             {/* Header */}
-            <div className="assessment-card border-b m-0 rounded-none p-4">
-                <div className="flex justify-between items-center max-w-7xl mx-auto">
-                    <div className="flex items-center space-x-4">
-                        <h1 className="text-2xl font-bold assessment-text-primary">Candidate Report</h1>
-                        <div className="flex space-x-2">
-                            <Button
-                                variant={currentPage === 1 ? "default" : "outline"}
-                                onClick={() => setCurrentPage(1)}
-                                size="sm"
-                                className={currentPage === 1 ? "btn-assessment-primary" : "btn-assessment-secondary"}
-                            >
-                                Page 1
-                            </Button>
-                            <Button
-                                variant={currentPage === 2 ? "default" : "outline"}
-                                onClick={() => setCurrentPage(2)}
-                                size="sm"
-                                className={currentPage === 2 ? "btn-assessment-primary" : "btn-assessment-secondary"}
-                            >
-                                Page 2
-                            </Button>
-                            <Button
-                                variant={currentPage === 3 ? "default" : "outline"}
-                                onClick={() => setCurrentPage(3)}
-                                size="sm"
-                                className={currentPage === 3 ? "btn-assessment-primary" : "btn-assessment-secondary"}
-                            >
-                                Page 3
-                            </Button>
-                        </div>
-                    </div>
+            <div className="bg-white/60 backdrop-blur-sm border-b border-warm-brown/10 sticky top-0 z-50">
+                <div className="max-w-7xl mx-auto px-6 py-4">
+                    <AnimateOnScroll animation="fadeInUp" delay={200}>
+                        <div className="flex justify-between items-center">
+                            <div className="flex items-center space-x-6">
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => router.push("/admin/dashboard")}
+                                    className="text-warm-brown/60 hover:text-warm-brown"
+                                >
+                                    ← Dashboard
+                                </Button>
 
-                    <div className="flex items-center space-x-4">
-                        <Button
-                            variant="outline"
-                            onClick={() => setUseDummyData(!useDummyData)}
-                            size="sm"
-                        >
-                            {useDummyData ? "Use Real Data" : "Use Dummy Data"}
-                        </Button>
-                        <Button onClick={generatePDF} variant="default" disabled={generating}>
-                            {generating ? "Generating PDF..." : "Download PDF"}
-                        </Button>
-                    </div>
+                                <div>
+                                    <h1 className="text-2xl font-light text-warm-brown tracking-tight">
+                                        Candidate Report
+                                    </h1>
+                                    <div className="w-16 h-px bg-warm-brown/30 mt-1"></div>
+                                </div>
+
+                                <div className="flex space-x-2">
+                                    {[1, 2, 3].map((page) => (
+                                        <button
+                                            key={page}
+                                            onClick={() => setCurrentPage(page)}
+                                            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all duration-300 ${currentPage === page
+                                                    ? "bg-warm-brown text-white shadow-lg"
+                                                    : "text-warm-brown/60 hover:text-warm-brown hover:bg-warm-brown/5"
+                                                }`}
+                                        >
+                                            Page {page}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center space-x-3">
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => setUseDummyData(!useDummyData)}
+                                    size="sm"
+                                    className="text-warm-brown/60 hover:text-warm-brown text-xs"
+                                >
+                                    {useDummyData ? "Use Real Data" : "Use Dummy Data"}
+                                </Button>
+                                <Button
+                                    onClick={generatePDF}
+                                    disabled={generating}
+                                    className="h-10 px-6"
+                                >
+                                    {generating ? (
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                                            Generating...
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-2">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                            </svg>
+                                            Download PDF
+                                        </div>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                    </AnimateOnScroll>
                 </div>
             </div>
 
             {/* Report Content */}
-            <div className="max-w-5xl mx-auto p-6">
-                <div id="pdf-content" ref={reportRef} className="bg-white rounded-lg shadow-lg">
-                    {currentPage === 1 && <AssessmentOverview data={reportData} />}
-                    {currentPage === 2 && <TestTakerDetails data={reportData} />}
-                    {currentPage === 3 && <SubSkillAnalysis data={reportData} />}
-                </div>
+            <div className="max-w-6xl mx-auto px-6 py-8">
+                <AnimateOnScroll animation="fadeInUp" delay={400}>
+                    <div id="pdf-content" ref={reportRef} className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl shadow-lg overflow-hidden">
+                        {currentPage === 1 && <AssessmentOverview data={reportData} />}
+                        {currentPage === 2 && <TestTakerDetails data={reportData} />}
+                        {currentPage === 3 && <SubSkillAnalysis data={reportData} />}
+                    </div>
+                </AnimateOnScroll>
             </div>
         </div>
     )

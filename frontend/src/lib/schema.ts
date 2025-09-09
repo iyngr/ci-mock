@@ -74,7 +74,8 @@ export interface AdminLoginRequest {
 
 export interface TestInitiationRequest {
     candidate_email: string
-    question_ids: string[]
+    developer_role: string
+    question_ids?: string[]
     duration_hours: number
 }
 

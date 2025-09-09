@@ -1,22 +1,10 @@
 import type { Metadata } from "next";
-import { Fraunces, Roboto_Flex } from "next/font/google";
 import "./globals.css";
-
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-fraunces",
-  display: "swap",
-});
-
-const robotoFlex = Roboto_Flex({
-  subsets: ["latin"],
-  variable: "--font-roboto-flex",
-  display: "swap",
-});
+import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
-  title: "Smart Mock - Internal Technical Assessment Platform",
-  description: "Employee portal for technical assessments and evaluations",
+  title: "AI Technical Assessment Platform",
+  description: "Comprehensive technical assessment platform with AI-powered evaluation and real-time proctoring",
 };
 
 export default function RootLayout({
@@ -26,9 +14,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${fraunces.variable} ${robotoFlex.variable} font-roboto-flex antialiased`}
-      >
+      <body className="font-system antialiased">
+        <Header />
         {children}
       </body>
     </html>

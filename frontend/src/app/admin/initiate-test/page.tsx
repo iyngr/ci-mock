@@ -4,27 +4,28 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { TestInitiationRequest } from "@/lib/schema"
-
-// Mock questions for selection
-const mockQuestions = [
-  { id: "q1", title: "Binary Search Complexity", type: "MCQ", tags: ["algorithms", "complexity"] },
-  { id: "q2", title: "HTTP vs HTTPS", type: "Descriptive", tags: ["networking", "security"] },
-  { id: "q3", title: "Find Maximum Element", type: "Coding", tags: ["programming", "arrays"] },
-  { id: "q4", title: "React Components", type: "MCQ", tags: ["react", "frontend"] },
-  { id: "q5", title: "Database Normalization", type: "Descriptive", tags: ["database", "sql"] },
-  { id: "q6", title: "Sorting Algorithm", type: "Coding", tags: ["algorithms", "sorting"] },
-]
 
 export default function InitiateTest() {
   const [candidateEmail, setCandidateEmail] = useState("")
-  const [selectedQuestions, setSelectedQuestions] = useState<string[]>([])
-  const [durationHours, setDurationHours] = useState(2)
+  const [selectedRole, setSelectedRole] = useState("")
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [loginCode, setLoginCode] = useState("")
   const [error, setError] = useState("")
   const router = useRouter()
+
+  const developerRoles = [
+    "Python Backend Developer",
+    "Java Backend Developer",
+    "Node.js Backend Developer",
+    "React Frontend Developer",
+    "Full Stack JavaScript Developer",
+    "DevOps Engineer",
+    "Mobile Developer",
+    "Data Scientist"
+  ]
 
   useEffect(() => {
     // Check if admin is logged in
@@ -34,21 +35,19 @@ export default function InitiateTest() {
     }
   }, [router])
 
-  const handleQuestionToggle = (questionId: string) => {
-    setSelectedQuestions(prev =>
-      prev.includes(questionId)
-        ? prev.filter(id => id !== questionId)
-        : [...prev, questionId]
-    )
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError("")
 
-    if (selectedQuestions.length === 0) {
-      setError("Please select at least one question")
+    if (!candidateEmail.trim()) {
+      setError("Email address is required")
+      setLoading(false)
+      return
+    }
+
+    if (!selectedRole) {
+      setError("Please select a developer role")
       setLoading(false)
       return
     }
@@ -70,8 +69,8 @@ export default function InitiateTest() {
         },
         body: JSON.stringify({
           candidate_email: candidateEmail,
-          question_ids: selectedQuestions,
-          duration_hours: durationHours
+          developer_role: selectedRole,
+          duration_hours: 2 // Default 2 hours
         } as TestInitiationRequest),
       })
 
@@ -92,202 +91,194 @@ export default function InitiateTest() {
 
   const resetForm = () => {
     setCandidateEmail("")
-    setSelectedQuestions([])
-    setDurationHours(2)
+    setSelectedRole("")
     setSuccess(false)
     setLoginCode("")
     setError("")
   }
 
+  const getQuestionTypeBadge = (type: string) => {
+    const typeColors = {
+      MCQ: "bg-blue-50 text-blue-700 border-blue-200",
+      Descriptive: "bg-green-50 text-green-700 border-green-200",
+      Coding: "bg-purple-50 text-purple-700 border-purple-200"
+    }
+    return typeColors[type as keyof typeof typeColors] || "bg-gray-50 text-gray-700 border-gray-200"
+  }
+
   if (success) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <div className="bg-white shadow">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-16">
-              <div className="flex items-center">
+      <div className="min-h-screen bg-warm-background">
+        <div className="max-w-3xl mx-auto px-6 py-12">
+          <AnimateOnScroll animation="fadeInUp" delay={200}>
+            <div className="text-center mb-8">
+              <Button
+                variant="ghost"
+                onClick={() => router.push("/admin/dashboard")}
+                className="mb-6 text-warm-brown/60 hover:text-warm-brown"
+              >
+                ← Back to Dashboard
+              </Button>
+            </div>
+
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-8 text-center">
+              <div className="mb-8">
+                <div className="mx-auto w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-6">
+                  <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+
+                <h1 className="text-3xl font-light text-warm-brown mb-4 tracking-tight">
+                  Assessment Created
+                </h1>
+                <div className="w-16 h-px bg-warm-brown/30 mx-auto mb-6"></div>
+                <p className="text-lg text-warm-brown/70 font-light">
+                  Your assessment has been successfully created and is ready for the candidate
+                </p>
+              </div>
+
+              <div className="bg-warm-brown/5 border border-warm-brown/10 rounded-xl p-6 mb-8">
+                <h3 className="text-xl font-light text-warm-brown mb-4">Access Code</h3>
+                <div className="bg-white border border-warm-brown/20 rounded-lg p-4 mb-4">
+                  <div className="text-3xl font-mono font-medium text-warm-brown tracking-wider">
+                    {loginCode}
+                  </div>
+                </div>
+                <p className="text-sm text-warm-brown/60 font-light">
+                  Share this code with the candidate to begin their assessment
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 text-left mb-8">
+                <div className="bg-white/40 rounded-xl p-4">
+                  <p className="text-sm font-light text-warm-brown/60 mb-1">Candidate</p>
+                  <p className="font-medium text-warm-brown">{candidateEmail}</p>
+                </div>
+                <div className="bg-white/40 rounded-xl p-4">
+                  <p className="text-sm font-light text-warm-brown/60 mb-1">Role</p>
+                  <p className="font-medium text-warm-brown">{selectedRole}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <Button
-                  variant="outline"
-                  onClick={() => router.push("/admin/dashboard")}
+                  onClick={resetForm}
+                  variant="secondary"
+                  className="h-12 px-8"
                 >
-                  ← Back to Dashboard
+                  Create Another Test
+                </Button>
+                <Button
+                  onClick={() => router.push("/admin/dashboard")}
+                  className="h-12 px-8"
+                >
+                  Return to Dashboard
                 </Button>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div className="max-w-2xl mx-auto py-12 px-4">
-          <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-            <div className="mb-6">
-              <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-            </div>
-
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">
-              Test Created Successfully!
-            </h1>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-              <h3 className="text-lg font-semibold text-blue-900 mb-2">Login Code</h3>
-              <div className="text-2xl font-mono font-bold text-blue-600 bg-white px-4 py-2 rounded border">
-                {loginCode}
-              </div>
-              <p className="text-sm text-blue-700 mt-2">
-                Share this code with the candidate to start their assessment
-              </p>
-            </div>
-
-            <div className="space-y-3 text-left">
-              <p><strong>Candidate:</strong> {candidateEmail}</p>
-              <p><strong>Questions:</strong> {selectedQuestions.length} selected</p>
-              <p><strong>Duration:</strong> {durationHours} hours</p>
-            </div>
-
-            <div className="mt-8 space-x-4">
-              <Button onClick={resetForm}>
-                Create Another Test
-              </Button>
-              <Button variant="outline" onClick={() => router.push("/admin/dashboard")}>
-                Back to Dashboard
-              </Button>
-            </div>
-          </div>
+          </AnimateOnScroll>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen assessment-bg">
-      {/* Header */}
-      <div className="assessment-card m-6 rounded-none">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <Button
-                variant="outline"
-                onClick={() => router.push("/admin/dashboard")}
-                className="btn-assessment-secondary"
-              >
-                ← Back to Dashboard
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div className="min-h-screen bg-warm-background">
+      <div className="max-w-4xl mx-auto px-6 pt-24 pb-8">{/* Increased top padding to account for floating nav */}
+        {/* Header */}
+        <AnimateOnScroll animation="fadeInUp" delay={200}>
+          <div className="mb-12">
+            <Button
+              variant="ghost"
+              onClick={() => router.push("/admin/dashboard")}
+              className="mb-6 text-warm-brown/60 hover:text-warm-brown"
+            >
+              ← Back to Dashboard
+            </Button>
 
-      <div className="max-w-4xl mx-auto py-8 px-4">
-        <div className="assessment-card">
-          <div className="px-6 py-4 assessment-border">
-            <h1 className="text-xl font-semibold assessment-text-primary">
-              Initiate Test
+            <h1 className="text-4xl lg:text-5xl font-light text-warm-brown mb-4 tracking-tight">
+              Initiate Assessment
             </h1>
-            <p className="mt-1 text-sm assessment-text-muted">
-              Create a new assessment for a candidate by selecting questions and setting duration.
+            <div className="w-24 h-px bg-warm-brown/30 mb-4"></div>
+            <p className="text-lg text-warm-brown/60 font-light max-w-2xl">
+              Create a new technical assessment for a candidate
             </p>
           </div>
+        </AnimateOnScroll>
 
-          <form onSubmit={handleSubmit} className="p-6 space-y-6">
-            {/* Candidate Email */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Candidate Email
-              </label>
-              <Input
-                id="email"
-                type="email"
-                value={candidateEmail}
-                onChange={(e) => setCandidateEmail(e.target.value)}
-                placeholder="candidate@example.com"
-                required
-                className="mt-1"
-              />
-            </div>
+        <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Candidate Details */}
+          <AnimateOnScroll animation="fadeInUp" delay={300}>
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6">
+              <h2 className="text-xl font-light text-warm-brown mb-6">Assessment Information</h2>
 
-            {/* Duration */}
-            <div>
-              <label htmlFor="duration" className="block text-sm font-medium text-gray-700">
-                Duration (hours)
-              </label>
-              <Input
-                id="duration"
-                type="number"
-                min="1"
-                max="8"
-                value={durationHours}
-                onChange={(e) => setDurationHours(parseInt(e.target.value))}
-                className="mt-1 w-32"
-              />
-            </div>
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-light text-warm-brown/70 mb-2">
+                    Candidate Email Address
+                  </label>
+                  <Input
+                    type="email"
+                    placeholder="candidate@example.com"
+                    value={candidateEmail}
+                    onChange={(e) => setCandidateEmail(e.target.value)}
+                    className="h-12"
+                    required
+                  />
+                </div>
 
-            {/* Question Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">
-                Select Questions ({selectedQuestions.length} selected)
-              </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {mockQuestions.map((question) => (
-                  <div
-                    key={question.id}
-                    className={`border rounded-lg p-4 cursor-pointer transition-colors ${selectedQuestions.includes(question.id)
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-300 hover:border-gray-400"
-                      }`}
-                    onClick={() => handleQuestionToggle(question.id)}
+                <div>
+                  <label className="block text-sm font-light text-warm-brown/70 mb-2">
+                    Developer Role
+                  </label>
+                  <select
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value)}
+                    className="w-full h-12 px-4 rounded-lg border border-warm-brown/20 bg-white text-warm-brown focus:outline-none focus:ring-2 focus:ring-warm-brown/30"
+                    required
                   >
-                    <div className="flex items-start space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedQuestions.includes(question.id)}
-                        onChange={() => handleQuestionToggle(question.id)}
-                        className="mt-1"
-                      />
-                      <div className="flex-1">
-                        <h4 className="font-medium text-gray-900">{question.title}</h4>
-                        <p className="text-sm text-gray-600 mt-1">Type: {question.type}</p>
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {question.tags.map((tag) => (
-                            <span
-                              key={tag}
-                              className="inline-block bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                    <option value="">Select a role</option>
+                    {developerRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
+          </AnimateOnScroll>
 
-            {error && (
-              <div className="text-red-600 text-sm">{error}</div>
-            )}
+          {/* Error Display */}
+          {error && (
+            <AnimateOnScroll animation="fadeInUp" delay={400}>
+              <div className="bg-red-50/80 border border-red-200/50 rounded-xl p-4">
+                <p className="text-red-700 text-sm font-light">{error}</p>
+              </div>
+            </AnimateOnScroll>
+          )}
 
-            <div className="flex justify-end space-x-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => router.push("/admin/dashboard")}
-              >
-                Cancel
-              </Button>
+          {/* Submit Button */}
+          <AnimateOnScroll animation="fadeInUp" delay={500}>
+            <div className="flex justify-center">
               <Button
                 type="submit"
-                disabled={loading || !candidateEmail.trim() || selectedQuestions.length === 0}
+                disabled={loading || !candidateEmail.trim() || !selectedRole}
+                className="px-12 py-4 text-lg font-light bg-warm-brown hover:bg-warm-brown/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
               >
-                {loading ? "Creating..." : "Create Test"}
+                {loading ? (
+                  <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Creating Assessment...
+                  </div>
+                ) : (
+                  "Create Assessment"
+                )}
               </Button>
             </div>
-          </form>
-        </div>
+          </AnimateOnScroll>
+        </form>
       </div>
     </div>
   )

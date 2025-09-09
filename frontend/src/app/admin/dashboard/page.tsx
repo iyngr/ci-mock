@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { DashboardStats, TestSummary } from "@/lib/schema"
 import { Doughnut } from "react-chartjs-2"
 import {
@@ -79,18 +80,7 @@ export default function AdminDashboard() {
           stats?.pendingTests || 0,
           ((stats?.totalTests ?? 0) - (stats?.completedTests ?? 0) - (stats?.pendingTests ?? 0))
         ],
-        backgroundColor: ["#10B981", "#F59E0B", "#3B82F6"],
-        borderWidth: 0,
-      },
-    ],
-  }
-
-  const performanceData = {
-    labels: ["Excellent (90-100)", "Good (70-89)", "Average (50-69)", "Below Average (<50)"],
-    datasets: [
-      {
-        data: [12, 18, 8, 2], // Mock data
-        backgroundColor: ["#059669", "#10B981", "#F59E0B", "#EF4444"],
+        backgroundColor: ["rgba(42,24,22,0.8)", "rgba(42,24,22,0.5)", "rgba(42,24,22,0.3)"],
         borderWidth: 0,
       },
     ],
@@ -98,12 +88,12 @@ export default function AdminDashboard() {
 
   const getStatusBadge = (status: string) => {
     const statusColors = {
-      completed: "bg-green-100 text-green-800",
-      pending: "bg-yellow-100 text-yellow-800",
-      in_progress: "bg-blue-100 text-blue-800",
-      expired: "bg-red-100 text-red-800"
+      completed: "bg-warm-brown/10 text-warm-brown border-warm-brown/20",
+      pending: "bg-amber-50 text-amber-700 border-amber-200",
+      in_progress: "bg-blue-50 text-blue-700 border-blue-200",
+      expired: "bg-red-50 text-red-700 border-red-200"
     }
-    return statusColors[status as keyof typeof statusColors] || "bg-gray-100 text-gray-800"
+    return statusColors[status as keyof typeof statusColors] || "bg-gray-50 text-gray-700 border-gray-200"
   }
 
   const logout = () => {
@@ -114,256 +104,174 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen assessment-bg flex items-center justify-center">
+      <div className="min-h-screen bg-warm-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-lg assessment-text-primary">Loading dashboard...</p>
+          <div className="w-12 h-12 border-2 border-warm-brown/20 border-t-warm-brown rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-lg text-warm-brown/70 font-light">Loading dashboard...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen assessment-bg">
-      {/* Header */}
-      <div className="assessment-card m-6">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
-              <h1 className="text-base sm:text-lg font-normal tracking-normal assessment-text-primary">
-                Dashboard
-              </h1>
-            </div>
-            <div className="flex items-center space-x-4">
-              <Button
-                onClick={() => router.push("/admin/add-questions")}
-                className="btn-assessment-secondary"
-              >
-                Add Questions
-              </Button>
-              <Button
-                onClick={() => router.push("/admin/initiate-test")}
-                className="btn-assessment-primary"
-              >
-                Initiate New Test
-              </Button>
-              <Button onClick={logout} className="btn-assessment-secondary">
-                Logout
-              </Button>
+    <div className="min-h-screen bg-warm-background">
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto px-6 pt-24 pb-8">{/* Increased top padding to account for floating nav */}
+        {/* Header Section */}
+        <AnimateOnScroll animation="fadeInUp" delay={200}>
+          <div className="mb-12">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+              <div>
+                <h1 className="text-4xl lg:text-5xl font-light text-warm-brown mb-4 tracking-tight">
+                  Dashboard
+                </h1>
+                <div className="w-24 h-px bg-warm-brown/30 mb-4"></div>
+                <p className="text-lg text-warm-brown/60 font-light max-w-2xl">
+                  Comprehensive assessment analytics and management
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </AnimateOnScroll>
 
-      <div className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {/* KPI Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">T</span>
-                  </div>
+        <AnimateOnScroll animation="fadeInUp" delay={300}>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 hover:bg-white/80 transition-colors duration-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-light text-warm-brown/60 mb-2">Total Tests</p>
+                  <p className="text-3xl font-light text-warm-brown">{stats?.totalTests || 0}</p>
                 </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Total Tests
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.totalTests || 0}
-                    </dd>
-                  </dl>
+                <div className="w-12 h-12 bg-warm-brown/10 rounded-full flex items-center justify-center">
+                  <span className="text-warm-brown/60 font-light">T</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 hover:bg-white/80 transition-colors duration-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-light text-warm-brown/60 mb-2">Completed</p>
+                  <p className="text-3xl font-light text-warm-brown">{stats?.completedTests || 0}</p>
+                </div>
+                <div className="w-12 h-12 bg-warm-brown/10 rounded-full flex items-center justify-center">
+                  <span className="text-warm-brown/60 font-light">C</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 hover:bg-white/80 transition-colors duration-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-light text-warm-brown/60 mb-2">Pending</p>
+                  <p className="text-3xl font-light text-warm-brown">{stats?.pendingTests || 0}</p>
+                </div>
+                <div className="w-12 h-12 bg-warm-brown/10 rounded-full flex items-center justify-center">
+                  <span className="text-warm-brown/60 font-light">P</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 hover:bg-white/80 transition-colors duration-300">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-light text-warm-brown/60 mb-2">Success Rate</p>
+                  <p className="text-3xl font-light text-warm-brown">
+                    {stats?.completedTests && stats?.totalTests
+                      ? Math.round((stats.completedTests / stats.totalTests) * 100)
+                      : 0}%
+                  </p>
+                </div>
+                <div className="w-12 h-12 bg-warm-brown/10 rounded-full flex items-center justify-center">
+                  <span className="text-warm-brown/60 font-light">%</span>
                 </div>
               </div>
             </div>
           </div>
+        </AnimateOnScroll>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-green-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">C</span>
-                  </div>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Completed
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.completedTests || 0}
-                    </dd>
-                  </dl>
-                </div>
+        {/* Charts and Recent Tests - Responsive Flex Layout */}
+        <div className="flex flex-col lg:flex-row gap-6 w-full items-stretch">
+          {/* Status Chart - fixed width on desktop */}
+          <AnimateOnScroll animation="fadeInUp" delay={400} className="w-full lg:max-w-sm lg:flex-none min-w-0">
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 h-full w-full">
+              <h3 className="text-xl font-light text-warm-brown mb-6">Test Status Distribution</h3>
+              <div className="h-64 flex items-center justify-center">
+                <Doughnut
+                  data={statusData}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: {
+                        position: 'bottom',
+                        labels: {
+                          font: {
+                            size: 12,
+                            weight: 300
+                          },
+                          color: 'rgba(42,24,22,0.7)',
+                          padding: 16
+                        }
+                      }
+                    }
+                  }}
+                />
               </div>
             </div>
-          </div>
+          </AnimateOnScroll>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-yellow-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">P</span>
-                  </div>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Pending
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.pendingTests || 0}
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white overflow-hidden shadow rounded-lg">
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <div className="w-8 h-8 bg-purple-500 rounded-md flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">A</span>
-                  </div>
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">
-                      Avg Score
-                    </dt>
-                    <dd className="text-lg font-medium text-gray-900">
-                      {stats?.averageScore?.toFixed(1) || 0}%
-                    </dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Status Summary</h3>
-            <div className="w-full h-64 flex items-center justify-center">
-              <Doughnut
-                data={statusData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: {
-                      position: 'bottom',
-                    },
-                  },
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Performance Category</h3>
-            <div className="w-full h-64 flex items-center justify-center">
-              <Doughnut
-                data={performanceData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: {
-                      position: 'bottom',
-                    },
-                  },
-                }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Tests Table */}
-        <div className="bg-white shadow rounded-lg">
-          <div className="px-4 py-5 sm:p-6">
-            <div className="sm:flex sm:items-center sm:justify-between mb-4">
-              <h3 className="text-lg leading-6 font-medium text-gray-900">
-                Test Takers
-              </h3>
-              <div className="mt-3 sm:mt-0 sm:ml-4">
+          {/* Recent Tests - flexes to fill remaining width */}
+          <AnimateOnScroll animation="fadeInUp" delay={500} className="flex-1 min-w-0">
+            <div className="bg-white/60 backdrop-blur-sm border border-warm-brown/10 rounded-2xl p-6 h-full w-full min-w-0">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 w-full">
+                <h3 className="text-xl font-light text-warm-brown">Recent Tests</h3>
                 <Input
                   type="text"
                   placeholder="Search by email..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-64"
+                  className="sm:w-64"
                 />
               </div>
-            </div>
 
-            <div className="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
-              <table className="min-w-full divide-y divide-gray-300">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Candidate
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Created
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Score
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredTests.map((test) => (
-                    <tr key={test._id}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {test.candidateEmail}
+              <div className="space-y-3 w-full lg:max-h-[60vh] overflow-y-auto">{/* Expand on desktop, cap height sensibly */}
+                {filteredTests.length > 0 ? (
+                  filteredTests.slice(0, 12).map((test, index) => (/* Show more tests due to increased space */
+                    <div key={index} className="flex items-center justify-between p-4 bg-white/40 rounded-xl border border-warm-brown/5 hover:bg-white/60 transition-colors">
+                      <div className="flex-1 min-w-0">{/* Added min-w-0 for better text truncation */}
+                        <p className="font-medium text-warm-brown text-sm truncate">{test.candidateEmail}</p>
+                        <div className="flex items-center gap-4 mt-1">
+                          <p className="text-xs text-warm-brown/60">
+                            {new Date(test.createdAt).toLocaleDateString()}
+                          </p>
+                          {/* Add time information */}
+                          <p className="text-xs text-warm-brown/50">
+                            {new Date(test.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </p>
                         </div>
-                        <div className="text-sm text-gray-500">
-                          Initiated by: {test.initiatedBy}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadge(test.status)}`}>
-                          {test.status.replace('_', ' ').toUpperCase()}
+                      </div>
+                      <div className="flex items-center gap-3 ml-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-light border ${getStatusBadge(test.status)}`}>
+                          {test.status.replace('_', ' ')}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {new Date(test.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {test.overallScore ? `${test.overallScore.toFixed(1)}%` : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        {test.status === 'completed' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => router.push(`/admin/report/${test._id}`)}
-                          >
-                            View Report
-                          </Button>
+                        {test.overallScore && (
+                          <span className="text-sm font-medium text-warm-brown min-w-[3rem] text-right">
+                            {Math.round(test.overallScore)}%
+                          </span>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-warm-brown/60 font-light">No tests found</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          </AnimateOnScroll>
         </div>
       </div>
     </div>

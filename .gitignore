@@ -30,6 +30,7 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+auto-submit/local.settings.json
 
 # Installer logs
 pip-log.txt
@@ -219,3 +220,7 @@ backend/venv/
 /tmp/
 .playwright-mcp/homepage.png
 .playwright-mcp/instructions.png
+.vscode/extensions.json
+.vscode/launch.json
+.vscode/settings.json
+.vscode/tasks.json

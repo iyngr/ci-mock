@@ -100,9 +100,7 @@ class ScoringTriageService:
             if not assessment_id:
                 raise HTTPException(status_code=500, detail="Submission missing assessment_id")
             submission = Submission(**submission_data)
-            assessment_data = await self.db.read_item(
-                CONTAINER["ASSESSMENTS"], submission.assessment_id, partition_key=submission.target_role if hasattr(submission, 'target_role') and submission.target_role else "general"
-            ) if False else await self.db.find_one(CONTAINER["ASSESSMENTS"], {"id": submission.assessment_id})
+            assessment_data = await self.db.find_one(CONTAINER["ASSESSMENTS"], {"id": submission.assessment_id})
             if not assessment_data:
                 raise HTTPException(status_code=404, detail="Assessment not found")
             assessment = Assessment(**assessment_data)
@@ -303,6 +301,11 @@ class ScoringTriageService:
     ):
         """Update submission with calculated scores"""
         try:
+            # Determine assessment_id via minimal lookup (already fetched in process_submission path)
+            submission_data = await self.db.find_one(CONTAINER["SUBMISSIONS"], {"id": submission_id})
+            if not submission_data:
+                raise HTTPException(status_code=404, detail="Submission not found for score update")
+            assessment_id = submission_data.get("assessment_id")
             await self.db.update_item(
                 CONTAINER["SUBMISSIONS"],
                 submission_id,
@@ -312,7 +315,7 @@ class ScoringTriageService:
                     "evaluated_at": datetime.utcnow().isoformat(),
                     "evaluation_method": "hybrid_scoring_v1"
                 },
-                partition_key=submission_id  # retained but logically PK is assessment_id; for now using find/update fallback
+                partition_key=assessment_id
             )
         except Exception as e:
             print(f"Failed to update submission scores: {e}")

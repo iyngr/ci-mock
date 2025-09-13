@@ -142,9 +142,10 @@ Use before any write and for partition_key derivation.
 ## Change Log (Implementation Progress)
 - Added `backend/constants.py` centralizing container names and partition key fields.
 - Implemented `normalize_skill` and integrated into `admin.py` (generated questions, fallback KB entries) and `rag.py` (KnowledgeBase updates, RAGQueries logging).
-- Refactored `scoring.py` to fetch submissions via `find_one` avoiding incorrect partition key usage.
-- Updated `database.ensure_containers_exist` to align container names/partition keys and include `RAGQueries` & `KnowledgeBase` with skill-based PK.
-- This log will expand as further optimizations (TTL, index policies) are applied.
+- Refactored `scoring.py` to fetch submissions via `find_one` and now correctly updates with `assessment_id` partition key.
+- Updated `database.ensure_containers_exist` to align container names/partition keys, include `RAGQueries` & `KnowledgeBase`, add TTL (30d) to `code_executions` & `RAGQueries`, and indexing exclusions for large arrays in `submissions`.
+- Added auto partition key inference + helper `auto_create_item` in `CosmosDBService`.
+- Added `backend/tests/test_normalize_skill.py` covering slug normalization edge cases.
 
 ---
 _This review intentionally balances short-term pragmatic fixes with medium-term scalability; adapt ordering based on actual RU metrics once connected to STG Cosmos._

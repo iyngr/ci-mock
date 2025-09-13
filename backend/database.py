@@ -17,7 +17,7 @@ from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError
 )
 import logging
-from constants import CONTAINER  # added near imports
+from constants import CONTAINER, COLLECTIONS  # updated import
 
 logger = logging.getLogger(__name__)
 
@@ -143,37 +143,64 @@ class CosmosDBService:
         return self._containers[container_name]
     
     async def ensure_containers_exist(self):
-        """Ensure required containers exist with proper partition keys"""
+        """Ensure required containers exist with proper partition keys, TTL, and indexing."""
         containers_config = {
-            CONTAINER["ASSESSMENTS"]: "/id",
-            CONTAINER["SUBMISSIONS"]: "/assessment_id",
-            CONTAINER["USERS"]: "/id",
-            CONTAINER["QUESTIONS"]: "/skill",
-            CONTAINER["GENERATED_QUESTIONS"]: "/skill",
-            CONTAINER["KNOWLEDGE_BASE"]: "/skill",
-            CONTAINER["CODE_EXECUTIONS"]: "/submission_id",
-            CONTAINER["EVALUATIONS"]: "/submission_id",
-            CONTAINER["RAG_QUERIES"]: "/assessment_id",
+            CONTAINER["ASSESSMENTS"]: {"pk": "/id"},
+            CONTAINER["SUBMISSIONS"]: {"pk": "/assessment_id", "index_policy": {
+                "indexingMode": "consistent",
+                "automatic": True,
+                "includedPaths": [{"path": "/*"}],
+                "excludedPaths": [
+                    {"path": "/answers/*"},
+                    {"path": "/proctoring_events/*"},
+                    {"path": "/detailed_evaluation/*"}
+                ]
+            }},
+            CONTAINER["USERS"]: {"pk": "/id"},
+            CONTAINER["QUESTIONS"]: {"pk": "/skill"},
+            CONTAINER["GENERATED_QUESTIONS"]: {"pk": "/skill"},
+            CONTAINER["KNOWLEDGE_BASE"]: {"pk": "/skill"},
+            CONTAINER["CODE_EXECUTIONS"]: {"pk": "/submission_id", "ttl": 60*60*24*30},  # 30d
+            CONTAINER["EVALUATIONS"]: {"pk": "/submission_id"},
+            CONTAINER["RAG_QUERIES"]: {"pk": "/assessment_id", "ttl": 60*60*24*30},  # 30d
         }
-        
-        for container_name, partition_key_path in containers_config.items():
+        for container_name, cfg in containers_config.items():
             try:
-                # Try to get container info to check if it exists
                 container = self.database_client.get_container_client(container_name)
                 container.read()
                 logger.info(f"Container '{container_name}' already exists")
+                # Apply TTL or indexing updates only if needed (skip heavy diff logic for now)
             except CosmosResourceNotFoundError:
-                # Container doesn't exist, create it
+                create_kwargs = {
+                    "id": container_name,
+                    "partition_key": PartitionKey(path=cfg["pk"]),
+                }
+                if "ttl" in cfg:
+                    create_kwargs["default_ttl"] = cfg["ttl"]
+                if "index_policy" in cfg:
+                    create_kwargs["indexing_policy"] = cfg["index_policy"]
                 try:
-                    self.database_client.create_container(
-                        id=container_name,
-                        partition_key=PartitionKey(path=partition_key_path),
-                        offer_throughput=400  # Minimum throughput
-                    )
-                    logger.info(f"Created container '{container_name}' with partition key '{partition_key_path}'")
+                    self.database_client.create_container(**create_kwargs)
+                    logger.info(f"Created container '{container_name}' with pk '{cfg['pk']}'")
                 except CosmosHttpResponseError as e:
                     logger.error(f"Failed to create container '{container_name}': {e}")
                     raise
+
+    # Helper to infer partition key value based on container logical mapping
+    def infer_partition_key(self, container_name: str, item: Dict[str, Any]) -> Optional[str]:
+        """Infer partition key value from item using COLLECTIONS metadata.
+        Returns None if not inferable (caller will fall back to id).
+        """
+        for meta in COLLECTIONS.values():
+            if meta["name"] == container_name:
+                field = meta.get("pk_field")
+                if field and field in item:
+                    return item[field]
+        return None
+
+    async def auto_create_item(self, container_name: str, item: Dict[str, Any]) -> Dict[str, Any]:
+        pk_val = self.infer_partition_key(container_name, item) or item.get("id") or item.get("_id")
+        return await self.create_item(container_name, item, partition_key=pk_val)
     
     # CRUD Operations - Compatible with existing API patterns
     

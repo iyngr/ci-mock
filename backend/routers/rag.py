@@ -15,6 +15,7 @@ from models import (
     KnowledgeBaseEntry
 )
 from database import CosmosDBService, get_cosmosdb_service
+from constants import normalize_skill, CONTAINER
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
@@ -87,9 +88,7 @@ async def ask_rag_question(
                 "similarity_threshold": request.similarity_threshold,
                 "success": True
             }
-            
-            # Store in RAGQueries container for analytics
-            await db.upsert_item("RAGQueries", query_log)
+            await db.upsert_item(CONTAINER["RAG_QUERIES"], query_log)
             
         except Exception as log_error:
             print(f"Warning: Could not log RAG query: {log_error}")
@@ -153,7 +152,7 @@ async def update_knowledge_base(
         knowledge_entry = KnowledgeBaseEntry(
             id=str(uuid.uuid4()),
             content=request.content,
-            skill=request.skill,
+            skill=normalize_skill(request.skill),
             embedding=embedding,
             content_type=request.content_type,
             metadata=request.metadata or {},
@@ -161,7 +160,7 @@ async def update_knowledge_base(
         )
         
         # Store in KnowledgeBase container
-        await db.upsert_item("KnowledgeBase", knowledge_entry.model_dump())
+        await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
         
         return KnowledgeBaseUpdateResponse(
             success=True,
@@ -176,14 +175,14 @@ async def update_knowledge_base(
             knowledge_entry = KnowledgeBaseEntry(
                 id=str(uuid.uuid4()),
                 content=request.content,
-                skill=request.skill,
+                skill=normalize_skill(request.skill),
                 embedding=None,
                 content_type=request.content_type,
                 metadata=request.metadata or {},
                 created_at=datetime.utcnow()
             )
             
-            await db.upsert_item("KnowledgeBase", knowledge_entry.model_dump())
+            await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
             
             return KnowledgeBaseUpdateResponse(
                 success=True,

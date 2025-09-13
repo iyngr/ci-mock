@@ -17,6 +17,7 @@ from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError
 )
 import logging
+from constants import CONTAINER  # added near imports
 
 logger = logging.getLogger(__name__)
 
@@ -144,15 +145,15 @@ class CosmosDBService:
     async def ensure_containers_exist(self):
         """Ensure required containers exist with proper partition keys"""
         containers_config = {
-            "assessments": "/id",
-            "submissions": "/assessment_id", 
-            "users": "/role",
-            "questions": "/type",
-            # Containers for AI-generated content and semantic search
-            "generated_questions": "/skill",
-            "knowledge_base": "/source_type",
-            "code_executions": "/language",
-            "evaluations": "/submission_id"
+            CONTAINER["ASSESSMENTS"]: "/id",
+            CONTAINER["SUBMISSIONS"]: "/assessment_id",
+            CONTAINER["USERS"]: "/id",
+            CONTAINER["QUESTIONS"]: "/skill",
+            CONTAINER["GENERATED_QUESTIONS"]: "/skill",
+            CONTAINER["KNOWLEDGE_BASE"]: "/skill",
+            CONTAINER["CODE_EXECUTIONS"]: "/submission_id",
+            CONTAINER["EVALUATIONS"]: "/submission_id",
+            CONTAINER["RAG_QUERIES"]: "/assessment_id",
         }
         
         for container_name, partition_key_path in containers_config.items():

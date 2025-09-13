@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from azure.cosmos import DatabaseProxy
 from database import CosmosDBService, get_cosmosdb_service
 from pydantic import BaseModel
+from constants import normalize_skill, CONTAINER  # added near other imports
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -379,6 +380,7 @@ async def create_assessment_admin(
         if request.generate:
             for gen_spec in request.generate:
                 skill = gen_spec.get("skill")
+                skill_slug = normalize_skill(skill)
                 qtype = gen_spec.get("question_type")
                 difficulty = gen_spec.get("difficulty", "medium")
                 count = int(gen_spec.get("count", 1))
@@ -390,8 +392,8 @@ async def create_assessment_admin(
 
                     gen_doc = {
                         "id": f"gq_{secrets.token_urlsafe(8)}",
-                        "promptHash": hashlib.sha256((skill + qtype + difficulty).encode()).hexdigest(),
-                        "skill": skill,
+                        "promptHash": hashlib.sha256((skill_slug + qtype + difficulty).encode()).hexdigest(),
+                        "skill": skill_slug,
                         "question_type": qtype,
                         "difficulty": difficulty,
                         "generated_text": generated_text,
@@ -402,7 +404,7 @@ async def create_assessment_admin(
 
                     try:
                         partition_key = gen_doc.get("skill") or gen_doc.get("id")
-                        await db.create_item("generated_questions", gen_doc, partition_key=partition_key)
+                        await db.create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc, partition_key=partition_key)
                     except Exception as e:
                         logger.warning(f"Could not persist generated question during assessment creation (dev): {e}")
 
@@ -431,7 +433,7 @@ async def create_assessment_admin(
 
         try:
             partition_key = request.target_role or "general"
-            await db.create_item("assessments", assessment_doc, partition_key=partition_key)
+            await db.create_item(CONTAINER["ASSESSMENTS"], assessment_doc, partition_key=partition_key)
         except Exception as e:
             logger.warning(f"Failed to persist assessment (dev): {e}")
 
@@ -523,11 +525,12 @@ async def _queue_indexing(db: CosmosDBService, generated_doc: Dict[str, Any]):
         # Prepare content for RAG knowledge base
         content = generated_doc.get("generated_text") or generated_doc.get("question", "")
         skill = generated_doc.get("skill", "General")
+        skill_slug = normalize_skill(skill)
         
         # Prepare knowledge base entry payload
         knowledge_entry = {
             "content": content,
-            "skill": skill,
+            "skill": skill_slug,
             "content_type": "generated_question",
             "metadata": {
                 "source_id": generated_doc.get("id"),
@@ -575,14 +578,13 @@ async def _queue_indexing(db: CosmosDBService, generated_doc: Dict[str, Any]):
                 "sourceId": generated_doc.get("id"),
                 "sourceType": "generated_question",
                 "content": content,
-                "skill": skill,
-                "embedding": None,  # No embedding in fallback
+                "skill": skill_slug,
+                "embedding": None,
                 "metadata": knowledge_entry["metadata"],
                 "indexedAt": datetime.utcnow().isoformat()
             }
-            
             try:
-                await db.create_item("KnowledgeBase", kb_entry, partition_key=skill)
+                await db.create_item(CONTAINER["KNOWLEDGE_BASE"], kb_entry, partition_key=skill_slug)
                 logger.info(f"Fallback: Basic knowledge base entry created: {kb_entry['id']}")
             except Exception as fallback_error:
                 logger.warning(f"Fallback knowledge base creation also failed: {fallback_error}")
@@ -789,10 +791,13 @@ async def generate_question_admin(
 
         generated_text = ai_response.get("question") or ai_response.get("generated_question") or ai_response.get("result")
 
+        skill = request.skill
+        skill_slug = normalize_skill(skill)
+        
         gen_doc = {
             "id": f"gq_{secrets.token_urlsafe(8)}",
             "promptHash": hashlib.sha256((request.skill + request.question_type + request.difficulty).encode()).hexdigest(),
-            "skill": request.skill,
+            "skill": skill_slug,
             "question_type": request.question_type,
             "difficulty": request.difficulty,
             "generated_text": generated_text,
@@ -810,7 +815,7 @@ async def generate_question_admin(
         try:
             # Use skill as partition key (fallback to id if missing)
             partition_key = gen_doc.get("skill") or gen_doc.get("id")
-            await db.create_item("generated_questions", gen_doc, partition_key=partition_key)
+            await db.create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc, partition_key=partition_key)
             logger.info(f"Persisted generated question: {gen_doc['id']}")
         except Exception as e:
             # In dev, log and continue

@@ -139,5 +139,12 @@ Use before any write and for partition_key derivation.
 5. Introduce index policy customization after migration.
 6. Evaluate need for event externalization based on real telemetry.
 
+## Change Log (Implementation Progress)
+- Added `backend/constants.py` centralizing container names and partition key fields.
+- Implemented `normalize_skill` and integrated into `admin.py` (generated questions, fallback KB entries) and `rag.py` (KnowledgeBase updates, RAGQueries logging).
+- Refactored `scoring.py` to fetch submissions via `find_one` avoiding incorrect partition key usage.
+- Updated `database.ensure_containers_exist` to align container names/partition keys and include `RAGQueries` & `KnowledgeBase` with skill-based PK.
+- This log will expand as further optimizations (TTL, index policies) are applied.
+
 ---
 _This review intentionally balances short-term pragmatic fixes with medium-term scalability; adapt ordering based on actual RU metrics once connected to STG Cosmos._

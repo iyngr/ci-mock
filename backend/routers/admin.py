@@ -403,8 +403,7 @@ async def create_assessment_admin(
                     }
 
                     try:
-                        partition_key = gen_doc.get("skill") or gen_doc.get("id")
-                        await db.create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc, partition_key=partition_key)
+                        await db.auto_create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc)
                     except Exception as e:
                         logger.warning(f"Could not persist generated question during assessment creation (dev): {e}")
 
@@ -432,8 +431,7 @@ async def create_assessment_admin(
         }
 
         try:
-            partition_key = request.target_role or "general"
-            await db.create_item(CONTAINER["ASSESSMENTS"], assessment_doc, partition_key=partition_key)
+            await db.auto_create_item(CONTAINER["ASSESSMENTS"], assessment_doc)
         except Exception as e:
             logger.warning(f"Failed to persist assessment (dev): {e}")
 
@@ -584,7 +582,7 @@ async def _queue_indexing(db: CosmosDBService, generated_doc: Dict[str, Any]):
                 "indexedAt": datetime.utcnow().isoformat()
             }
             try:
-                await db.create_item(CONTAINER["KNOWLEDGE_BASE"], kb_entry, partition_key=skill_slug)
+                await db.auto_create_item(CONTAINER["KNOWLEDGE_BASE"], kb_entry)
                 logger.info(f"Fallback: Basic knowledge base entry created: {kb_entry['id']}")
             except Exception as fallback_error:
                 logger.warning(f"Fallback knowledge base creation also failed: {fallback_error}")
@@ -814,8 +812,7 @@ async def generate_question_admin(
         # Persist generated question
         try:
             # Use skill as partition key (fallback to id if missing)
-            partition_key = gen_doc.get("skill") or gen_doc.get("id")
-            await db.create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc, partition_key=partition_key)
+            await db.auto_create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc)
             logger.info(f"Persisted generated question: {gen_doc['id']}")
         except Exception as e:
             # In dev, log and continue

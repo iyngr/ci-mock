@@ -11,7 +11,8 @@ from models import (
     MCQValidationRequest, MCQBatchValidationRequest, MCQBatchValidationResponse,
     MCQScoreResult, LLMScoreResult,
     QuestionType, MCQQuestion, DescriptiveQuestion, CodingQuestion,
-    Submission, Assessment, Answer
+    Submission, Assessment, Answer,
+    EvaluationRecord, EvaluationSummary, SubmissionEvaluationField
 )
 from database import CosmosDBService, get_cosmosdb_service
 from constants import CONTAINER  # added near imports
@@ -64,11 +65,15 @@ class ScoringTriageService:
             mcq_results, llm_results
         )
         
-        # 6. Update submission in database
-        await self._update_submission_scores(submission_id, total_score, percentage, {
-            "mcq_results": [result.model_dump() for result in mcq_results],
-            "llm_results": [result.model_dump() for result in llm_results]
-        })
+        # 6. Persist full evaluation record + submission summary
+        evaluation_record_id = await self._persist_full_evaluation(
+            submission, assessment, total_score, max_score, percentage,
+            mcq_results, llm_results, start_time
+        )
+        await self._update_submission_summary(
+            submission_id, total_score, percentage, max_score,
+            mcq_results, llm_results, evaluation_record_id
+        )
         
         evaluation_time = time.time() - start_time
         
@@ -295,30 +300,89 @@ class ScoringTriageService:
         """Get maximum points for a question - simplified for now"""
         return 1.0  # This should lookup actual question points
     
-    async def _update_submission_scores(
-        self, submission_id: str, total_score: float, percentage: float, 
-        detailed_results: Dict[str, Any]
+    async def _persist_full_evaluation(
+        self,
+        submission: Submission,
+        assessment: Assessment,
+        total_score: float,
+        max_score: float,
+        percentage: float,
+        mcq_results: List[MCQScoreResult],
+        llm_results: List[LLMScoreResult],
+        start_time: float
+    ) -> str:
+        """Create and store full EvaluationRecord, return its ID."""
+        duration = time.time() - start_time
+        record = EvaluationRecord(
+            id=f"eval_{uuid.uuid4().hex[:12]}",
+            submissionId=submission.id,
+            assessmentId=assessment.id,
+            method="hybrid_scoring_v1",
+            runSequence=1,  # Future: compute by counting existing evaluations for submission
+            timing={
+                "started_at": datetime.utcfromtimestamp(start_time).isoformat(),
+                "completed_at": datetime.utcnow().isoformat(),
+                "duration_seconds": duration
+            },
+            driverVersions={
+                "scoring_service": "1.0.0"
+            },
+            mcqResults=[r.model_dump() for r in mcq_results],
+            llmResults=[r.model_dump() for r in llm_results],
+            aggregates={
+                "total_points": total_score,
+                "max_points": max_score,
+                "percentage": percentage
+            },
+            costBreakdown={
+                "mcq_calls": len(mcq_results),
+                "llm_calls": len(llm_results)
+            }
+        )
+        await self.db.auto_create_item(CONTAINER["EVALUATIONS"], record.model_dump(by_alias=True))
+        return record.id
+
+    async def _update_submission_summary(
+        self,
+        submission_id: str,
+        total_score: float,
+        percentage: float,
+        max_score: float,
+        mcq_results: List[MCQScoreResult],
+        llm_results: List[LLMScoreResult],
+        evaluation_record_id: str
     ):
-        """Update submission with calculated scores"""
+        """Update submission with summary evaluation field."""
         try:
-            # Determine assessment_id via minimal lookup (already fetched in process_submission path)
             submission_data = await self.db.find_one(CONTAINER["SUBMISSIONS"], {"id": submission_id})
             if not submission_data:
                 raise HTTPException(status_code=404, detail="Submission not found for score update")
             assessment_id = submission_data.get("assessment_id")
+            summary = EvaluationSummary(
+                totalPoints=total_score,
+                maxPoints=max_score,
+                percentage=percentage,
+                mcqCorrect=sum(1 for r in mcq_results if r.correct),
+                mcqTotal=len(mcq_results),
+                llmQuestions=len(llm_results)
+            )
+            evaluation_field = SubmissionEvaluationField(
+                method="hybrid_scoring_v1",
+                summary=summary,
+                latestEvaluationId=evaluation_record_id
+            )
             await self.db.update_item(
                 CONTAINER["SUBMISSIONS"],
                 submission_id,
                 {
                     "score": percentage,
-                    "detailed_evaluation": detailed_results,
                     "evaluated_at": datetime.utcnow().isoformat(),
-                    "evaluation_method": "hybrid_scoring_v1"
+                    "evaluation": evaluation_field.model_dump(by_alias=True)
                 },
                 partition_key=assessment_id
             )
         except Exception as e:
-            print(f"Failed to update submission scores: {e}")
+            print(f"Failed to update submission evaluation summary: {e}")
 
 
 # ===========================
@@ -333,17 +397,17 @@ async def validate_mcq_answer(
     """Fast MCQ validation endpoint for single questions"""
     
     try:
-        # Fetch the question to get correct answer
-        question_data = await db.get_item(
-            "questions", request.question_id, partition_key="mcq"
-        )
+        # NOTE: Questions container currently partitioned by /skill (target model) or /type (legacy).
+        # Since we don't have the partition key here, perform a fallback query by id.
+        # This uses find_one which does a cross-partition query (acceptable for low volume path).
+        question_data = await db.find_one(CONTAINER["QUESTIONS"], {"id": request.question_id})
         if not question_data:
             raise HTTPException(status_code=404, detail="Question not found")
-        
+
         question = MCQQuestion(**question_data)
         is_correct = request.selected_option_id == question.correct_answer
         points_awarded = question.points if is_correct else 0.0
-        
+
         return MCQScoreResult(
             question_id=request.question_id,
             correct=is_correct,
@@ -351,7 +415,8 @@ async def validate_mcq_answer(
             correct_option_id=question.correct_answer,
             points_awarded=points_awarded
         )
-        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MCQ validation failed: {str(e)}")
 

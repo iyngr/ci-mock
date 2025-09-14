@@ -5,6 +5,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 from database import CosmosDBService, get_cosmosdb_service
+from constants import CONTAINER  # use centralized container names
 from datetime import datetime
 import uuid
 
@@ -44,8 +45,11 @@ async def run_code(
     
     # Store execution result in Cosmos DB for analytics and debugging
     try:
+        # Ensure a submission_id is present because container PK is /submission_id
+        submission_id = request.submission_id or "unassigned"  # groups stray executions
         execution_record = {
             "id": str(uuid.uuid4()),
+            "submission_id": submission_id,
             "language": request.language,
             "code": request.code,
             "stdin": request.stdin,
@@ -53,8 +57,9 @@ async def run_code(
             "timestamp": datetime.utcnow().isoformat(),
             "execution_type": "judge0" if USE_JUDGE0 and JUDGE0_API_KEY else "mock"
         }
-        
-        await db.create_item("code_executions", execution_record, partition_key=request.language)
+
+        # Use auto_create_item so partition key is inferred from submission_id
+        await db.auto_create_item(CONTAINER["CODE_EXECUTIONS"], execution_record)
     except Exception as e:
         # Don't fail the execution if storage fails, just log it
         print(f"Failed to store execution result: {e}")
@@ -239,44 +244,72 @@ async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBServic
     # 3. Generate overall score and summary
     # 4. Update the result in database
     
-    mock_evaluation = {
-        "overallScore": 85.0,
-        "competencyScores": {
-            "Programming": 90.0,
-            "Problem Solving": 80.0,
-            "System Design": 85.0
+    # Produce mock MCQ/LLM style aggregates similar to hybrid path
+    total_points = 34.0
+    max_points = 40.0
+    percentage = total_points / max_points * 100
+    evaluation_record = {
+        "id": f"eval_{uuid.uuid4().hex[:12]}",
+        "submission_id": request.submission_id,
+        "assessment_id": None,
+        "method": "hybrid_scoring_v1_mock",
+        "run_sequence": 1,
+        "timing": {
+            "started_at": datetime.utcnow().isoformat(),
+            "completed_at": datetime.utcnow().isoformat(),
+            "duration_seconds": 2.0
         },
-        "finalSummary": "The candidate demonstrated strong technical skills with excellent programming abilities. Shows good understanding of algorithms and data structures. Could improve on system design concepts."
+        "driver_versions": {"scoring_service": "1.0.0-mock"},
+        "mcq_results": [],
+        "llm_results": [],
+        "aggregates": {
+            "total_points": total_points,
+            "max_points": max_points,
+            "percentage": percentage
+        },
+        "cost_breakdown": {"mcq_calls": 0, "llm_calls": 0},
+        "created_at": datetime.utcnow().isoformat()
     }
-    
-    # Store evaluation result in Cosmos DB
     try:
-        evaluation_record = {
-            "id": str(uuid.uuid4()),
-            "submission_id": request.submission_id,
-            "evaluation": mock_evaluation,
-            "timestamp": datetime.utcnow().isoformat(),
-            "evaluator": "ai_mock"
-        }
-        
-        await db.create_item("evaluations", evaluation_record, partition_key=request.submission_id)
-        
-        # Update the submission with the evaluation results
-        await db.update_item(
-            "submissions",
-            request.submission_id,
-            {
-                "score": mock_evaluation["overallScore"],
-                "evaluation": mock_evaluation,
-                "evaluated_at": datetime.utcnow().isoformat()
-            },
-            partition_key=request.submission_id
-        )
+        # Insert record
+        await db.auto_create_item(CONTAINER["EVALUATIONS"], evaluation_record)
+        # Update submission summary (look up assessment_id for PK)
+        submission_doc = await db.find_one(CONTAINER["SUBMISSIONS"], {"id": request.submission_id})
+        if submission_doc:
+            assessment_id = submission_doc.get("assessment_id")
+            summary = {
+                "method": "hybrid_scoring_v1_mock",
+                "version": 1,
+                "summary": {
+                    "totalPoints": total_points,
+                    "maxPoints": max_points,
+                    "percentage": percentage,
+                    "mcqCorrect": 0,
+                    "mcqTotal": 0,
+                    "llmQuestions": 0
+                },
+                "latestEvaluationId": evaluation_record["id"]
+            }
+            await db.update_item(
+                CONTAINER["SUBMISSIONS"],
+                request.submission_id,
+                {
+                    "score": percentage,
+                    "evaluated_at": datetime.utcnow().isoformat(),
+                    "evaluation": summary
+                },
+                partition_key=assessment_id
+            )
     except Exception as e:
-        print(f"Failed to store evaluation result: {e}")
-    
+        print(f"Failed to store mock evaluation: {e}")
+
     return {
         "success": True,
-        "evaluation": mock_evaluation,
+        "evaluation": {
+            "overallScore": percentage,
+            "totalPoints": total_points,
+            "maxPoints": max_points,
+            "finalSummary": "Mock evaluation summary"
+        },
         "message": "Result evaluated successfully (legacy mock)"
     }

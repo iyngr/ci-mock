@@ -146,6 +146,11 @@ Use before any write and for partition_key derivation.
 - Updated `database.ensure_containers_exist` to align container names/partition keys, include `RAGQueries` & `KnowledgeBase`, add TTL (30d) to `code_executions` & `RAGQueries`, and indexing exclusions for large arrays in `submissions`.
 - Added auto partition key inference + helper `auto_create_item` in `CosmosDBService`.
 - Added `backend/tests/test_normalize_skill.py` covering slug normalization edge cases.
+ - Refactored routers (`admin.py`, `utils.py`) to replace direct `create_item` calls with `auto_create_item` ensuring consistent partition key inference; added optional `submission_id` to `CodeExecutionRequest` and updated code execution/evaluation writes to partition by `/submission_id`.
+ - Fixed latent bug in `scoring.py` MCQ validation endpoint (replaced nonexistent `get_item` with `find_one` + container constant; avoids runtime error). 
+ - Confirmed environment currently has an empty Cosmos DB (no historical data) simplifying future PK migrations (no backfill required yet).
+ - Deferred: introduction of `lookups` container (skills/roles taxonomy) explicitly parked; will revisit post telemetry.
+ - Refactored evaluation storage: added `EvaluationRecord` model (full artifacts in `evaluations` container, pk=/submission_id) and replaced in-submission `detailed_evaluation` with compact `evaluation` summary (method, version, summary metrics, backlink `latestEvaluationId`). Legacy mock path aligned.
 
 ---
 _This review intentionally balances short-term pragmatic fixes with medium-term scalability; adapt ordering based on actual RU metrics once connected to STG Cosmos._

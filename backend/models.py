@@ -629,6 +629,50 @@ class MCQBatchValidationResponse(BaseModel):
 
 
 # ===========================
+# EVALUATIONS CONTAINER MODELS (NEW)
+# ===========================
+
+class EvaluationSummary(BaseModel):
+    """Compact summary structure stored inside submission.evaluation.summary"""
+    total_points: float = Field(..., alias="totalPoints")
+    max_points: float = Field(..., alias="maxPoints")
+    percentage: float = Field(..., alias="percentage")
+    mcq_correct: int = Field(..., alias="mcqCorrect")
+    mcq_total: int = Field(..., alias="mcqTotal")
+    llm_questions: int = Field(..., alias="llmQuestions")
+
+
+class SubmissionEvaluationField(BaseModel):
+    """Field embedded in Submission holding summary + backlink to full evaluation record."""
+    method: str
+    version: int = 1
+    summary: EvaluationSummary
+    latest_evaluation_id: str = Field(..., alias="latestEvaluationId")
+
+
+class EvaluationRecord(CosmosDocument):
+    """Full evaluation artifact stored in evaluations container (PK=/submission_id)."""
+    submission_id: str = Field(..., alias="submissionId")
+    assessment_id: str = Field(..., alias="assessmentId")
+    method: str = Field(..., description="Scoring method identifier")
+    run_sequence: int = Field(1, alias="runSequence", description="Nth evaluation for this submission")
+    trigger: Optional[str] = Field("initial", description="Trigger reason (initial, rescore, model_upgrade)")
+    timing: Dict[str, Any] = Field(default_factory=dict, description="Timing metadata (started_at, completed_at, duration_seconds)")
+    driver_versions: Dict[str, Any] = Field(default_factory=dict, alias="driverVersions")
+    mcq_results: List[Dict[str, Any]] = Field(default_factory=list, alias="mcqResults")
+    llm_results: List[Dict[str, Any]] = Field(default_factory=list, alias="llmResults")
+    aggregates: Dict[str, Any] = Field(default_factory=dict, description="Aggregate scores (total_points, max_points, percentage)")
+    cost_breakdown: Dict[str, Any] = Field(default_factory=dict, alias="costBreakdown")
+    re_evaluation_of: Optional[str] = Field(None, alias="reEvaluationOf", description="Previous evaluation id if this is a rescore")
+    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        return self.submission_id
+
+
+# ===========================
 # API REQUEST/RESPONSE MODELS
 # ===========================
 
@@ -637,6 +681,8 @@ class CodeExecutionRequest(BaseModel):
     language: str = Field(..., description="Programming language")
     code: str = Field(..., description="Code to execute")
     stdin: Optional[str] = Field("", description="Standard input for the code")
+    # Optional submission context so code executions can be partitioned by submission_id
+    submission_id: Optional[str] = Field(None, alias="submissionId", description="Related submission ID for partitioning/analytics")
 
 
 class CodeExecutionResponse(BaseModel):

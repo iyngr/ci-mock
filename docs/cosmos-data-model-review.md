@@ -18,18 +18,76 @@ Source: `CosmosDBService.ensure_containers_exist`
 | Container | Physical Name | Partition Key Path | Logical PK Field | TTL | Index Customization | Purpose |
 |-----------|---------------|--------------------|------------------|-----|--------------------|---------|
 | Assessments | `assessments` | `/id` | `id` | None | Default | Assessment templates with embedded questions (snapshot) |
-| Submissions | `submissions` | `/assessment_id` | `assessment_id` | None | Exclude large arrays (`answers`, `proctoring_events`, `detailed_evaluation`) | Candidate assessment sessions + answer/proctoring data |
+| Submissions | `submissions` | `/assessment_id` †A | `assessment_id` | None | Exclude large arrays (`answers`, `proctoring_events`, `detailed_evaluation`) | Candidate assessment sessions + answer/proctoring data |
 | Users | `users` | `/id` | `id` | None | Default | Admin & candidate identities (no hotspot) |
-| Questions | `questions` | `/skill` | `skill` | None | Default | (Future / bank) canonical reusable questions (skill partition) |
-| Generated Questions | `generated_questions` | `/skill` | `skill` | None | Default | AI-generated cached questions by skill |
-| Knowledge Base | `KnowledgeBase` | `/skill` | `skill` | None | Default | RAG corpus entries with embeddings |
-| Code Executions | `code_executions` | `/submission_id` | `submission_id` | 30d | Default | Judge0 execution traces per submission |
-| Evaluations | `evaluations` | `/submission_id` | `submission_id` | None | Default (future selective) | Full scoring artifacts (MCQ + LLM) |
-| RAG Queries | `RAGQueries` | `/assessment_id` | `assessment_id` | 30d | Default | Logged retrieval queries & diagnostics |
+| Questions | `questions` | `/skill` †Sk | `skill` | None | Default | (Future / bank) canonical reusable questions (skill partition) |
+| Generated Questions | `generated_questions` | `/skill` †Sk | `skill` | None | Default | AI-generated cached questions by skill |
+| Knowledge Base | `KnowledgeBase` | `/skill` †Sk | `skill` | None | Default | RAG corpus entries with embeddings |
+| Code Executions | `code_executions` | `/submission_id` †S | `submission_id` | 30d | Default | Judge0 execution traces per submission |
+| Evaluations | `evaluations` | `/submission_id` †S | `submission_id` | None | Default (future selective) | Full scoring artifacts (MCQ + LLM) |
+| RAG Queries | `RAGQueries` | `/assessment_id` †A | `assessment_id` | 30d | Default | Logged retrieval queries & diagnostics |
 
 Notes:
 - Previous missing container (`RAGQueries`) now provisioned.
 - All logical PK fields defined in `COLLECTIONS` allow automatic inference; manual partition key errors are minimized.
+
+Footnotes:
+- †A = Assessment axis (groups many submissions / RAG queries for cohort analytics & batch operations)
+- †S = Submission (session) axis (isolates high-churn or lineage-scoped data per candidate attempt)
+- †Sk = Skill axis (semantic/topic locality for retrieval, generation, reuse, vector relevance)
+
+## 2a. Why Multiple Partition Key Axes?
+Cosmos DB expects you to optimize each container for its dominant access pattern; enforcing a single universal PK would increase RU costs and create hotspots. We deliberately use three axes:
+
+| Axis | Used By | Co-located Data | Primary Workloads Optimized | Why Not Another Axis? |
+|------|---------|-----------------|-----------------------------|-----------------------|
+| Assessment (†A) | `submissions`, `RAGQueries` | All submissions or queries for one assessment | Batch scoring insights, per-assessment analytics, retrieval diagnostics | Using submission axis would fragment aggregate queries; using skill would mix unrelated assessments |
+| Submission (†S) | `evaluations`, `code_executions` | Evaluation lineage & code run events for one attempt | Low-latency session history, safe high-cardinality isolation, TTL cleanup | Assessment axis could hotspot during live exam surges |
+| Skill (†Sk) | `questions`, `generated_questions`, `KnowledgeBase` | Topically related content | Targeted generation cache, topical retrieval, vector relevance locality | Assessment or submission axes have low diversity & poor semantic grouping |
+
+Design Principles Applied:
+1. Co-locate what you batch-read or batch-analyze together (assessments → submissions).
+2. Isolate high-churn ephemeral sequences (code executions) by a high-cardinality key.
+3. Preserve semantic grouping for retrieval & cache hit efficiency (skill).
+4. Avoid low-cardinality write hotspots (role, language, type).
+5. Keep lineage histories (evaluations) in the same partition as their submission.
+
+Result: Lower RU, simpler operational reasoning, cleaner future scaling (each axis can evolve independently—e.g., shard skills if a single skill becomes too “hot”).
+
+## 2b. Visual Data Flow & Partition Axes
+```mermaid
+flowchart LR
+	subgraph A[Assessment Axis †A]
+		ASMT[Assessments (/id)] -->|spawns| SUBS[(Submissions /assessment_id)]
+		ASMT --> RAG[RAGQueries /assessment_id]
+	end
+
+	subgraph S[Submission Axis †S]
+		SUBS --> EVALS[(Evaluations /submission_id)]
+		SUBS --> CODE[(Code Executions /submission_id)]
+	end
+
+	subgraph SK[Skill Axis †Sk]
+		Q[Questions /skill]
+		GQ[Generated Questions /skill]
+		KB[KnowledgeBase /skill]
+	end
+
+	%% Cross-axis relationships
+	SUBS -->|references questions snapshot| Q
+	GQ -->|feeds| ASMT
+	KB -->|vector context| RAG
+```
+
+Axis Highlights:
+- Assessment axis drives cohort-level analytics & retrieval diagnostics.
+- Submission axis captures volatile per-attempt telemetry & evaluation lineage.
+- Skill axis centralizes semantic/question assets for reuse and RAG enrichment.
+
+Operational Independence:
+- You can purge old `code_executions` (TTL) without touching evaluation lineage or question bank.
+- Skill-based re-embedding (KB rebuild) does not impact live submissions.
+- Adding rescore versions scales only the submission axis partitions affected.
 
 ## 3. Partition Key Rationale (Current State)
 | Domain Concern | Container | Chosen PK | Why It Works | Trade-offs / Future Options |

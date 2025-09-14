@@ -1,156 +1,155 @@
-# Cosmos DB Data Model Review
+# Cosmos DB Data Model Review (Updated)
 
-_Last updated: 2025-09-12_
+Last updated: 2025-09-14
 
-## Executive Summary
-The current Cosmos DB (SQL API via azure-cosmos SDK) modeling works functionally but several partition keys are low-cardinality (\`/role\`, \`/type\`, \`/language\`, \`/source_type\`) which will lead to RU hotspots and higher costs at scale. There is also a container naming mismatch (`knowledge_base` vs `KnowledgeBase`) and an uncreated but referenced container (`RAGQueries`). Embedded documents optimize read paths (assessment + questions, submission + answers/events) but risk large item growth. A few code paths use incorrect partition keys during point reads/updates (notably submissions in scoring).
+## 1. Executive Summary
+The data model has been refactored to address earlier low‑cardinality partition keys, container naming inconsistencies, and evaluation payload bloat. All active containers are now provisioned with corrected partition keys, TTL where appropriate, and selective indexing exclusions. Full evaluation artifacts have been externalized to an `evaluations` container (PK = `/submission_id`) while submissions now store only a compact summary, reducing document growth risk. Remaining work centers on re‑scoring sequencing, optional analytics/materialized views, and future time‑series optimization for RAG queries.
 
-## Current Containers (from `CosmosDBService.ensure_containers_exist`)
-| Container (configured) | Partition Key | Notes / Divergence in Code |
-|------------------------|---------------|-----------------------------|
-| assessments            | /id           | Questions embedded; PK = id (one item per logical partition). |
-| submissions            | /assessment_id| Code later reads with PK=submission_id (bug). |
-| users                  | /role         | Only two values → hotspot risk. |
-| questions              | /type         | Few values (mcq/descriptive/coding). |
-| generated_questions    | /skill        | Good; skill used in queries. |
-| knowledge_base         | /source_type  | Code actually uses `KnowledgeBase` (capital K) and partitions by skill in fallback. |
-| code_executions        | /language     | Very low cardinality. |
-| evaluations            | /submission_id| Not heavily used (scoring writes back into `submissions`). |
-| (missing) RAGQueries   | (implicit)    | Referenced via `db.upsert_item("RAGQueries", ...)` but not created. |
+Key Improvements Implemented:
+- Migrated problematic PK choices (users, questions, knowledge base, code executions) to higher‑cardinality keys.
+- Unified canonical container naming (`KnowledgeBase`, `RAGQueries`).
+- Added TTL (30 days) for ephemeral telemetry containers (`code_executions`, `RAGQueries`).
+- Introduced evaluation separation (full vs summary) to stabilize submission item size.
+- Centralized container + logical PK metadata (`constants.py`) enabling automatic PK inference (`auto_create_item`).
 
-## Containers Referenced in Routers
-- `assessments`
-- `submissions`
-- `generated_questions`
-- `questions` (only in comments / future) 
-- `KnowledgeBase` (capitalization) 
-- `code_executions`
-- `RAGQueries`
-- Potential (not yet created): events/proctoring externalization, evaluation history.
+## 2. Current Provisioned Containers
+Source: `CosmosDBService.ensure_containers_exist`
 
-## Embedding vs Referencing
-| Entity | Current Strategy | Rationale | Risks / Trade-offs | Recommendation |
-|--------|------------------|-----------|--------------------|----------------|
-| Assessment.questions | Entire question objects embedded (polymorphic) | Single read to serve candidate | Question edit after embedding does not propagate | Accept (snapshot semantics). If shared question bank needed later, introduce separate `questions` container and store references + version. |
-| Submission.answers | Embedded | One doc read for candidate progress & scoring | Document can grow large; update RU increases | Monitor size; if answers add large evaluation payloads, consider splitting `answers` into separate container keyed by /submission_id. |
-| Submission.proctoring_events | Embedded list | Convenience, single read for session review | Potential high-frequency events cause bloat | If events > few hundred per session, move to `proctor_events` container with /submission_id + TTL. |
-| GeneratedQuestion metadata | Standalone per item | Reuse & caching | None major | Keep. Normalize skill slug consistently. |
-| KnowledgeBaseEntry.embedding | Embedded vector | Simplicity for small scale RAG | Large vectors enlarge item; RU cost for write | Accept now; if vectors become large & queries complex, evaluate vector store / Azure AI Search. |
-| BulkQuestionUpload session data | Embedded arrays | Simplicity | Large CSV could exceed item size (2 MB limit) | Enforce max rows or split into per-question docs. |
+| Container | Physical Name | Partition Key Path | Logical PK Field | TTL | Index Customization | Purpose |
+|-----------|---------------|--------------------|------------------|-----|--------------------|---------|
+| Assessments | `assessments` | `/id` | `id` | None | Default | Assessment templates with embedded questions (snapshot) |
+| Submissions | `submissions` | `/assessment_id` | `assessment_id` | None | Exclude large arrays (`answers`, `proctoring_events`, `detailed_evaluation`) | Candidate assessment sessions + answer/proctoring data |
+| Users | `users` | `/id` | `id` | None | Default | Admin & candidate identities (no hotspot) |
+| Questions | `questions` | `/skill` | `skill` | None | Default | (Future / bank) canonical reusable questions (skill partition) |
+| Generated Questions | `generated_questions` | `/skill` | `skill` | None | Default | AI-generated cached questions by skill |
+| Knowledge Base | `KnowledgeBase` | `/skill` | `skill` | None | Default | RAG corpus entries with embeddings |
+| Code Executions | `code_executions` | `/submission_id` | `submission_id` | 30d | Default | Judge0 execution traces per submission |
+| Evaluations | `evaluations` | `/submission_id` | `submission_id` | None | Default (future selective) | Full scoring artifacts (MCQ + LLM) |
+| RAG Queries | `RAGQueries` | `/assessment_id` | `assessment_id` | 30d | Default | Logged retrieval queries & diagnostics |
 
-## Partition Key Assessment
-| Container | Current PK | Issue | Suggested PK | Benefit |
-|-----------|-----------|-------|--------------|---------|
-| users | /role | 2–3 distinct values → hotspot | /id or /email (or /organization_id if multi-tenant) | Even distribution, point reads. |
-| questions | /type | 3 values → hotspot | /skill (normalized) | Aligns with skill-based retrieval, spreads RU. |
-| knowledge_base / KnowledgeBase | /source_type | Few values | /skill (or synthetic `<skill>#<bucket>`) | Efficient skill-filter + balanced partitions. |
-| code_executions | /language | Few values | /submission_id | Correlate all executions per submission; parallelizable across submissions. |
-| RAGQueries | (none defined) | Lacking container creation; poor analytics grouping | /dateBucket or /assessment_id | Time-series or assessment analytics without cross-part scans. |
-| assessments | /id | Acceptable but no grouping | (Optional) /target_role or /organization_id | Group queries by role/tenant. |
-| submissions | /assessment_id | Good for per-assessment analytics; complicates point reads by submission_id alone | (Keep) OR /id if direct submission lookups dominate | Choose based on workload; implement cache mapping if keeping /assessment_id. |
+Notes:
+- Previous missing container (`RAGQueries`) now provisioned.
+- All logical PK fields defined in `COLLECTIONS` allow automatic inference; manual partition key errors are minimized.
 
-## Identified Bugs / Inconsistencies
-1. **Submission Access in Scoring**: `scoring.py` fetch uses `partition_key=submission_id` though container PK is `/assessment_id` → will fail point reads. Must supply correct partition key or redesign PK.
-2. **Container Name Mismatch**: Code writes to `KnowledgeBase`; provisioning uses `knowledge_base`.
-3. **Missing Container**: `RAGQueries` not created in `ensure_containers_exist`.
-4. **Mixed Partition Usage for Generated Questions**: Model normalizes skill (`lower().replace(" ", "-")`) but creation code passes raw `skill` string; potential partition duplication ("React Hooks" vs "react-hooks").
+## 3. Partition Key Rationale (Current State)
+| Domain Concern | Container | Chosen PK | Why It Works | Trade-offs / Future Options |
+|----------------|----------|----------|--------------|-----------------------------|
+| Assessment distribution | assessments | /id | One item per logical partition → predictable | Limited grouping; /target_role possible later |
+| Submission analytics per assessment | submissions | /assessment_id | Batch scoring + per-assessment aggregation locality | Point lookups by submission_id require cross-partition query (mitigated by id lookup + PK read) |
+| User isolation | users | /id | High cardinality; even RU spread | None significant |
+| Skill-centric retrieval | questions, generated_questions, KnowledgeBase | /skill | Aligns with query/filter patterns | Skill skew possible (monitor) |
+| Execution grouping | code_executions | /submission_id | Collocates all runs for session; TTL manages churn | High-cardinality but shallow per PK (desired) |
+| Evaluation lineage | evaluations | /submission_id | All evaluation versions together for diff/rescore | Very large rescore history could cluster—introduce dateBucket suffix if needed |
+| RAG query correlation | RAGQueries | /assessment_id | Associate retrievals with assessment context | For time-series metrics add derived `dateBucket` field + synthetic PK variant later |
 
-## Query Pattern Observations
-- Dashboard counts rely on cross-partition scans (e.g., submissions by status). Consider background aggregation container (`assessment_stats`) or maintain counters via stored procedure / transactional batch (future optimization).
-- Candidate history queries by candidate_id/email cross partitions (PK is assessment_id) → acceptable if volume moderate; heavy usage warrants materialized view.
-- RAG queries logged without consistent partition key dimension; will impair analytical filtering later.
+Deferred Enhancements:
+- Optional `dateBucket` (YYYYMMDD) composite for RAG time-slicing.
+- Synthetic partition mix (e.g., `<skill>#<bucket>`) if a single skill becomes disproportionately large.
 
-## Indexing Considerations
-All containers default to full indexing (implicit). High-write containers (`submissions`, future `RAGQueries`, `code_executions`) may benefit from selective indexing:
-- Exclude large arrays: `/answers/?`, `/proctoring_events/?` (assuming you rarely filter on elements inside arrays).
-- Keep indexes on scalar filter fields: `status`, `assessment_id`, `candidate_id`, `skill`, `created_at`.
+## 4. Embedding vs Referencing (Revalidated)
+| Entity | Strategy | Outcome | Risk Mitigation | Current Decision |
+|--------|----------|---------|----------------|------------------|
+| Assessment.questions | Embedded polymorphic | Single network fetch for candidate start | Snapshot semantics accepted | Keep |
+| Submission.answers | Embedded | Simple scoring read path | Could inflate; monitor item size | Keep; externalize only if > ~1.2MB typical |
+| Submission.proctoring_events | Embedded | Unified audit view | High-frequency events could bloat | Introduce `proctor_events` container if median > 300 events |
+| Evaluation artifacts | Externalized (evaluations) + summary in submission | Prevents runaway submission growth | Need join (two reads) when viewing details | Adopted |
+| KnowledgeBaseEntry.embedding | Embedded | Simplicity | Vector size inflation | Revisit at scale (move to Azure AI Search) |
+| Code executions | Separate container | TTL bounds storage | None major | Adopted |
 
-## Lookup / Reference Entities
-No dedicated lookup collections (skills, roles). Introducing a lightweight `lookups` container (pk `/id`) for canonical skill slugs and developer roles can:
-- Standardize skill normalization
-- Power UI dropdowns without scanning distinct values
+## 5. Evaluation Storage Refactor
+Previous design stored full `detailed_evaluation` inside each submission (risking large array/doc growth). Now:
+- Full artifact: `EvaluationRecord` in `evaluations` (PK `/submission_id`).
+- Submission carries `evaluation` (method, version, summary aggregates, `latestEvaluationId`).
+- Enables multi-run lineage (future: increment `runSequence`, add `reEvaluationOf`).
+- Facilitates selective re-score without rewriting submission history.
 
-## Recommended Target Container Configuration
-```text
-assessments          pk: /id (or /target_role if needed later)
-submissions          pk: /assessment_id   (keep)  OR switch to /id (trade-off)
-users                pk: /id
-questions            pk: /skill
-generated_questions  pk: /skill
-KnowledgeBase        pk: /skill
-code_executions      pk: /submission_id
-RAGQueries           pk: /dateBucket  (store YYYYMMDD) OR /assessment_id
-proctor_events*      pk: /submission_id  (future, if externalized)
-evaluations*         pk: /submission_id  (only if decoupled from submissions)
-```
+Future Additions:
+1. Compute `runSequence` by counting existing evaluations per submission.
+2. Support re-evaluation referencing prior evaluation id.
+3. Optional purge/compaction policy (keep last N evaluations) if volume high.
 
-## Migration Strategy (Incremental, Zero-Downtime)
-1. **Provision New Containers** with v2 suffix (e.g., `questions_v2`) using improved PKs.
-2. **Backfill Script**: Batch read old container, transform partition key field (ensure normalized), upsert into v2.
-3. **Dual-Write Phase**: Update application code to write to both (feature flag) while reads still from old.
-4. **Switch Reads**: After verification, point reads to v2.
-5. **Decommission Old** after retention window; optionally rename (or keep with suffix for audit).
-6. **Apply TTL & Index Policies**: Add TTL for ephemeral analytics (code executions, RAGQueries) and custom index policy to exclude large arrays.
+## 6. Indexing & RU Optimization
+Active custom policy only on `submissions` (array exclusions). Planned next steps:
+- Consider excluding verbose feedback fields in `evaluations` once stable (e.g., `/llmResults/*`).
+- Add composite indexes only in response to observed ORDER BY + filter patterns (avoid premature complexity).
 
-## Quick Fix Actions (Short Term)
-| Priority | Action | Effort | Impact |
-|----------|--------|--------|--------|
-| P1 | Fix scoring read/update partition key usage for submissions | Low | Prevent runtime errors / wasted RU |
-| P1 | Add `RAGQueries` & proper `KnowledgeBase` container creation | Low | Avoid missing container failures |
-| P2 | Normalize skill slug at write time (single utility) | Low | Prevent partition fragmentation |
-| P2 | Standardize container naming (`KnowledgeBase`) in provisioner | Low | Operational consistency |
-| P3 | Change low-cardinality PKs (users, questions, knowledge_base, code_executions) | Medium | RU distribution & cost reduction |
-| P3 | Add TTL to code_executions & future RAGQueries | Low | Storage cost control |
-| P4 | Add index policy tuning after volume metrics | Medium | Write RU reduction |
+Guidelines:
+- Maintain selective indexing for write-heavy containers; measure RU after initial traffic before further exclusions.
+- Avoid indexing large opaque arrays (already excluded where applicable).
 
-## Document Size Watchpoints
-- Monitor average `submission` size; externalize proctoring events if approaching hundreds of events or large evaluation payloads.
-- Enforce max CSV rows for bulk question uploads to avoid oversized `BulkQuestionUpload` documents.
+## 7. Normalization & Skill Slugging
+Function: `normalize_skill` (collapse whitespace → hyphen, lowercase, strip invalid chars) applied at write boundaries in admin & RAG paths. Ensures consistent partitioning and prevents fragmented skill partitions (`React Hooks` vs `react-hooks`).
 
-## Normalization Guidance (NoSQL Context)
-Selective denormalization is correct here. Do **not** normalize polymorphic question details unless you need shared live updates. Introduce referencing only when mutation/ reuse benefits outweigh extra read round trips.
+## 8. Operational Patterns & Query Notes
+- Submission scoring path now uses `find_one` (cross-partition) for submission lookup by id, then uses correct PK (`assessment_id`) for updates.
+- Cross-partition candidate history queries acceptable at current scale; add `candidate_submissions` materialized view if latency becomes noticeable.
+- RAG query logging gains TTL to limit storage and reduce scans for stale data.
 
-## Optional Enhancements
-- Materialized `assessment_stats` container (pk /assessment_id) updated via small transactional batch (or application-level writes) for O(1) dashboard metrics.
-- Candidate-centric `candidate_submissions` summary (pk /candidate_id) for rapid history queries.
-- Vector externalization to Azure AI Search if embedding volume & query complexity grows.
+## 9. Remaining / Deferred Roadmap
+| Area | Item | Status | Rationale |
+|------|------|--------|-----------|
+| Evaluation lineage | Increment `runSequence` + re-eval linkage | Deferred | Implement after first multi-run use case |
+| Analytics | `assessment_stats` aggregation container | Deferred | Add once dashboard scan RU > acceptable budget |
+| Candidate view | `candidate_submissions` summary container | Deferred | Only if per-candidate queries become hot |
+| Lookup taxonomy | `lookups` container (skills/roles) | Deferred | Low immediate value; telemetry first |
+| Proctor events | Externalization & TTL | Conditional | Await empirical event volume |
+| RAG queries | Composite PK with dateBucket | Optional | Add for high-volume time-series analytics |
 
-## Sample Skill Normalization Helper
+## 10. Risk & Mitigation Matrix (Updated)
+| Risk | Current Exposure | Mitigation In Place | Additional Action Trigger |
+|------|------------------|---------------------|--------------------------|
+| Hot partitions (skill skew) | Low (early stage) | Skill slug normalization | Monitor partition metrics; shard skill if >40% RU |
+| Submission doc bloat | Moderated | Evaluation externalization; index exclusions | Externalize proctor events if size >1.5MB 95th percentile |
+| Cross-part scans for candidate history | Acceptable | Potential materialized view plan | P95 latency or RU threshold exceeded |
+| Evaluation artifact growth | Low (version=1 only) | Separate container | Implement retention once avg evaluations/submission >3 |
+| RAG analytics granularity | Basic (assessment scope) | TTL + assessment partition | Add dateBucket when time-series dashboards planned |
+
+## 11. Migration Status Summary
+| Change | Previously | Now | Migration Needed |
+|--------|-----------|-----|------------------|
+| Users PK | /role | /id | None (empty dataset) |
+| Questions PK | /type | /skill | None (bank not yet populated) |
+| KnowledgeBase PK | /source_type | /skill | None (standardized) |
+| Code Executions PK | /language | /submission_id | N/A (new path) |
+| Evaluations storage | Embedded in submissions | External + summary | One-off structural change complete |
+| RAGQueries container | Missing | Provisioned (/assessment_id, TTL) | N/A |
+
+## 12. Monitoring & Telemetry Recommendations
+- Capture per-container RU + latency (aggregate every 15m) to identify emerging hotspots.
+- Track submission document size percentile distribution monthly.
+- Log evaluation run counts per submission to decide when to implement retention policies.
+
+## 13. Immediate Action Checklist (All Implemented)
+1. Central constants + auto PK inference.
+2. Correct submission update partition usage in scoring.
+3. Provision missing containers (`RAGQueries`, `KnowledgeBase`).
+4. Apply TTL to ephemeral telemetry containers.
+5. Externalize full evaluation artifacts.
+
+## 14. Sample Usage Patterns
+Point Read (submission summary + latest evaluation):
+1. `find_one(submissions, {"id": submission_id})` (cross-partition, returns assessment_id)
+2. `read_item(evaluations, evaluation_id, partition_key=submission_id)` for full details (optional)
+
+Skill-Normalized Write (generated question):
 ```python
-def normalize_skill(raw: str) -> str:
-    return raw.strip().lower().replace(" ", "-")
+skill_slug = normalize_skill(input_skill)
+item = {"skill": skill_slug, ...}
+await db.auto_create_item(CONTAINER["GENERATED_QUESTIONS"], item)
 ```
-Use before any write and for partition_key derivation.
 
-## Risk Summary
-| Risk | Cause | Mitigation |
-|------|-------|------------|
-| Hot partitions | Low-cardinality PK choices | Repartition (see target config) |
-| Query RU inflation | Cross-part scans for candidate/status queries | Aggregation containers, improved PKs |
-| Item size bloat | Embedded events & answers growth | Externalize large arrays; TTL events |
-| Operational errors | Container name mismatch | Align provisioning names |
-| Analytics friction | Missing RAGQueries PK strategy | Introduce date/assessment-based PK |
+## 15. Change Log (Chronological)
+| Date | Change |
+|------|--------|
+| 2025-09-11 | Introduced `constants.py`, skill normalization helper. |
+| 2025-09-12 | Added container provisioning updates (TTL, indexing exclusions, RAGQueries). |
+| 2025-09-12 | Added `auto_create_item` + refactored routers to use it. |
+| 2025-09-13 | Fixed MCQ validation bug (removed nonexistent `get_item`). |
+| 2025-09-13 | Added evaluation externalization (`EvaluationRecord`, submission summary). |
+| 2025-09-14 | Comprehensive document rewrite reflecting current model & roadmap. |
 
-## Next Steps (Suggested Order)
-1. Implement container creation fixes + skill normalization utility.
-2. Correct scoring partition key usage.
-3. Add `RAGQueries` + TTL and dataset logging pattern with date bucket.
-4. Plan & execute PK migration for users, questions, knowledge base, code_executions.
-5. Introduce index policy customization after migration.
-6. Evaluate need for event externalization based on real telemetry.
-
-## Change Log (Implementation Progress)
-- Added `backend/constants.py` centralizing container names and partition key fields.
-- Implemented `normalize_skill` and integrated into `admin.py` (generated questions, fallback KB entries) and `rag.py` (KnowledgeBase updates, RAGQueries logging).
-- Refactored `scoring.py` to fetch submissions via `find_one` and now correctly updates with `assessment_id` partition key.
-- Updated `database.ensure_containers_exist` to align container names/partition keys, include `RAGQueries` & `KnowledgeBase`, add TTL (30d) to `code_executions` & `RAGQueries`, and indexing exclusions for large arrays in `submissions`.
-- Added auto partition key inference + helper `auto_create_item` in `CosmosDBService`.
-- Added `backend/tests/test_normalize_skill.py` covering slug normalization edge cases.
- - Refactored routers (`admin.py`, `utils.py`) to replace direct `create_item` calls with `auto_create_item` ensuring consistent partition key inference; added optional `submission_id` to `CodeExecutionRequest` and updated code execution/evaluation writes to partition by `/submission_id`.
- - Fixed latent bug in `scoring.py` MCQ validation endpoint (replaced nonexistent `get_item` with `find_one` + container constant; avoids runtime error). 
- - Confirmed environment currently has an empty Cosmos DB (no historical data) simplifying future PK migrations (no backfill required yet).
- - Deferred: introduction of `lookups` container (skills/roles taxonomy) explicitly parked; will revisit post telemetry.
- - Refactored evaluation storage: added `EvaluationRecord` model (full artifacts in `evaluations` container, pk=/submission_id) and replaced in-submission `detailed_evaluation` with compact `evaluation` summary (method, version, summary metrics, backlink `latestEvaluationId`). Legacy mock path aligned.
+## 16. Summary
+Current model emphasizes pragmatic denormalization, operational safety (automatic PK inference), and future-proofing for evaluation scaling. No immediate migrations are pending due to empty/low-volume state; focus now should shift to telemetry-driven adjustments rather than speculative restructuring.
 
 ---
-_This review intentionally balances short-term pragmatic fixes with medium-term scalability; adapt ordering based on actual RU metrics once connected to STG Cosmos._
+This document supersedes prior versions; obsolete recommendations (e.g., migrating users/questions PK) are now marked complete.

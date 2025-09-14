@@ -37,6 +37,11 @@ USE_JUDGE0=true
 
 # Application Settings
 ENVIRONMENT=development
+
+# (Optional) RAG Vector Store (separate serverless Cosmos DB account)
+RAG_COSMOS_DB_ENDPOINT=https://your-rag-account.documents.azure.com:443/
+RAG_COSMOS_DB_DATABASE=ragdb
+RAG_COSMOS_DB_PREFERRED_LOCATIONS=East US
 ```
 
 ### Azure Cosmos DB Setup

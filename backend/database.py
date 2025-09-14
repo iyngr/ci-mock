@@ -17,7 +17,7 @@ from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError
 )
 import logging
-from constants import CONTAINER, COLLECTIONS  # updated import
+from constants import CONTAINER, COLLECTIONS, EMBEDDING_DIM  # updated import
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,26 @@ class CosmosDBService:
             CONTAINER["USERS"]: {"pk": "/id"},
             CONTAINER["QUESTIONS"]: {"pk": "/skill"},
             CONTAINER["GENERATED_QUESTIONS"]: {"pk": "/skill"},
-            CONTAINER["KNOWLEDGE_BASE"]: {"pk": "/skill"},
+            # KnowledgeBase: include vector policy + vector index definitions.
+            # NOTE: Per current Cosmos DB limitations, vector feature must be enabled at account level first.
+            CONTAINER["KNOWLEDGE_BASE"]: {"pk": "/skill", "index_policy": {
+                "indexingMode": "consistent",
+                "automatic": True,
+                "includedPaths": [
+                    {"path": "/*"}
+                ],
+                # Exclude the raw embedding array from the traditional property index to optimize ingestion RUs
+                "excludedPaths": [
+                    {"path": "/_etag/?"},
+                    {"path": "/embedding/*"}
+                ],
+                # Vector index definitions (one path). Keep minimal; dimension & similarity defined in vector policy separately in future SDKs.
+                # Current docs show vector policy (vectorEmbeddings) specified at container creation; azure-cosmos Python may evolve.
+                # Here we supply vectorIndexes consistent with GA examples for indexing policy.
+                "vectorIndexes": [
+                    {"path": "/embedding", "type": "quantizedFlat"}
+                ]
+            }},
             CONTAINER["CODE_EXECUTIONS"]: {"pk": "/submission_id", "ttl": 60*60*24*30},  # 30d
             CONTAINER["EVALUATIONS"]: {"pk": "/submission_id"},
             CONTAINER["RAG_QUERIES"]: {"pk": "/assessment_id", "ttl": 60*60*24*30},  # 30d

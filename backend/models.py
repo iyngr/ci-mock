@@ -343,7 +343,15 @@ class QuestionValidationResponse(BaseModel):
 # ===========================
 
 class KnowledgeBaseEntry(CosmosDocument):
-    """Model for RAG system - represents a single document in our knowledge base"""
+    """Model for RAG system - represents a single document in the vector-enabled Knowledge Base.
+
+    Deployed in a dedicated serverless Cosmos DB account (RAG) separate from the primary
+    transactional account. The embedding vector lives at JSON path `/embedding` which is the
+    configured vector index path (e.g. `quantizedFlat`). Partition key = `/skill` for topical locality.
+
+    If RAG account env vars are absent the application may fall back to a non-vector container in
+    the primary account (vector queries disabled / delegated to LLM agent fallback).
+    """
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True,
@@ -382,7 +390,13 @@ class KnowledgeBaseEntry(CosmosDocument):
 
 
 class VectorSearchRequest(BaseModel):
-    """Request model for vector similarity search"""
+    """Request model for vector similarity search against KnowledgeBase.
+
+    The serverless RAG account must have a container with vector index path `/embedding`.
+    `query_text` will be embedded externally (LLM agent / embedding service) before issuing
+    a `VectorDistance(c.embedding, @embedding)` query. If the dedicated RAG service is not
+    configured this request may be serviced via a fallback (text or hybrid) path.
+    """
     query_text: str = Field(..., alias="queryText", description="Text to search for")
     similarity_threshold: float = Field(default=0.8, alias="similarityThreshold", description="Minimum similarity threshold")
     max_results: int = Field(default=10, alias="maxResults", description="Maximum number of results to return")
@@ -390,7 +404,12 @@ class VectorSearchRequest(BaseModel):
 
 
 class VectorSearchResponse(BaseModel):
-    """Response model for vector similarity search"""
+    """Response model for vector similarity search.
+
+    `results` entries are expected to include a similarity score (normalized from distance) when
+    native vector querying is used; fallback text search may omit or approximate that metric.
+    `total_results` reflects the count returned after threshold filtering, not total corpus size.
+    """
     success: bool = Field(..., description="Whether search was successful")
     results: List[Dict[str, Any]] = Field(default_factory=list, description="Search results with similarity scores")
     search_time: float = Field(..., alias="searchTime", description="Time taken for search in seconds")

@@ -25,9 +25,17 @@ LLM_AGENT_TIMEOUT = 30
 
 
 # Database dependency
-async def get_cosmosdb() -> CosmosDBService:
-    """Get Cosmos DB service dependency"""
-    from main import database_client
+async def get_rag_or_main_db() -> CosmosDBService:
+    """Return RAG-dedicated Cosmos service if available, else primary service.
+
+    This allows seamless fallback when the RAG serverless account is not configured.
+    """
+    from main import database_client, app
+    # Prefer rag_service if initialized
+    rag_service = getattr(app.state, "rag_service", None)
+    if rag_service:
+        return rag_service
+    # Fallback to primary
     if database_client is None:
         raise HTTPException(status_code=503, detail="Database not available")
     return await get_cosmosdb_service(database_client)
@@ -36,7 +44,7 @@ async def get_cosmosdb() -> CosmosDBService:
 @router.post("/ask", response_model=RAGQueryResponse)
 async def ask_rag_question(
     request: RAGQueryRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_rag_or_main_db)
 ):
     """
     RAG-powered question answering endpoint.
@@ -123,7 +131,7 @@ async def ask_rag_question(
 @router.post("/knowledge-base/update", response_model=KnowledgeBaseUpdateResponse)
 async def update_knowledge_base(
     request: KnowledgeBaseUpdateRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_rag_or_main_db)
 ):
     """
     Update the knowledge base with new content.
@@ -211,7 +219,7 @@ async def search_knowledge_base(
     limit: int = 5,
     threshold: float = 0.7,
     skill: str = None,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_rag_or_main_db)
 ):
     """
     Search the knowledge base for relevant content.
@@ -240,7 +248,8 @@ async def search_knowledge_base(
             print(f"Vector search failed, falling back to text search: {vector_error}")
         
         # Fallback: text-based search
-        knowledge_container = db.get_container_client("KnowledgeBase")
+        # Access KnowledgeBase from whichever service is active (rag or primary)
+        knowledge_container = db.get_container(CONTAINER["KNOWLEDGE_BASE"])  # unified access
         
         # Build query with optional skill filter
         if skill:

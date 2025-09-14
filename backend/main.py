@@ -8,6 +8,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from routers import candidate, admin, utils, scoring, rag
+from rag_database import get_rag_service  # new import for RAG vector account
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,6 +82,18 @@ async def lifespan(app: FastAPI):
         cosmos_client = None
         database_client = None
     
+    # Initialize RAG (vector) service separately if configured
+    try:
+        rag_service = await get_rag_service()
+        if rag_service:
+            app.state.rag_service = rag_service
+            print("✓ RAG Cosmos (serverless/vector) service ready")
+        else:
+            app.state.rag_service = None
+    except Exception as e:
+        print(f"⚠️ Failed to initialize RAG service: {e}")
+        app.state.rag_service = None
+
     yield
     
     # Shutdown

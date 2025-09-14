@@ -3,7 +3,7 @@
 Last updated: 2025-09-14
 
 ## 1. Executive Summary
-The data model has been refactored to address earlier low‑cardinality partition keys, container naming inconsistencies, and evaluation payload bloat. All active containers are now provisioned with corrected partition keys, TTL where appropriate, and selective indexing exclusions. Full evaluation artifacts have been externalized to an `evaluations` container (PK = `/submission_id`) while submissions now store only a compact summary, reducing document growth risk. Remaining work centers on re‑scoring sequencing, optional analytics/materialized views, and future time‑series optimization for RAG queries.
+The data model has been refactored to address earlier low‑cardinality partition keys, container naming inconsistencies, and evaluation payload bloat. All active containers are now provisioned with corrected partition keys, TTL where appropriate, and selective indexing exclusions. Full evaluation artifacts have been externalized to an `evaluations` container (PK = `/submission_id`) while submissions now store only a compact summary, reducing document growth risk. A SECOND Cosmos DB account (serverless, vector-enabled) now isolates RAG vector workloads (`KnowledgeBase`, optional `RAGQueries`) from transactional assessment workloads to minimize RU baseline, allow independent scaling, and prevent vector experimentation from impacting critical scoring paths. Remaining work centers on re‑scoring sequencing, optional analytics/materialized views, and future time‑series optimization for RAG queries.
 
 Key Improvements Implemented:
 - Migrated problematic PK choices (users, questions, knowledge base, code executions) to higher‑cardinality keys.
@@ -13,7 +13,7 @@ Key Improvements Implemented:
 - Centralized container + logical PK metadata (`constants.py`) enabling automatic PK inference (`auto_create_item`).
 
 ## 2. Current Provisioned Containers
-Source: `CosmosDBService.ensure_containers_exist`
+Source: `CosmosDBService.ensure_containers_exist` (Primary / Transactional Account)
 
 | Container | Physical Name | Partition Key Path | Logical PK Field | TTL | Index Customization | Purpose |
 |-----------|---------------|--------------------|------------------|-----|--------------------|---------|
@@ -22,14 +22,21 @@ Source: `CosmosDBService.ensure_containers_exist`
 | Users | `users` | `/id` | `id` | None | Default | Admin & candidate identities (no hotspot) |
 | Questions | `questions` | `/skill` †Sk | `skill` | None | Default | (Future / bank) canonical reusable questions (skill partition) |
 | Generated Questions | `generated_questions` | `/skill` †Sk | `skill` | None | Default | AI-generated cached questions by skill |
-| Knowledge Base | `KnowledgeBase` | `/skill` †Sk | `skill` | None | Default | RAG corpus entries with embeddings |
 | Code Executions | `code_executions` | `/submission_id` †S | `submission_id` | 30d | Default | Judge0 execution traces per submission |
 | Evaluations | `evaluations` | `/submission_id` †S | `submission_id` | None | Default (future selective) | Full scoring artifacts (MCQ + LLM) |
-| RAG Queries | `RAGQueries` | `/assessment_id` †A | `assessment_id` | 30d | Default | Logged retrieval queries & diagnostics |
+| RAG Queries | `RAGQueries` | `/assessment_id` †A | `assessment_id` | 30d | Default | Logged retrieval queries & diagnostics (PRIMARY if not using dual-account option) |
+
+Vector / RAG Account (Serverless, Vector Enabled):
+
+| Container | Physical Name | Partition Key Path | Vector Index Path | TTL | Purpose |
+|-----------|---------------|--------------------|-------------------|-----|---------|
+| Knowledge Base | `KnowledgeBase` | `/skill` †Sk | `/embedding` (quantizedFlat) | None | Isolated RAG corpus with vector similarity (1536-dim OpenAI embedding) |
+| RAG Queries (optional) | `RAGQueries` | `/assessment_id` †A | n/a | 30d | (Optional) Keep retrieval logs in same vector account or leave in primary |
 
 Notes:
-- Previous missing container (`RAGQueries`) now provisioned.
-- All logical PK fields defined in `COLLECTIONS` allow automatic inference; manual partition key errors are minimized.
+- Previous missing container (`RAGQueries`) now provisioned in primary; can be moved or duplicated to vector account if tighter RAG telemetry colocation desired.
+- All logical PK fields defined in `COLLECTIONS` allow automatic inference; manual partition key errors minimized.
+- Dual-account split: Primary (transactional + scoring) vs Serverless Vector (RAG retrieval). RAG account does NOT auto-provision containers—`KnowledgeBase` created manually with vector index; application only validates existence.
 
 Footnotes:
 - †A = Assessment axis (groups many submissions / RAG queries for cohort analytics & batch operations)
@@ -88,6 +95,46 @@ Operational Independence:
 - You can purge old `code_executions` (TTL) without touching evaluation lineage or question bank.
 - Skill-based re-embedding (KB rebuild) does not impact live submissions.
 - Adding rescore versions scales only the submission axis partitions affected.
+- Vector index rebuilds (e.g., switching `flat` → `quantizedFlat`) occur in the isolated serverless account, avoiding throughput contention.
+
+## 2c. Dual-Account Vector Architecture
+Rationale: Isolate experimental / scale-variable RAG vector workloads from mission-critical assessment flows while minimizing baseline cost.
+
+| Aspect | Primary Account (Transactional) | RAG Account (Serverless Vector) |
+|--------|---------------------------------|---------------------------------|
+| Workloads | Assessments, Submissions, Evaluations, Code Executions, (default) RAGQueries | KnowledgeBase (vector), optional RAGQueries |
+| Throughput Model | Provisioned / Autoscale (future) | Serverless pay-per-request |
+| Vector Feature | Not enabled (simpler indexing) | Enabled (index path `/embedding`) |
+| Failure Blast Radius | Scoring & test delivery | Retrieval augmentation only |
+| Cost Behavior Idle | Fixed baseline (if provisioned) | Near-zero idle RU cost |
+| Migration Risk | Low—stable schemas | Low volume early; can be promoted later |
+
+Environment Variables:
+```bash
+RAG_COSMOS_DB_ENDPOINT=https://<rag-account>.documents.azure.com/
+RAG_COSMOS_DB_DATABASE=ragdb
+RAG_COSMOS_DB_PREFERRED_LOCATIONS=East US
+```
+
+Initialization Path:
+1. App startup loads primary DB as before.
+2. Attempts to initialize RAG service (`rag_database.get_rag_service`).
+3. Verifies `KnowledgeBase` exists (no create if absent to avoid accidental non-vector container creation).
+4. Optionally creates `RAGQueries` in RAG account (TTL 30d) if present.
+
+Fallback Behavior:
+- If RAG env vars unset → RAG endpoints transparently use primary account containers.
+- If RAG account unreachable → logs warning, falls back (no feature hard fail unless vector-only path is invoked).
+
+Operational Advantages:
+- Clean separation of RU patterns (point reads vs similarity scans).
+- Safe to iterate on embedding model / index type without impacting assessment SLA.
+- Enables later promotion to dedicated throughput or external vector store if corpus size / QPS justify.
+
+Future Enhancements:
+- Add usage-based promotion heuristic (when avg RU/query > threshold, consider dedicated throughput vs serverless).
+- Introduce partition load monitoring per skill to preempt hot skill shard planning.
+
 
 ## 3. Partition Key Rationale (Current State)
 | Domain Concern | Container | Chosen PK | Why It Works | Trade-offs / Future Options |
@@ -161,6 +208,8 @@ Function: `normalize_skill` (collapse whitespace → hyphen, lowercase, strip in
 | Cross-part scans for candidate history | Acceptable | Potential materialized view plan | P95 latency or RU threshold exceeded |
 | Evaluation artifact growth | Low (version=1 only) | Separate container | Implement retention once avg evaluations/submission >3 |
 | RAG analytics granularity | Basic (assessment scope) | TTL + assessment partition | Add dateBucket when time-series dashboards planned |
+| Vector workload interference | Removed (isolated) | Dual-account architecture | If RAG QPS explodes, evaluate dedicated RU or external vector DB |
+| Accidental non-vector container recreate | Low | Manual creation + runtime existence check only | Add infra-as-code guardrail (Bicep/TF validation) |
 
 ## 11. Migration Status Summary
 | Change | Previously | Now | Migration Needed |
@@ -205,6 +254,7 @@ await db.auto_create_item(CONTAINER["GENERATED_QUESTIONS"], item)
 | 2025-09-13 | Fixed MCQ validation bug (removed nonexistent `get_item`). |
 | 2025-09-13 | Added evaluation externalization (`EvaluationRecord`, submission summary). |
 | 2025-09-14 | Comprehensive document rewrite reflecting current model & roadmap. |
+| 2025-09-14 | Added dual-account vector (serverless) architecture & env var documentation. |
 
 ## 16. Summary
 Current model emphasizes pragmatic denormalization, operational safety (automatic PK inference), and future-proofing for evaluation scaling. No immediate migrations are pending due to empty/low-volume state; focus now should shift to telemetry-driven adjustments rather than speculative restructuring.

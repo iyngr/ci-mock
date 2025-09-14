@@ -15,6 +15,9 @@ COLLECTIONS: Dict[str, Dict[str, str]] = {
     "RAG_QUERIES": {"name": "RAGQueries", "pk_field": "assessment_id"},
 }
 
+# Default embedding dimensionality used for KnowledgeBase entries (Azure OpenAI small embedding model)
+EMBEDDING_DIM: int = 1536
+
 # Convenience single-source names
 CONTAINER = {k: v["name"] for k, v in COLLECTIONS.items()}
 

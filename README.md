@@ -1,220 +1,225 @@
-# AI-Powered Technical Assessment Platform
+# AI Technical Assessment Platform
 
-A comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation, real-time proctoring, and **server-authoritative session management**.
+Unified, extensible assessment platform for coding & conceptual evaluation with:
 
-## 🏗️ Architecture
+* Next.js 14 front‑end (App Router, TypeScript, Tailwind, Shadcn/UI, Monaco)
+* FastAPI backend (Python 3.12, async) for authoritative session + scoring APIs
+* LLM Agent (multi‑agent evaluation & generation using Azure OpenAI)
+* Auto‑Submit Azure Function (timer-triggered session finalization)
+* Dual Azure Cosmos DB accounts (Transactional + Vector/RAG) with a vector‑indexed Knowledge Base
+* Judge0 code execution integration
 
-- **Frontend**: Next.js 14 with TypeScript, Tailwind CSS, and Shadcn/UI
-- **Backend**: Python 3.12 with FastAPI and Pydantic
-- **Database**: Azure Cosmos DB (NoSQL API) with motor driver
-- **Auto-Submit Service**: Azure Functions with timer triggers
-- **LLM Integration**: Azure OpenAI Service (GPT-4o)
-- **Code Execution**: Judge0 API
-- **Package Management**: PNPM (frontend), UV (backend)
+> For an in‑depth data model rationale see: `docs/cosmos-data-model-review.md` (authoritative partition strategy & vector architecture).
 
-## 🚀 Features
+---
+## 1. High‑Level Architecture
 
-### For Candidates
-- ✅ Secure login with unique assessment codes
-- ✅ Interactive instructions with fullscreen mode
-- ✅ **Server-controlled assessment timing** (tamper-resistant)
-- ✅ Multi-question type support (MCQ, Descriptive, Coding)
-- ✅ Monaco Editor for coding questions with syntax highlighting
-- ✅ Real-time code execution and testing
-- ✅ Timer and navigation controls
-- ✅ Proctoring features (fullscreen monitoring, tab switching detection)
-- ✅ **Automatic submission on server-side expiry**
+```mermaid
+flowchart LR
+  FE[Next.js Frontend] -->|HTTPS /api/*| BE[FastAPI Backend]
+  FE -->|LLM assist (optional)| AGENT[LLM Agent Service]
+  BE --> COSMOS[(Cosmos DB Transactional)]
+  BE -->|Vector/RAG| COSMOS_RAG[(Cosmos DB RAG / Vector)]
+  BE --> JUDGE0[Judge0 API]
+  AGENT --> AOAI[Azure OpenAI]
+  AGENT --> COSMOS
+  AUTO[Auto-Submit Azure Function] --> COSMOS
+  AUTO --> BE
+```
 
-### For Administrators
-- ✅ Secure admin authentication
-- ✅ Dashboard with KPI metrics and charts
-- ✅ Test initiation with question selection
-- ✅ Real-time test monitoring
-- ✅ Searchable test-taker table
-- ✅ Detailed candidate reports
-- ✅ AI-powered evaluation and scoring
-- ✅ **Auto-submission monitoring and reporting**
-- ✅ **NEW: AI-Enhanced Question Management**
-  - Single question addition with automatic enhancement
-  - Bulk CSV upload with duplicate detection
-  - Grammar correction and skill tagging
-  - Semantic similarity validation
+| Service          | Runtime                 | Purpose                                                                 | Key Tech                                                      |
+| ---------------- | ----------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Frontend         | Node / Next.js 14       | Candidate + Admin UI, real-time interactions                            | React 19, Tailwind, Shadcn, Monaco                            |
+| Backend          | FastAPI (ASGI)          | Authoritative session mgmt, scoring orchestration, RAG, code exec proxy | FastAPI, azure-cosmos, Pydantic v2                            |
+| LLM Agent        | FastAPI / AutoGen       | Multi-agent evaluation, question generation, report synthesis           | AutoGen, Azure OpenAI GPT‑4o                                  |
+| Auto-Submit      | Azure Functions (Timer) | Periodic session expiry & auto-finalization                             | Python 3.11 Functions v4                                      |
+| Cosmos (Primary) | NoSQL Account           | Transactional assessments & telemetry                                   | Partitioned containers (assessment / submission / skill axes) |
+| Cosmos (Vector)  | Serverless + Vector     | KnowledgeBase embeddings + optional RAGQueries                          | Vector index (quantizedFlat)                                  |
 
-### Security & Integrity
-- 🔒 **Server-authoritative timing** - Backend controls all session lifecycle
-- 🔒 **Auto-submission service** - Azure Function handles abandoned sessions
-- 🔒 **Tamper-resistant** - Frontend cannot modify assessment duration
-- 🔒 **Audit trail** - Complete session tracking and logging
-- 🔒 **Time synchronization** - All timing based on server clock
+---
+## 2. Core Feature Set
 
-## 📸 Screenshots
+### Candidate
+* Secure code-based entry & instructions
+* Server-authoritative timing (no client tampering)
+* MCQ / Descriptive / Coding question rendering
+* Monaco editor + Judge0 execution
+* Auto submission on expiry + explicit submission
+* Basic proctoring (fullscreen, tab switch tracking)
 
-| Candidate Login | Assessment Instructions | Assessment Interface |
-|----------------|------------------------|---------------------|
-| ![Candidate Login](https://github.com/user-attachments/assets/7ba13b85-dd50-4d09-8059-9fdcbee79ee2) | ![Instructions](https://github.com/user-attachments/assets/c5424573-1a9b-49e6-8092-214f655c1a02) | ![MCQ Question](https://github.com/user-attachments/assets/9bb77899-e48b-4c2c-99dd-bd632649e82e) |
+### Admin
+* Authenticated dashboard & KPIs
+* Assessment creation / initiation
+* AI-assisted question authoring (single + bulk enhancement & semantic dedupe)
+* Submission monitoring & detailed report view
+* Re-usable question & generated question banks grouped by skill
 
-| Descriptive Question | Coding Question | Admin Dashboard |
-|---------------------|-----------------|-----------------|
-| ![Descriptive](https://github.com/user-attachments/assets/9250ce9b-7101-4003-9470-fdb317d2efdf) | ![Coding](https://github.com/user-attachments/assets/1d80f6a5-ab25-4134-a014-dfb75230ce55) | ![Dashboard](https://github.com/user-attachments/assets/admin-dashboard.png) |
+### AI / Evaluation
+* Multi-agent scoring & report synthesis
+* RAG retrieval from vector KnowledgeBase (skill-partitioned) – optional
+* Evaluation artifact externalization (lightweight submission summary + full `evaluations` container record)
 
-| Test Initiation |
-|----------------|
-| ![Test Initiation](https://github.com/user-attachments/assets/admin-initiate-test.png) |
+### Operational Integrity
+* Timer enforcement (backend + function) — resilient to client manipulation
+* TTL on high-churn telemetry containers (`code_executions`, `RAGQueries`)
+* Partition-key aligned batch analytics (`submissions` under `/assessment_id`)
+* Separate serverless vector account to isolate experimental RAG cost & RU patterns
 
-## 🛠️ Development Setup
+---
+## 3. Data Model (Summary)
+
+Axes: Assessment (`/assessment_id`), Submission (`/submission_id`), Skill (`/skill`).
+
+Primary Account Containers (current):
+* `assessments` (/id) – immutable snapshots
+* `submissions` (/assessment_id) – candidate sessions ( answers + summary eval )
+* `evaluations` (/submission_id) – full evaluation lineage
+* `code_executions` (/submission_id, TTL 30d)
+* `users` (/id)
+* `questions` & `generated_questions` (/skill)
+* `RAGQueries` (/assessment_id, TTL 30d) – may alternatively reside in vector account
+
+Vector/RAG Account:
+* `KnowledgeBase` (/skill) with vector path `/embedding` (quantizedFlat, 1536‑dim default)
+* Optional mirror `RAGQueries` (/assessment_id)
+
+See `docs/cosmos-data-model-review.md` for: justifications, migration log, risk matrix, and partition rationale.
+
+---
+## 4. Local Development Quick Start
 
 ### Prerequisites
-- Node.js 18+ and PNPM
-- Python 3.12+
-- UV package manager
+* Node 18+ & PNPM
+* Python 3.12 + [uv](https://github.com/astral-sh/uv)
+* (Optional) Azure Functions Core Tools (for auto-submit)
+* Azure OpenAI key (or planned Managed Identity – enable later)
 
-### Backend Setup
+### Backend
 ```bash
 cd backend
 uv sync
+cp .env.example .env   # fill Cosmos endpoints / keys (test phase)
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### Frontend Setup
+### Frontend
 ```bash
 cd frontend
 pnpm install
 pnpm dev
 ```
 
-## 🧪 Demo Credentials
-
-**Candidate Assessment:**
-- Login Code: `TEST123`
-
-**Admin Portal:**
-- Email: `admin@example.com`
-- Password: `admin123`
-
-## 🚀 Deployment
-
-### Auto-Submit Service Deployment
+### LLM Agent (optional during initial UI dev)
 ```bash
-# Deploy auto-submit service
-cd auto-submit
-func azure functionapp publish func-assessment-autosubmit
-```
-
-### Backend Setup
-```bash
-cd backend
-# Copy environment template and configure
-cp .env.example .env
-# Edit .env with your Judge0 API key and other settings
-
-# Install dependencies and run
+cd llm-agent
 uv sync
-uv run uvicorn main:app --reload
+cp .env.sample .env
+uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-### Frontend (Vercel)
+### Auto-Submit Function (local)
 ```bash
-cd frontend
-vercel --prod
+cd auto-submit
+pip install -r requirements.txt
+func start
 ```
 
-## 📝 API Endpoints
-
-### Candidate Routes (NEW: Server-Authoritative)
-- `POST /api/candidate/login` - Validate login code
-- `POST /api/candidate/assessment/start` - **NEW**: Start assessment session
-- `GET /api/candidate/assessment/{test_id}` - Get assessment questions
-- `POST /api/candidate/assessment/submit` - **NEW**: Submit with submission ID
-- `POST /api/candidate/submit` - Legacy submit endpoint (deprecated)
-
-### Admin Routes
-- `POST /api/admin/login` - Admin authentication
-- `GET /api/admin/dashboard` - Dashboard statistics
-- `POST /api/admin/tests` - Create new test
-- `GET /api/admin/report/{result_id}` - Detailed report
-- **NEW: Question Management**
-  - `POST /api/admin/questions/add-single` - Add single question with AI enhancement
-  - `POST /api/admin/questions/bulk-validate` - Validate bulk CSV upload
-  - `POST /api/admin/questions/bulk-confirm` - Confirm bulk question import
-
-### AI Service Routes (NEW: LLM Agent)
-- `GET /health` - AI service health check
-- `POST /questions/validate` - Two-phase question validation (exact + semantic)
-- `POST /questions/rewrite` - AI-powered question enhancement and tagging
-- `POST /generate-question` - AI question generation
-- `POST /generate-report` - Multi-agent assessment scoring
-
-### Utility Routes
-- `POST /api/utils/run-code` - Execute code via Judge0
-- `POST /api/utils/evaluate` - AI-powered evaluation
-
-### Azure Function (Auto-Submit Service)
-- **Timer Trigger**: Runs every 5 minutes to auto-submit expired assessments
-- **Database**: Queries Cosmos DB for expired in-progress submissions
-- **Action**: Updates status to `completed_auto_submitted`
-
-## 🔧 Configuration
-
-### Environment Variables
-```env
-# Backend
-DATABASE_URL=mongodb://localhost:27017/assessment
-AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-api-key
-JUDGE0_API_URL=https://judge0-ce.p.rapidapi.com
-JUDGE0_API_KEY=your-judge0-key
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8000
-
-# Azure Function Environment Variables
-COSMOS_DB_ENDPOINT=https://your-cosmos.documents.azure.com:443/
-COSMOS_DB_NAME=assessment-db
-AI_SCORING_ENDPOINT=https://your-api.com/api/utils/evaluate
+### Vector / RAG Smoke Test Scripts
+```bash
+python scripts/cosmos_connectivity.py
+python scripts/cosmos_vector_test.py
 ```
 
-## 🔧 Server-Authoritative System
+---
+## 5. Environment Variables (Condensed)
 
-This platform implements a **server-authoritative assessment timing system** for enhanced security and integrity:
+| Category        | Key (Backend)                                                           | Notes                         |
+| --------------- | ----------------------------------------------------------------------- | ----------------------------- |
+| Cosmos Primary  | `COSMOS_DB_ENDPOINT`, `COSMOS_DB_KEY`, `COSMOS_DB_DATABASE`             | Key auth for local; MI later  |
+| Cosmos Vector   | `RAG_COSMOS_DB_ENDPOINT`, `RAG_COSMOS_DB_KEY`, `RAG_COSMOS_DB_DATABASE` | Optional for RAG features     |
+| Azure OpenAI    | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`                         | Agent & direct embedding      |
+| LLM Agent       | `LLM_AGENT_URL`                                                         | Backend proxy to agent if set |
+| Judge0          | `JUDGE0_API_URL`, `JUDGE0_API_KEY`, `USE_JUDGE0`                        | Code execution toggle         |
+| Feature Toggles | `USE_RAG_ACCOUNT`                                                       | Force fallback if unset       |
 
-### Key Benefits
-- **Tamper Resistance**: Assessment duration cannot be modified client-side
-- **Automatic Cleanup**: Abandoned sessions are automatically closed
-- **Audit Trail**: Complete session lifecycle tracking
-- **Time Synchronization**: All timing decisions made by trusted server
+Frontend: `NEXT_PUBLIC_API_URL` (points to backend base URL).
 
-### Architecture Flow
-1. **Start Assessment**: Frontend calls `/api/candidate/assessment/start`
-2. **Server Control**: Backend creates session with expiration time
-3. **Timer Display**: Frontend shows countdown to server expiration
-4. **Auto-Submit**: Azure Function auto-submits expired sessions
-5. **Final Submission**: Uses submission ID instead of test ID
+LLM Agent adds: `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_MODEL`, trace logging toggles.
 
-### Documentation
-- [📖 Server-Authoritative System Documentation](./docs/server-authoritative-assessment.md)
-- [🧪 Testing Guide](./docs/testing-guide.md)
-- [🚀 Auto-Submit Service Deployment](./auto-submit/deployment.md)
-- [⚡ Judge0 Setup Guide](./docs/judge0-setup.md)
+Function adds: `COSMOS_DB_ENDPOINT` / `COSMOS_DB_KEY` or MI + `COSMOS_DB_NAME`, `AI_SCORING_ENDPOINT`.
 
-## 🎯 Current Status
+---
+## 6. RAG & Vector Search
 
-- ✅ **Task 1**: Project Setup & Database Schema
-- ✅ **Task 2**: Candidate Assessment Module (Frontend)
-- ✅ **Task 3**: Admin Portal Module (Frontend)
-- ✅ **Task 4**: Backend Application (FastAPI) - Complete Implementation
-- ✅ **Task 5**: Server-Authoritative Assessment System
-- ✅ **Task 6**: Auto-Submit Azure Function
-- ⏳ **Task 5**: Detailed Candidate Report Module
-- ⏳ **Task 6**: Production Deployment
+* Vector account created separately (serverless) with feature flag (KnowledgeBase required manual vector container creation).
+* Vector index: `quantizedFlat` on `/embedding` (1536 dims, cosine) – migratable to `diskANN` at scale (>50k vectors / physical partition).
+* Query pattern enforced: `SELECT TOP N ... WHERE c.skill = @skill ORDER BY VectorDistance(...)` to bound RU.
+* Isolation limits RU blast radius and cost; can later promote to provisioned throughput if stable high QPS.
 
-## 🤝 Contributing
+---
+## 7. Server-Authoritative Session Lifecycle
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+Flow:
+1. Admin initiates test; backend stamps allowed duration.
+2. Candidate starts session → backend creates submission w/ expiration.
+3. Frontend polls / receives server time & expiry; displays countdown.
+4. Azure Function scans expired `in-progress` submissions every 5 min; finalizes & triggers evaluation pipeline.
+5. Evaluation artifacts stored externally in `evaluations`; submission keeps summary pointer.
 
-## 📄 License
+Related docs: `docs/server-authoritative-assessment.md`, `auto-submit/`, `docs/testing-guide.md`.
 
-This project is licensed under the MIT License.
+---
+## 8. Deployment Overview
+
+| Component        | Suggested Azure Target                           |
+| ---------------- | ------------------------------------------------ |
+| Backend          | Azure Container Apps (w/ Managed Identity)       |
+| Frontend         | Vercel or Azure Static Web Apps / Container Apps |
+| LLM Agent        | Separate Container App (scales independently)    |
+| Auto-Submit      | Azure Functions (Consumption)                    |
+| Cosmos (Primary) | Provisioned / Autoscale (later)                  |
+| Cosmos (Vector)  | Serverless (early) → optionally provisioned      |
+
+Deployment Steps (abridged):
+1. Provision Cosmos (primary) + vector account (enable vector search upfront).
+2. Deploy backend container → assign system managed identity → grant **Cosmos DB Built-in Data Contributor** on both accounts.
+3. Deploy agent service (optional first iteration without MI — key auth).
+4. Deploy auto-submit function + configure identity / secrets.
+5. Frontend build & deploy with `NEXT_PUBLIC_API_URL` pointing to backend.
+6. Add monitoring (RU metrics, latency dashboards) & alerts prior to traffic ramp.
+
+---
+## 9. Monitoring & Optimization
+
+* `/metrics` backend endpoint surfaces RU aggregates & container counts.
+* RU heuristics: vector queries kept constrained by skill filter + TOP N.
+* TTL trimming: `code_executions`, `RAGQueries` reduce storage RU overhead.
+* Future: add composite indexes only when query shape + ORDER BY emerges in telemetry.
+
+---
+## 10. Roadmap (Selected)
+
+| Area               | Planned                                   | Trigger                             |
+| ------------------ | ----------------------------------------- | ----------------------------------- |
+| Evaluation lineage | `runSequence` + re-eval linkage           | First multi-eval feature request    |
+| Analytics          | `assessment_stats` materialized container | RU / latency threshold in dashboard |
+| RAG time-slicing   | `dateBucket` augmentation                 | High-volume retrieval analytics     |
+| Rate limiting      | Distributed token bucket                  | RU spikes or > target QPS           |
+| Vector index       | diskANN migration                         | >50k vectors / partition            |
+
+---
+## 11. Contributing
+
+1. Fork & branch (`feat/<name>`)
+2. Add / update tests (pytest for backend & agent)
+3. Update relevant README / docs
+4. Ensure lint & type checks pass
+5. Submit PR with concise summary + data model impacts (if any)
+
+---
+## 12. License
+
+MIT License (see `LICENSE`).
+
+---
+**Reference:** Detailed data model & partitioning: `docs/cosmos-data-model-review.md`.

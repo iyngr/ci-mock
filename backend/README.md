@@ -1,73 +1,84 @@
-# AI Technical Assessment Platform - Backend
+# Backend Service (FastAPI)
 
-## Overview
+Authoritative API layer for assessments, submissions, evaluation orchestration, and RAG retrieval. Implements secure timing, question management, evaluation artifact separation, and integration with a dual Cosmos DB topology (Transactional + Vector).
 
-FastAPI backend for the AI-powered technical assessment platform, now powered by Azure Cosmos DB NoSQL API.
+---
+## 1. Stack Overview
 
-## Architecture
+| Concern                | Technology                                                        |
+| ---------------------- | ----------------------------------------------------------------- |
+| Web Framework          | FastAPI (ASGI, Python 3.12)                                       |
+| Data Layer             | Azure Cosmos DB (NoSQL API) – primary & serverless vector account |
+| Identity (future prod) | Azure AD / Managed Identity (DefaultAzureCredential)              |
+| Code Execution         | Judge0 (REST, optional)                                           |
+| AI / LLM               | Azure OpenAI (GPT‑4o family) + external LLM Agent service         |
+| Packaging              | `uv` (PEP 723 / pyproject)                                        |
 
-- **Framework**: FastAPI with async/await support
-- **Database**: Azure Cosmos DB NoSQL API
-- **Authentication**: Azure Active Directory with DefaultAzureCredential
-- **Code Execution**: Judge0 API integration
-- **AI Evaluation**: Azure OpenAI integration
+Key Design Principles:
+1. Server authoritative session lifecycle (prevents client timer tampering)
+2. Explicit evaluation artifact externalization (`evaluations` container)
+3. Partition key axes optimized per access pattern (assessment / submission / skill)
+4. Vector workload isolation (separate serverless account)
+5. Minimal selective indexing + TTL for ephemeral telemetry
 
-## Environment Configuration
+---
+## 2. Environment Configuration
 
 ### Required Environment Variables
 
 ```bash
-# Azure Cosmos DB Configuration
-COSMOS_DB_ENDPOINT=https://your-account.documents.azure.com:443/
-DATABASE_NAME=assessment_platform
+## Primary Cosmos DB (Transactional)
+COSMOS_DB_ENDPOINT=https://<primary-account>.documents.azure.com:443/
+COSMOS_DB_KEY=<local-dev-only-key>
+COSMOS_DB_DATABASE=assessment
 
-# Azure Authentication (Optional - DefaultAzureCredential handles this)
-AZURE_CLIENT_ID=your-client-id
-AZURE_CLIENT_SECRET=your-client-secret
-AZURE_TENANT_ID=your-tenant-id
-
-# Azure OpenAI Configuration
-AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-openai-key
-
-# Judge0 Configuration
-JUDGE0_API_URL=https://judge0-ce.p.rapidapi.com
-JUDGE0_API_KEY=your-judge0-key
-USE_JUDGE0=true
-
-# Application Settings
-ENVIRONMENT=development
-
-# (Optional) RAG Vector Store (separate serverless Cosmos DB account)
-RAG_COSMOS_DB_ENDPOINT=https://your-rag-account.documents.azure.com:443/
+## Vector / RAG Cosmos DB (optional for KnowledgeBase)
+RAG_COSMOS_DB_ENDPOINT=https://<rag-account>.documents.azure.com:443/
+RAG_COSMOS_DB_KEY=<rag-key>
 RAG_COSMOS_DB_DATABASE=ragdb
 RAG_COSMOS_DB_PREFERRED_LOCATIONS=East US
+
+## Azure OpenAI
+AZURE_OPENAI_ENDPOINT=https://<aoai>.openai.azure.com/
+AZURE_OPENAI_API_KEY=<key>  # (defer MI until pre-deploy)
+
+## LLM Agent (if using proxy microservice)
+LLM_AGENT_URL=http://localhost:8001
+
+## Judge0
+USE_JUDGE0=true
+JUDGE0_API_URL=https://judge0-ce.p.rapidapi.com
+JUDGE0_API_KEY=<rapidapi-key>
+
+## Feature Toggles / Misc
+USE_RAG_ACCOUNT=true
+ENVIRONMENT=development
 ```
 
-### Azure Cosmos DB Setup
+### Cosmos DB Setup (Current Model Summary)
+Primary account containers (auto-created if missing):
 
-1. **Create Cosmos DB Account**:
-   - Choose "Azure Cosmos DB for NoSQL" (not MongoDB API)
-   - Enable automatic failover and multi-region writes if needed
+| Container           | Partition Key  | Notes                                      |
+| ------------------- | -------------- | ------------------------------------------ |
+| assessments         | /id            | Immutable snapshots per assessment         |
+| submissions         | /assessment_id | Session state + compact evaluation summary |
+| evaluations         | /submission_id | Full evaluation artifacts (LLM + MCQ)      |
+| code_executions     | /submission_id | TTL 30d, Judge0 traces                     |
+| users               | /id            | High-cardinality identities                |
+| questions           | /skill         | Canonical bank (future)                    |
+| generated_questions | /skill         | AI generation cache                        |
+| RAGQueries          | /assessment_id | TTL 30d (may live in vector acct)          |
 
-2. **Database and Containers**:
-   The application automatically creates the following containers with optimized partition keys:
-   
-   | Container | Partition Key | Purpose |
-   |-----------|---------------|---------|
-   | `assessments` | `/id` | Assessment templates |
-   | `submissions` | `/assessment_id` | Candidate submissions |
-   | `users` | `/role` | Admin and candidate users |
-   | `questions` | `/type` | Question bank |
-   | `code_executions` | `/language` | Code execution logs |
-   | `evaluations` | `/submission_id` | AI evaluation results |
+Vector account (manual vector container creation):
 
-3. **Authentication**:
-   - Uses Azure Active Directory with DefaultAzureCredential
-   - Supports managed identity in Azure environments
-   - Falls back to environment variables or Azure CLI credentials
+| Container     | PK     | Vector Path | Index         | Purpose                    |
+| ------------- | ------ | ----------- | ------------- | -------------------------- |
+| KnowledgeBase | /skill | /embedding  | quantizedFlat | RAG embeddings (1536 dims) |
 
-## Installation
+> Detailed rationale + roadmap: `../docs/cosmos-data-model-review.md`.
+
+---
+## 3. Installation
 
 1. **Install Dependencies**:
    ```bash
@@ -82,76 +93,59 @@ RAG_COSMOS_DB_PREFERRED_LOCATIONS=East US
    uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
    ```
 
-## Database Schema
+---
+## 4. Data Model Highlights
 
-### Cosmos DB Data Models
+* Partition axes: assessment vs submission vs skill (purpose-built locality)
+* Evaluation artifact offloading reduces submission doc growth & RU on writes
+* Skill normalization (`normalize_skill`) prevents partition fragmentation
+* TTL applied selectively for telemetry containers
+* Vector workload isolated – no accidental non-vector re-provisioning
 
-All models inherit from `CosmosDocument` base class which includes:
-- `id`: Document identifier (maps to `_id` for compatibility)
-- `_etag`: Optimistic concurrency control
-- `_ts`: Cosmos DB timestamp
-- `partition_key`: Computed property for efficient partitioning
+---
+## 5. API Surface (Representative)
 
-### Key Features
+### Admin (`/api/admin`)
+| Method | Path                     | Purpose                            |
+| ------ | ------------------------ | ---------------------------------- |
+| POST   | /login                   | Auth (session/token)               |
+| POST   | /tests                   | Create/initiate assessment         |
+| GET    | /dashboard               | KPI metrics                        |
+| POST   | /questions/add-single    | AI-augmented question enhancement  |
+| POST   | /questions/bulk-validate | Bulk validation (semantic + exact) |
 
-- **Polymorphic Questions**: Uses Pydantic discriminated unions for MCQ, Descriptive, and Coding questions
-- **Field Aliasing**: Frontend-backend compatibility with proper field mapping
-- **Partition Strategy**: Optimized partition keys for query performance
-- **Request Charge Monitoring**: Automatic RU consumption tracking
+### Candidate (`/api/candidate`)
+| Method | Path                  | Purpose                             |
+| ------ | --------------------- | ----------------------------------- |
+| POST   | /login                | Candidate entry                     |
+| POST   | /assessment/start     | Start session (authoritative timer) |
+| GET    | /assessment/{test_id} | Fetch question snapshot             |
+| POST   | /assessment/submit    | Final submission                    |
 
-## API Endpoints
+### Utils / RAG / Scoring
+| Method | Path                           | Purpose                          |
+| ------ | ------------------------------ | -------------------------------- |
+| POST   | /api/utils/run-code            | Judge0 execution wrapper         |
+| POST   | /api/utils/evaluate            | Trigger evaluation (LLM + rules) |
+| POST   | /api/rag/knowledge-base/update | Ingest or update KB entry        |
+| POST   | /api/rag/ask                   | Retrieval + answer synthesis     |
 
-### Admin Routes (`/api/admin`)
-- `POST /login` - Admin authentication
-- `GET /dashboard` - Dashboard statistics
-- `POST /tests` - Initiate new assessment
-- `GET /submissions` - All candidate submissions
-- `GET /assessments` - Assessment templates
-- `GET /candidates` - Candidate analytics
+---
+## 6. Service Layer (`CosmosDBService`)
 
-### Candidate Routes (`/api/candidate`)
-- `POST /login` - Candidate login with code
-- `POST /assessment/start` - Start assessment session
-- `GET /assessment/{id}/questions` - Get assessment questions
-- `GET /submissions/history` - Personal submission history
+Mongo-flavored helpers over Cosmos SQL API:
+* `find_one(container, filter_dict)` – cross-partition scan (use sparingly) then targeted PK ops
+* `auto_create_item(container, item)` – infers partition key via `constants.COLLECTIONS`
+* RU & latency metrics aggregated → `/metrics` endpoint
+* Bulk create helper maintains RU efficiency for ingestion bursts
 
-### Utils Routes (`/api/utils`)
-- `POST /run-code` - Execute code with Judge0
-- `POST /evaluate` - AI-powered evaluation
+Retry & Resilience:
+* Exponential + header-based (429 Retry-After) pacing
+* Graceful partial failures (evaluation write separate from submission update)
+* Logging of high-RU outliers for tuning
 
-## Database Operations
-
-### CRUD Operations
-
-The `CosmosDBService` class provides MongoDB-style operations:
-
-```python
-# Create
-await db.create_item("assessments", assessment_data, partition_key="role")
-
-# Read
-item = await db.read_item("assessments", item_id, partition_key)
-
-# Update
-await db.update_item("assessments", item_id, update_data, partition_key)
-
-# Delete
-await db.delete_item("assessments", item_id, partition_key)
-
-# Query with SQL
-results = await db.query_items("assessments", 
-    "SELECT * FROM c WHERE c.target_role = @role",
-    [{"name": "@role", "value": "python-backend"}])
-```
-
-### Error Handling & Retry Logic
-
-- **Automatic Retries**: Exponential backoff for transient errors (429, 503, 408)
-- **Request Charge Monitoring**: Tracks RU consumption for optimization
-- **Throttling Handling**: Respects retry-after headers for rate limiting
-- **Connection Resilience**: Graceful degradation when database unavailable
-
-## Performance Optimization
+---
+## 7. Performance & RU Optimization
 
 ### Connection Optimization
 
@@ -178,15 +172,14 @@ Configure optimal consistency with `COSMOS_DB_CONSISTENCY_LEVEL`:
 - `BoundedStaleness` (balanced)
 - `Strong` (highest consistency, highest latency)
 
-### Query Optimization
-
-#### Partition Key Strategy
-- **Assessments**: `/id` - Direct point reads by assessment ID
-- **Submissions**: `/assessment_id` - Group submissions by assessment
-- **Users**: `/role` - Separate admin/candidate data
-- **Questions**: `/type` - Optimize by question type queries
-- **Code Executions**: `/language` - Group by programming language
-- **Evaluations**: `/submission_id` - Link evaluations to submissions
+### Partition Key Recap
+| Container                       | PK             | Rationale                                    |
+| ------------------------------- | -------------- | -------------------------------------------- |
+| submissions                     | /assessment_id | Cohort analytics, batch eval                 |
+| evaluations                     | /submission_id | Lineage locality                             |
+| code_executions                 | /submission_id | High-churn isolation + TTL                   |
+| questions / generated_questions | /skill         | Semantic grouping for RAG & generation cache |
+| KnowledgeBase (vector acct)     | /skill         | Skill-scoped similarity slices               |
 
 #### Efficient Queries
 ```python
@@ -200,7 +193,7 @@ query = "SELECT c.id, c.status FROM c WHERE c.assessment_id = @assessment_id"
 query = "SELECT c.id FROM c WHERE c.assessment_id = @assessment_id AND c.status = @status"
 ```
 
-### RU Monitoring & Optimization
+### RU Monitoring
 
 #### Request Charge Tracking
 ```python
@@ -234,24 +227,20 @@ GET /metrics
 }
 ```
 
-#### Bulk Operations
+### Bulk Ingestion Example
 ```python
-# Use bulk operations for better efficiency
-results = await db.bulk_create_items("assessments", items_list, batch_size=100)
+await db.bulk_create_items("generated_questions", items, batch_size=50)
 ```
 
-### Best Practices
+### Practical Guidelines
+1. Always include partition filter where possible
+2. Use `SELECT <fields>` projections (avoid `SELECT *` in hot paths)
+3. Monitor RU budget pre-prod; add index exclusions only with evidence
+4. Keep vector queries scoped by skill + TOP N
+5. Avoid embedding large evaluation artifacts in submissions
 
-1. **Single Client Instance**: One CosmosClient per application lifecycle
-2. **Optimal Partition Keys**: Design for query patterns, not just distribution
-3. **Field Selection**: Use `SELECT c.field1, c.field2` instead of `SELECT *`
-4. **Pagination**: Use `OFFSET/LIMIT` for large result sets
-5. **Batch Operations**: Group multiple operations when possible
-6. **Monitor RU Consumption**: Use `/metrics` endpoint for optimization
-7. **Connection Pooling**: Configure appropriate connection limits
-8. **Regional Proximity**: Set preferred locations nearest to users
-
-### Troubleshooting Performance
+---
+## 8. Troubleshooting
 
 #### High RU Consumption
 - Check partition key distribution
@@ -271,13 +260,14 @@ results = await db.bulk_create_items("assessments", items_list, batch_size=100)
 - Distribute load across partition keys
 - Use autoscale throughput if available
 
-### Best Practices Implemented
+---
+## 9. Secure Deployment Notes
 
-1. **Single Client Instance**: One CosmosClient per application lifetime
-2. **Efficient Partition Keys**: Optimized for query patterns
-3. **Request Charge Monitoring**: RU consumption tracking and logging
-4. **Retry Logic**: Automatic handling of transient failures
-5. **Query Optimization**: SQL queries optimized for minimal RU usage
+Production Guidance:
+* Replace key-based auth with system-assigned Managed Identity (MI) & RBAC: `Cosmos DB Built-in Data Contributor`.
+* Store secrets (Judge0, fallback keys) in Azure Key Vault + reference in Container App.
+* Enable HTTPS-only, restrict CORS origins, and apply rate limiting on vector endpoints if high QPS.
+* Monitor `Total Request Units` & `Server Side Latency` per container; alert when RU spikes exceed forecast.
 
 ### Monitoring
 
@@ -286,34 +276,11 @@ results = await db.bulk_create_items("assessments", items_list, batch_size=100)
 - Errors logged with full context
 - Retry attempts tracked with delays
 
-## Migration from MongoDB
-
-This backend has been migrated from Motor/MongoDB to Azure Cosmos DB NoSQL API:
-
-### Key Changes
-
-1. **Dependencies**: 
-   - ❌ `motor>=3.7.1` 
-   - ✅ `azure-cosmos` + `azure-identity`
-
-2. **Connection**:
-   - ❌ MongoDB connection strings
-   - ✅ Azure Cosmos DB endpoints with AAD auth
-
-3. **Query Language**:
-   - ❌ MongoDB query syntax
-   - ✅ SQL API queries
-
-4. **Operations**:
-   - ❌ `collection.find()`, `collection.insert_one()`
-   - ✅ `container.query_items()`, `container.create_item()`
-
-### Compatibility Layer
-
-The `CosmosDBService` provides compatibility methods:
-- `find_one()` - MongoDB-style single document queries
-- `find_many()` - MongoDB-style multi-document queries
-- `count_items()` - Document counting with filters
+---
+## 10. Former MongoDB Migration (Historical Context)
+Legacy Motor implementation replaced by:
+* `azure-cosmos` SDK w/ SQL style queries
+* Compatibility helpers intentionally mimic subset of prior API for faster refactor onboarding.
 
 ## Development
 
@@ -340,26 +307,14 @@ uv run ruff check .
 uv run mypy .
 ```
 
-## Deployment
-
-### Azure App Service
-
-1. Set environment variables in App Service configuration
-2. Enable managed identity
-3. Grant Cosmos DB permissions to managed identity
-4. Deploy with `uv` for dependency management
-
-### Container Deployment
-
+---
+## 11. Containerization (Example)
 ```dockerfile
-FROM python:3.11-slim
-
+FROM python:3.12-slim
 WORKDIR /app
 COPY . .
-
-RUN pip install uv
-RUN uv install
-
+RUN pip install uv && uv sync --frozen
+EXPOSE 8000
 CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
@@ -393,18 +348,21 @@ logger = logging.getLogger('azure.cosmos')
 logger.setLevel(logging.DEBUG)
 ```
 
-## Security
+---
+## 12. Security Snapshot
+* AAD / Managed Identity planned pre-production
+* Key Vault recommended for secrets & embedding model switches
+* CORS locked to known frontend origins
+* No sensitive evaluation artifacts stored in logs; full details isolated in `evaluations`
 
-- **Authentication**: Azure AD with managed identity support
-- **Authorization**: Role-based access control
-- **Data Protection**: TLS encryption in transit
-- **Secrets Management**: Azure Key Vault integration recommended
-- **CORS**: Configured for specific frontend origins
+---
+## 13. Contributing
+1. Open issue or small RFC for data model changes
+2. Add/adjust tests (pytest + httpx for API) for new endpoints
+3. Keep README + `docs/` synchronized (data model doc is source of truth)
+4. Prefer incremental feature flags for new evaluation flows
+5. Include RU impact notes in PR description if query changes
 
-## Contributing
-
-1. Follow FastAPI and Pydantic best practices
-2. Maintain compatibility with frontend models
-3. Add proper error handling and logging
-4. Write tests for new functionality
-5. Update documentation for API changes
+---
+## 14. License
+MIT (see repository root `LICENSE`).

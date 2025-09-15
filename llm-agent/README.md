@@ -1,6 +1,6 @@
-# LLM Agent Service - Microsoft AutoGen Implementation
+# LLM Agent Service (Multi-Agent Evaluation & Generation)
 
-A sophisticated multi-agent service for technical assessment evaluation, built using the Microsoft AutoGen AgentChat framework. This service orchestrates specialized AI agents to provide comprehensive scoring, analysis, and reporting for coding assessments, multiple-choice questions, and descriptive answers.
+Multi-agent orchestration using Microsoft AutoGen (AgentChat) for question generation, hybrid scoring, report synthesis, and optional retrieval-augmented reasoning against a vectorized `KnowledgeBase` (Cosmos DB serverless vector account).
 
 ## 🚀 Features
 
@@ -8,7 +8,7 @@ A sophisticated multi-agent service for technical assessment evaluation, built u
 - **Orchestrator Agent**: Manages workflow coordination and task delegation
 - **Code Analyst Agent**: Evaluates coding submissions for correctness, quality, and efficiency
 - **Text Analyst Agent**: Assesses descriptive answers for accuracy and clarity
-- **Report Synthesizer Agent**: Compiles comprehensive assessment reports
+- **Report Synthesizer Agent**: Compiles comprehensive assessment reports (aggregated structured scoring + LLM summaries)
 - **User Proxy Agent**: Handles tool execution and administrative tasks
 
 ### 🔄 Advanced Workflow Management
@@ -20,7 +20,7 @@ A sophisticated multi-agent service for technical assessment evaluation, built u
 ### 🛠️ Technical Capabilities
 - **Azure OpenAI Integration**: Leverages GPT-4o for sophisticated reasoning
 - **Tool Integration**: Seamless execution of assessment-specific functions
-- **Caching & Performance**: Intelligent question generation with caching
+- **Caching & Performance**: Question generation and selective scoring re-use
 - **Comprehensive Logging**: Detailed trace and event logging for debugging
 
 ## 📦 Installation
@@ -64,7 +64,7 @@ A sophisticated multi-agent service for technical assessment evaluation, built u
 
 ## 🔧 Configuration
 
-### Environment Variables
+### Environment Variables (Core)
 
 The service requires several key environment variables in your `.env` file:
 
@@ -81,9 +81,14 @@ AUTOGEN_ENABLE_TRACE_LOGGING=true
 AUTOGEN_ENABLE_EVENT_LOGGING=true
 AUTOGEN_LOG_LEVEL=INFO
 
-# Cosmos DB
-COSMOS_DB_ENDPOINT=https://your-cosmos.documents.azure.com:443/
-COSMOS_DB_KEY=your-cosmos-key
+# Cosmos DB (Primary transactional)
+COSMOS_DB_ENDPOINT=https://<primary-account>.documents.azure.com:443/
+COSMOS_DB_KEY=<primary-key>
+
+# Optional RAG / Vector account (KnowledgeBase)
+RAG_COSMOS_DB_ENDPOINT=https://<rag-account>.documents.azure.com:443/
+RAG_COSMOS_DB_KEY=<rag-key>
+RAG_COSMOS_DB_DATABASE=ragdb
 ```
 
 ### Azure AD Authentication (Recommended for Production)
@@ -108,12 +113,13 @@ Content-Type: application/json
 }
 ```
 
-Initiates a comprehensive multi-agent workflow to:
-1. Fetch submission data from Cosmos DB
-2. Score MCQs automatically
-3. Analyze coding submissions
-4. Evaluate descriptive answers
-5. Synthesize a final report
+Workflow summary:
+1. Fetch submission summary + referenced question snapshots
+2. Deterministic MCQ scoring
+3. Code analysis (complexity / correctness reasoning)
+4. Descriptive / free-text evaluation (rubric + LLM semantic checks)
+5. Persist full evaluation artifact in `evaluations` (PK `/submission_id`)
+6. Return synthesized report stub with pointer to stored artifact
 
 ### Generate Questions
 ```http
@@ -342,7 +348,7 @@ The service includes comprehensive error handling:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License – see the repository root LICENSE file.
 
 ---
 

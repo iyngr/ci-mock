@@ -1,0 +1,67 @@
+{
+  "roles": [
+    {
+      "id": "software-engineer",
+      "label": "Software Engineer",
+      "skills": ["Data Structures", "Algorithms", "Git", "Unit Testing", "System Design"]
+    },
+    {
+      "id": "data-scientist",
+      "label": "Data Scientist",
+      "skills": ["Python", "Pandas", "NumPy", "Statistics", "Machine Learning"]
+    },
+    {
+      "id": "devops-engineer",
+      "label": "DevOps Engineer",
+      "skills": ["Docker", "Kubernetes", "CI/CD", "Terraform", "Linux"]
+    },
+    {
+      "id": "product-manager",
+      "label": "Product Manager",
+      "skills": ["Roadmapping", "Backlog Management", "User Research", "Analytics", "Stakeholder Communication"]
+    },
+    {
+      "id": "java-developer",
+      "label": "Java Developer",
+      "skills": ["Java", "Spring", "Hibernate", "REST APIs", "Microservices"]
+    }
+  ],
+  "domains": ["Web", "Cloud", "AI/ML", "Mobile"],
+  "skills": [
+    "Python",
+    "JavaScript",
+    "React",
+    "Node.js",
+    "Azure",
+    "Docker",
+    "Kubernetes",
+    "SQL",
+    "NoSQL",
+    "Data Engineering",
+    "Java",
+    "Spring",
+    "Hibernate",
+    "REST APIs",
+    "Microservices",
+    "Pandas",
+    "NumPy",
+    "Statistics",
+    "Machine Learning",
+    "CI/CD",
+    "Terraform",
+    "Linux",
+    "Roadmapping",
+    "Backlog Management",
+    "User Research",
+    "Analytics",
+    "Stakeholder Communication",
+    "Data Structures",
+    "Algorithms",
+    "Git",
+    "Unit Testing",
+    "System Design"
+  ],
+  "limits": {
+    "maxSkills": 5
+  }
+}

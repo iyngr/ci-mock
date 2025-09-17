@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Screen</title>
+    <!-- Minimal inline fallback so page never looks unstyled; external CSS below overrides this -->
+    <style>
+        :root {
+            --fg: #2a1816;
+            --border: rgba(0, 0, 0, .08);
+            --card: #f7f3e8;
+            --warm: #6b4f4f;
+        }
+
+        html,
+        body {
+            height: 100%
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            color: var(--fg);
+            background: radial-gradient(circle at 20% 80%, rgba(114, 201, 255, .08) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(189, 114, 255, .08) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(255, 114, 190, .05) 0%, transparent 50%),
+                #fbf8f0;
+        }
+
+        .warm-header {
+            display: flex;
+            align-items: center;
+            padding: 16px 24px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: rgba(255, 255, 255, .8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border)
+        }
+
+        .container {
+            max-width: 1040px;
+            margin: 28px auto;
+            padding: 0 16px
+        }
+
+        .tabs {
+            display: inline-flex;
+            gap: 8px;
+            margin: 8px 0 16px;
+            padding: 6px;
+            border-radius: 9999px;
+            background: rgba(255, 255, 255, .6);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(6px)
+        }
+
+        .tab {
+            padding: 8px 14px;
+            border-radius: 9999px;
+            border: 0;
+            background: transparent;
+            color: rgba(107, 79, 79, .6);
+            cursor: pointer
+        }
+
+        .tab.active {
+            background: var(--warm);
+            color: white
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, .1), 0 2px 4px -1px rgba(0, 0, 0, .06)
+        }
+
+        .btn {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-weight: 600;
+            cursor: pointer
+        }
+
+        .btn-primary {
+            background: var(--warm);
+            color: #fff;
+            border-color: transparent
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px
+        }
+
+        .grid .full {
+            grid-column: 1/-1
+        }
+
+        .title {
+            font-weight: 500;
+            letter-spacing: -.02em
+        }
+    </style>
+    <!-- Prefer server-mounted /static; external CSS overrides fallback above -->
+    <link id="theme-css" rel="stylesheet" href="styles.css" />
+    <script>
+        (function () {
+            // If /static stylesheet isn't available (e.g., opened from disk), inject local fallback
+            // This function is no longer needed as we are using relative paths
+        })();
+    </script>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <main class="container">
+        <header class="page-header">
+            <h1 class="page-title">Smart Screen</h1>
+            <div class="divider"></div>
+            <p class="subtitle">Upload a resume and optionally tailor by role, domain, and skills</p>
+        </header>
+        <div class="tabs tabs-pill glass" role="tablist" aria-label="Screening mode">
+            <button id="tab-auto" class="tab active" data-tab="auto" role="tab" aria-selected="true"
+                aria-controls="auto" tabindex="0">Auto</button>
+            <button id="tab-customized" class="tab" data-tab="customized" role="tab" aria-selected="false"
+                aria-controls="customized" tabindex="-1">Customized</button>
+        </div>
+
+        <section id="auto" class="tab-panel active" role="tabpanel" aria-labelledby="tab-auto">
+            <form id="auto-form" class="card card-clean" enctype="multipart/form-data">
+                <div class="field">
+                    <label>Upload Resume (PDF)</label>
+                    <label class="dropzone-hint" for="resume-file">
+                        <div class="dz-icon">⭱</div>
+                        <div class="dz-title">Click to upload or drag and drop</div>
+                        <div class="dz-sub">PDF only (max 5 MB)</div>
+                    </label>
+                    <input id="resume-file" type="file" name="file" accept="application/pdf,.pdf" required />
+                </div>
+                <button type="submit" class="btn btn-primary">Screen Resume</button>
+            </form>
+        </section>
+
+        <section id="customized" class="tab-panel" role="tabpanel" aria-labelledby="tab-customized" hidden>
+            <form id="custom-form" class="card card-clean" enctype="multipart/form-data">
+                <div class="grid">
+                    <div class="field">
+                        <label>Role</label>
+                        <select name="role">
+                            <option value="Software Engineer">Software Engineer</option>
+                            <option value="Data Scientist">Data Scientist</option>
+                            <option value="DevOps Engineer">DevOps Engineer</option>
+                            <option value="Product Manager">Product Manager</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Domain</label>
+                        <select name="domain">
+                            <option value="Web">Web</option>
+                            <option value="Cloud">Cloud</option>
+                            <option value="AI/ML">AI/ML</option>
+                            <option value="Mobile">Mobile</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>Skills (max 5)</label>
+                        <select name="skills" multiple size="5">
+                            <option value="Python">Python</option>
+                            <option value="JavaScript">JavaScript</option>
+                            <option value="React">React</option>
+                            <option value="Node.js">Node.js</option>
+                            <option value="Azure">Azure</option>
+                            <option value="Docker">Docker</option>
+                            <option value="Kubernetes">Kubernetes</option>
+                            <option value="SQL">SQL</option>
+                            <option value="NoSQL">NoSQL</option>
+                            <option value="Data Engineering">Data Engineering</option>
+                        </select>
+                    </div>
+                    <div class="field full">
+                        <label>Upload Resume (PDF)</label>
+                        <label class="dropzone-hint" for="resume-file-custom">
+                            <div class="dz-icon">⭱</div>
+                            <div class="dz-title">Click to upload or drag and drop</div>
+                            <div class="dz-sub">PDF only (max 5 MB)</div>
+                        </label>
+                        <input id="resume-file-custom" type="file" name="file" accept="application/pdf,.pdf" required />
+                    </div>
+                </div>
+                <input type="hidden" name="mode" value="customized" />
+                <button type="submit" class="btn btn-primary">Screen Resume</button>
+            </form>
+        </section>
+
+        <section class="results card card-clean hidden">
+            <h2 class="title">Result</h2>
+            <div id="loading" class="loading hidden">Analyzing resume…</div>
+            <div id="result">
+                <ul id="summary"></ul>
+                <p id="recommendation" class="recommendation"></p>
+            </div>
+        </section>
+
+        <section class="disclaimers card-subtle">
+            <p class="warning">Warning: AI-generated responses may not be 100% accurate and should be used as a
+                supplementary tool.</p>
+            <p class="privacy">Privacy Notice: No personal data from the uploaded resume is collected, stored, or used
+                for training the AI model.</p>
+        </section>
+    </main>
+
+    <script src="script.js" defer></script>
+</body>
+
+</html>

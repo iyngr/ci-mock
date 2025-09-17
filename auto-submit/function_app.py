@@ -11,7 +11,7 @@ app = func.FunctionApp()
 
 @app.timer_trigger(schedule="0 */5 * * * *", arg_name="mytimer", run_on_startup=False,
               use_monitor=False) 
-def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
+async def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
     """
     Azure Function that runs every 5 minutes to auto-submit expired assessments.
     CRON expression: "0 */5 * * * *" means run at minute 0 of every 5th minute
@@ -72,6 +72,9 @@ def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
                 logging.error(f'Failed to auto-submit submission {submission.get("id", "unknown")}: {str(e)}')
         
         logging.info(f'Successfully auto-submitted {auto_submitted_count} expired assessments')
+        
+        # Also process expired S2S interview transcripts
+        await process_expired_s2s_interviews(database)
         
     except Exception as e:
         logging.error(f'Error in auto-submit function: {str(e)}')
@@ -141,3 +144,196 @@ async def trigger_ai_scoring(submission: dict):
                     
     except Exception as e:
         logging.error(f"Failed to trigger AI scoring for submission {submission.get('id', 'unknown')}: {str(e)}")
+
+
+async def process_expired_s2s_interviews(database):
+    """
+    Process expired S2S interview transcripts for automatic evaluation
+    """
+    try:
+        transcripts_container = database.get_container_client("interview_transcripts")
+        current_time = datetime.datetime.utcnow()
+        
+        # Query for finalized transcripts that haven't been scored yet
+        # and are older than a buffer period (e.g., 5 minutes after finalization)
+        buffer_time = current_time - datetime.timedelta(minutes=5)
+        
+        query = """
+        SELECT * FROM c 
+        WHERE c.finalized_at != null
+        AND c.scored_at = null
+        AND c.finalized_at < @buffer_time
+        """
+        
+        parameters = [
+            {"name": "@buffer_time", "value": buffer_time.timestamp()}
+        ]
+        
+        expired_transcripts = list(transcripts_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True
+        ))
+        
+        logging.info(f'Found {len(expired_transcripts)} S2S interview transcripts to process')
+        
+        # Process each expired transcript
+        processed_count = 0
+        for transcript in expired_transcripts:
+            try:
+                # Generate assessment from S2S transcript
+                score_result = await generate_s2s_assessment_score(transcript)
+                
+                # Update transcript with scoring results
+                transcript['scored_at'] = current_time.timestamp()
+                transcript['assessment_score'] = score_result.get('score', 0)
+                transcript['assessment_feedback'] = score_result.get('feedback', '')
+                transcript['assessment_details'] = score_result.get('details', {})
+                
+                # Update the document in Cosmos DB
+                transcripts_container.upsert_item(transcript)
+                processed_count += 1
+                
+                logging.info(f'Processed S2S interview transcript for session: {transcript["session_id"]}')
+                
+                # Optionally trigger report generation
+                await trigger_s2s_report_generation(transcript)
+                
+            except Exception as e:
+                logging.error(f'Failed to process S2S transcript {transcript.get("session_id", "unknown")}: {str(e)}')
+        
+        logging.info(f'Successfully processed {processed_count} S2S interview transcripts')
+        
+    except Exception as e:
+        logging.error(f'Error processing S2S interview transcripts: {str(e)}')
+
+
+async def generate_s2s_assessment_score(transcript: dict) -> dict:
+    """
+    Generate assessment score from S2S interview transcript using LLM-agent
+    """
+    try:
+        # Extract relevant data from transcript
+        session_id = transcript.get("session_id", "unknown")
+        turns = transcript.get("turns", [])
+        metadata = transcript.get("metadata", {})
+        
+        # Create a pseudo-submission for the LLM-agent scoring system
+        pseudo_submission = {
+            "id": f"s2s_{session_id}",
+            "candidate_email": metadata.get("candidate_email", "unknown"),
+            "test_id": metadata.get("test_id", "unknown"),
+            "submission_type": "s2s_interview",
+            "interview_transcript": {
+                "session_id": session_id,
+                "turns": turns,
+                "duration": metadata.get("duration", 0),
+                "questions_covered": metadata.get("questions_covered", [])
+            }
+        }
+        
+        # Call LLM-agent for scoring
+        llm_agent_endpoint = os.environ.get("LLM_AGENT_ENDPOINT", "http://localhost:8080")
+        scoring_url = f"{llm_agent_endpoint}/generate-report"
+        
+        payload = {
+            "submission_id": pseudo_submission["id"],
+            "debug_mode": False
+        }
+        
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                scoring_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=300)  # 5 minute timeout for AI processing
+            ) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    
+                    # Extract meaningful score from AI report
+                    report_content = result.get("report", "")
+                    
+                    # Simple scoring based on transcript analysis
+                    # This could be enhanced with more sophisticated AI evaluation
+                    base_score = calculate_base_s2s_score(turns, metadata)
+                    
+                    return {
+                        "score": base_score,
+                        "feedback": report_content,
+                        "details": {
+                            "turns_count": len(turns),
+                            "duration": metadata.get("duration", 0),
+                            "questions_covered": len(metadata.get("questions_covered", [])),
+                            "ai_report": report_content
+                        }
+                    }
+                else:
+                    logging.warning(f"LLM-agent scoring failed with status {response.status}")
+                    # Fallback to basic scoring
+                    return generate_fallback_s2s_score(transcript)
+                    
+    except Exception as e:
+        logging.error(f"Failed to generate S2S assessment score: {str(e)}")
+        return generate_fallback_s2s_score(transcript)
+
+
+def calculate_base_s2s_score(turns: list, metadata: dict) -> float:
+    """
+    Calculate a base score for S2S interview based on transcript metrics
+    """
+    try:
+        # Basic scoring factors
+        turns_count = len(turns)
+        duration = metadata.get("duration", 0)
+        questions_covered = len(metadata.get("questions_covered", []))
+        
+        # Scoring weights
+        participation_score = min(turns_count / 20.0, 1.0) * 30  # Max 30 points for participation
+        duration_score = min(duration / 1800.0, 1.0) * 20  # Max 20 points for 30+ min duration
+        coverage_score = min(questions_covered / 5.0, 1.0) * 50  # Max 50 points for question coverage
+        
+        total_score = participation_score + duration_score + coverage_score
+        return min(total_score, 100.0)  # Cap at 100
+        
+    except Exception:
+        return 50.0  # Default middle score
+
+
+def generate_fallback_s2s_score(transcript: dict) -> dict:
+    """
+    Generate a fallback score when AI processing fails
+    """
+    turns = transcript.get("turns", [])
+    metadata = transcript.get("metadata", {})
+    base_score = calculate_base_s2s_score(turns, metadata)
+    
+    return {
+        "score": base_score,
+        "feedback": "Assessment completed based on interview participation and duration. Detailed AI analysis was not available.",
+        "details": {
+            "turns_count": len(turns),
+            "duration": metadata.get("duration", 0),
+            "questions_covered": len(metadata.get("questions_covered", [])),
+            "scoring_method": "fallback_heuristic"
+        }
+    }
+
+
+async def trigger_s2s_report_generation(transcript: dict):
+    """
+    Optional: Trigger additional report generation for S2S interview
+    """
+    try:
+        # This could trigger additional reporting workflows
+        # For now, just log the completion
+        session_id = transcript.get("session_id", "unknown")
+        score = transcript.get("assessment_score", 0)
+        
+        logging.info(f"S2S interview assessment completed - Session: {session_id}, Score: {score}")
+        
+        # Could trigger notifications, email reports, etc.
+        
+    except Exception as e:
+        logging.error(f"Failed to trigger S2S report generation: {str(e)}")

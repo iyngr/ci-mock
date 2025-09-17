@@ -499,20 +499,26 @@ async def candidate_login(request: LoginRequest):
     """Validate candidate login code and return test details"""
     logger.info(f"Candidate login attempt with code: {request.login_code}")
     
-    # Enhanced development authentication - accept any non-empty login code
+    # Validate login code is not empty
     if not request.login_code or not request.login_code.strip():
         logger.warning("Empty login code provided")
         raise HTTPException(status_code=400, detail="Login code is required")
     
-    # For development: create mock test data for any valid login code
+    # Validate against predefined mock tests (case-sensitive)
+    if request.login_code not in mock_tests:
+        logger.warning(f"Invalid login code provided: {request.login_code}")
+        raise HTTPException(status_code=401, detail="Invalid login code")
+    
+    # Get test data from mock_tests
+    test_data = mock_tests[request.login_code]
     candidate_id = f"candidate_{request.login_code}"
     submission_id = f"submission_{request.login_code}_{int(time.time())}"
     
     mock_test_data = {
-        "id": f"test_{request.login_code}",
-        "title": f"Technical Assessment - {request.login_code.upper()}",
-        "status": "in_progress",
-        "duration": 60,  # 60 minutes
+        "id": test_data["id"],
+        "title": f"Technical Assessment - {request.login_code}",
+        "status": test_data["status"],
+        "duration": test_data["duration_minutes"],
         "questions": []
     }
     
@@ -543,10 +549,11 @@ async def candidate_login(request: LoginRequest):
 async def get_test_credentials():
     """Provide test credentials for development"""
     return {
-        "message": "Use any non-empty login code for candidate access",
+        "message": "Available test codes for candidate access",
+        "available_codes": list(mock_tests.keys()),
         "examples": {
-            "login_codes": ["TEST123", "DEMO456", "SAMPLE789", "DEV001"],
-            "note": "Any non-empty string will work in development mode"
+            "valid_login_codes": list(mock_tests.keys()),
+            "note": "Only predefined test codes are valid (case-sensitive)"
         }
     }
 

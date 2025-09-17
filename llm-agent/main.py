@@ -1,12 +1,16 @@
 import asyncio
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any
 from autogen_agentchat.ui import Console
 from autogen_agentchat.conditions import MaxMessageTermination
 from agents import create_assessment_team, create_question_generation_team, create_question_rewriting_team, model_client
 from logging_config import get_logger
+import json
+from functools import lru_cache
+from pathlib import Path
 
 # Configure application logger
 logger = get_logger("main")
@@ -18,6 +22,21 @@ CONSOLE_UI_ENABLED = os.getenv("CONSOLE_UI_ENABLED", "false").lower() == "true"
 app = FastAPI(
     title="Smart Mock AI Service",
     description="A multi-agent service for scoring, reporting, and question generation using Microsoft AutoGen."
+)
+
+# CORS for local dev (Talens and Frontend)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "*"  # dev only
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Pydantic models for request validation
@@ -44,6 +63,46 @@ class QuestionRewriteRequest(BaseModel):
     """Request model for question rewriting and enhancement"""
     question_text: str
 
+
+# Live S2S analyzer/orchestrator models
+class LiveAnalyzeRequest(BaseModel):
+    text: str
+    question_type: str | None = None  # "descriptive" | "coding" | etc.
+    min_tokens: int = 30
+    persona: str | None = None  # interviewer persona name
+
+class LiveAnalyzeResponse(BaseModel):
+    decision: str  # CONTINUE | PROBE
+    reason: str
+    follow_up: str | None = None
+
+class LiveOrchestrateRequest(BaseModel):
+    event: str  # answer_submitted | timer_expired | code_result
+    context: Dict[str, Any] | None = None
+
+class LiveOrchestrateResponse(BaseModel):
+    next: str  # ask_followup | next_question | request_clarification
+    prompt: str | None = None
+
+class Judge0ResultRequest(BaseModel):
+    session_id: str
+    question_id: str
+    submission_token: str
+    status: str  # "accepted", "wrong_answer", "compilation_error", etc.
+    stdout: str | None = None
+    stderr: str | None = None
+    compile_output: str | None = None
+    time: float | None = None
+    memory: int | None = None
+    exit_code: int | None = None
+    test_passed: bool | None = None
+    test_total: int | None = None
+
+class Judge0ResultResponse(BaseModel):
+    guidance: str  # AI-generated guidance based on execution results
+    next_action: str  # "continue" | "retry" | "hint" | "move_on"
+    encouragement: str | None = None
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize the service on startup"""
@@ -59,6 +118,338 @@ async def shutdown_event():
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint"""
     return {"status": "healthy", "service": "Smart Mock AI Service"}
+
+
+@app.post("/live/analyze", response_model=LiveAnalyzeResponse)
+async def live_analyze(req: LiveAnalyzeRequest) -> Dict[str, Any]:
+    """AI-powered analyzer using Azure OpenAI for intelligent interview guidance.
+    Policies:
+    - Never reveal answers or provide step-by-step solution code
+    - Ask probing questions to assess deeper understanding
+    - Maintain professional interviewer persona
+    - Focus on problem-solving approach, not solutions
+    """
+    try:
+        # Build context-aware prompt for analysis
+        analysis_prompt = f"""You are an experienced technical interviewer conducting a live assessment. Your role is to analyze a candidate's response and decide whether to probe deeper or continue to the next question.
+
+STRICT POLICIES:
+- NEVER reveal the correct answer or provide solution steps
+- NEVER give hints about the implementation
+- Focus on understanding the candidate's thought process
+- Ask probing questions about approach, trade-offs, and considerations
+
+Question Type: {req.question_type}
+Question: {req.question}
+Candidate's Answer: {req.text}
+Minimum Expected Length: {req.min_tokens} words
+Current Length: {len((req.text or "").split())} words
+
+Based on the candidate's response, decide:
+1. PROBE - if the answer needs more depth, clarity, or shows gaps in understanding
+2. CONTINUE - if the answer demonstrates sufficient understanding for this stage
+
+If you decide to PROBE, provide a follow-up question that:
+- Explores their reasoning without giving hints
+- Asks about considerations, trade-offs, or edge cases
+- Encourages them to elaborate on their approach
+- Tests deeper understanding of concepts
+
+Respond in this exact JSON format:
+{{
+    "decision": "PROBE" or "CONTINUE",
+    "reason": "Clear explanation of your decision",
+    "follow_up": "Your probing question (null if CONTINUE)"
+}}"""
+
+        # Use Azure OpenAI to analyze the response
+        messages = [
+            {"role": "system", "content": "You are an expert technical interviewer. Analyze responses and provide intelligent guidance while never revealing solutions."},
+            {"role": "user", "content": analysis_prompt}
+        ]
+        
+        # Get AI analysis using the configured model client
+        response = await model_client.create(messages=messages, temperature=0.3, max_tokens=300)
+        
+        if response and response.content:
+            import json
+            try:
+                # Parse the JSON response
+                analysis_result = json.loads(response.content)
+                
+                # Validate the response structure
+                if "decision" in analysis_result and "reason" in analysis_result:
+                    return {
+                        "decision": analysis_result["decision"],
+                        "reason": analysis_result["reason"],
+                        "follow_up": analysis_result.get("follow_up")
+                    }
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse AI analysis response: {response.content}")
+        
+        # Fallback to heuristic analysis if AI fails
+        logger.warning("AI analysis failed, falling back to heuristics")
+        return _fallback_analyze(req)
+        
+    except Exception as e:
+        logger.error(f"Error in live_analyze: {str(e)}")
+        # Fallback to heuristic analysis
+        return _fallback_analyze(req)
+
+
+def _fallback_analyze(req: LiveAnalyzeRequest) -> Dict[str, Any]:
+    """Fallback heuristic analysis when AI is unavailable"""
+    text = (req.text or "").strip()
+    token_like = len(text.split())
+    if token_like < max(1, req.min_tokens):
+        follow = "Could you elaborate a bit more on your approach and key trade-offs?"
+        if req.question_type == "coding":
+            follow = "Please expand on your approach: key steps, edge cases, and time/space complexity."
+        return {
+            "decision": "PROBE",
+            "reason": f"Answer is brief ({token_like} words) below threshold {req.min_tokens}.",
+            "follow_up": follow,
+        }
+    return {
+        "decision": "CONTINUE",
+        "reason": "Answer length is sufficient for progression.",
+        "follow_up": None,
+    }
+
+
+# Lightweight rubric server for backend scoring
+RUBRICS_DIR = Path(__file__).parent / "rubrics"
+
+@lru_cache(maxsize=8)
+def _load_rubric(name: str = "default") -> Dict[str, Any]:
+    path = RUBRICS_DIR / f"{name}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"Rubric '{name}' not found")
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@app.get("/rubrics/{name}")
+async def get_rubric(name: str) -> Dict[str, Any]:
+    try:
+        rubric = _load_rubric(name)
+        return {"name": name, "rubric": rubric}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Rubric not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load rubric: {e}")
+
+
+@app.post("/live/orchestrate", response_model=LiveOrchestrateResponse)
+async def live_orchestrate(req: LiveOrchestrateRequest) -> Dict[str, Any]:
+    """AI-powered orchestration for intelligent interview flow management.
+    Policies:
+    - Never reveal answers or provide step-by-step solution code
+    - Intelligently guide interview flow based on context
+    - Adapt to time constraints and candidate performance
+    - Maintain professional interviewer persona
+    """
+    try:
+        # Build context-aware orchestration prompt
+        orchestration_prompt = f"""You are an experienced technical interviewer managing a live assessment. Based on the current event and context, decide the next action in the interview flow.
+
+STRICT POLICIES:
+- NEVER reveal correct answers or provide solution steps
+- NEVER give implementation hints or code snippets
+- Focus on assessment flow and candidate evaluation
+- Maintain professional interviewer demeanor
+
+Current Context:
+- Event: {req.event}
+- Interview Progress: {req.context.get('progress', 'unknown')}
+- Time Remaining: {req.context.get('time_remaining', 'unknown')} minutes
+- Question Type: {req.context.get('question_type', 'unknown')}
+- Current Question: {req.context.get('current_question', 'Not provided')}
+
+Event-specific guidance:
+- timer_expired: Politely transition without revealing answers
+- answer_submitted: Decide whether to probe further or move forward
+- code_result: Focus on understanding approach, not correctness
+- question_start: Provide appropriate context without hints
+
+Based on this context, decide the next action:
+1. "ask_followup" - Ask a probing question to assess deeper understanding
+2. "next_question" - Move to the next question in the assessment
+3. "wrap_up" - Begin interview conclusion sequence
+4. "extend_time" - Give a bit more time if candidate is making progress
+
+If providing a prompt for "ask_followup", ensure it:
+- Tests understanding of concepts, not implementation
+- Asks about approach, trade-offs, or considerations
+- Does not reveal any part of the solution
+- Maintains encouraging but professional tone
+
+Respond in this exact JSON format:
+{{
+    "next": "ask_followup|next_question|wrap_up|extend_time",
+    "prompt": "Your follow-up question or null if next_question"
+}}"""
+
+        # Use Azure OpenAI for intelligent orchestration
+        messages = [
+            {"role": "system", "content": "You are an expert technical interviewer managing interview flow with intelligence and professionalism."},
+            {"role": "user", "content": orchestration_prompt}
+        ]
+        
+        # Get AI orchestration decision
+        response = await model_client.create(messages=messages, temperature=0.2, max_tokens=200)
+        
+        if response and response.content:
+            import json
+            try:
+                # Parse the JSON response
+                orchestration_result = json.loads(response.content)
+                
+                # Validate the response structure
+                if "next" in orchestration_result:
+                    return {
+                        "next": orchestration_result["next"],
+                        "prompt": orchestration_result.get("prompt")
+                    }
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse AI orchestration response: {response.content}")
+        
+        # Fallback to heuristic orchestration if AI fails
+        logger.warning("AI orchestration failed, falling back to heuristics")
+        return _fallback_orchestrate(req)
+        
+    except Exception as e:
+        logger.error(f"Error in live_orchestrate: {str(e)}")
+        # Fallback to heuristic orchestration
+        return _fallback_orchestrate(req)
+
+
+def _fallback_orchestrate(req: LiveOrchestrateRequest) -> Dict[str, Any]:
+    """Fallback heuristic orchestration when AI is unavailable"""
+    event = req.event
+    if event == "timer_expired":
+        return {"next": "ask_followup", "prompt": "Thanks. Briefly summarize your approach before we move on."}
+    if event == "answer_submitted":
+        return {"next": "next_question", "prompt": None}
+    if event == "code_result":
+        return {"next": "ask_followup", "prompt": "What is the time and space complexity of your solution? Any edge cases you considered?"}
+    return {"next": "next_question", "prompt": None}
+
+
+@app.post("/live/judge0-result", response_model=Judge0ResultResponse)
+async def process_judge0_result(req: Judge0ResultRequest) -> Dict[str, Any]:
+    """AI-powered analysis of Judge0 code execution results for intelligent guidance.
+    Policies:
+    - Never reveal the correct solution or implementation details
+    - Provide constructive guidance based on execution results
+    - Encourage learning through discovery, not direct answers
+    - Focus on understanding concepts and debugging skills
+    """
+    try:
+        # Build context-aware guidance prompt
+        result_analysis_prompt = f"""You are an experienced technical interviewer analyzing a candidate's code execution results. Provide intelligent guidance without revealing solutions.
+
+STRICT POLICIES:
+- NEVER show the correct code or implementation
+- NEVER provide step-by-step solution fixes
+- Focus on helping them understand concepts and debugging approaches
+- Encourage independent problem-solving
+
+Code Execution Context:
+- Session ID: {req.session_id}
+- Question ID: {req.question_id}
+- Status: {req.status}
+- Execution Time: {req.time}s (if available)
+- Memory Usage: {req.memory} KB (if available)
+- Exit Code: {req.exit_code}
+
+Output Analysis:
+- Standard Output: {req.stdout or 'None'}
+- Error Output: {req.stderr or 'None'}
+- Compilation Output: {req.compile_output or 'None'}
+- Tests Passed: {req.test_passed}/{req.test_total} (if available)
+
+Based on the execution results, provide guidance that:
+1. Acknowledges what they accomplished (if successful)
+2. Points toward concepts to review (if errors occurred)
+3. Suggests debugging approaches without giving solutions
+4. Maintains encouraging tone regardless of outcome
+
+Determine the next recommended action:
+- "continue" - Good result, can proceed to next question
+- "retry" - Encourage another attempt with gentle guidance
+- "hint" - Provide conceptual hint without implementation details
+- "move_on" - Time to move forward regardless of result
+
+Respond in this exact JSON format:
+{{
+    "guidance": "Your encouraging and educational response to the candidate",
+    "next_action": "continue|retry|hint|move_on",
+    "encouragement": "Brief positive reinforcement message"
+}}"""
+
+        # Use Azure OpenAI for intelligent result analysis
+        messages = [
+            {"role": "system", "content": "You are an expert technical interviewer providing guidance on code execution results while never revealing solutions."},
+            {"role": "user", "content": result_analysis_prompt}
+        ]
+        
+        # Get AI analysis of the execution results
+        response = await model_client.create(messages=messages, temperature=0.3, max_tokens=400)
+        
+        if response and response.content:
+            import json
+            try:
+                # Parse the JSON response
+                guidance_result = json.loads(response.content)
+                
+                # Validate the response structure
+                if "guidance" in guidance_result and "next_action" in guidance_result:
+                    return {
+                        "guidance": guidance_result["guidance"],
+                        "next_action": guidance_result["next_action"],
+                        "encouragement": guidance_result.get("encouragement")
+                    }
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse AI guidance response: {response.content}")
+        
+        # Fallback to heuristic guidance if AI fails
+        logger.warning("AI guidance failed, falling back to heuristics")
+        return _fallback_judge0_guidance(req)
+        
+    except Exception as e:
+        logger.error(f"Error in process_judge0_result: {str(e)}")
+        # Fallback to heuristic guidance
+        return _fallback_judge0_guidance(req)
+
+
+def _fallback_judge0_guidance(req: Judge0ResultRequest) -> Dict[str, Any]:
+    """Fallback heuristic guidance when AI is unavailable"""
+    if req.status == "accepted":
+        return {
+            "guidance": "Great! Your solution executed successfully. What approach did you take?",
+            "next_action": "continue",
+            "encouragement": "Well done on getting a working solution!"
+        }
+    elif req.status == "compilation_error":
+        return {
+            "guidance": "There seems to be a compilation issue. Check your syntax and variable declarations.",
+            "next_action": "retry",
+            "encouragement": "Don't worry, compilation errors are common and fixable!"
+        }
+    elif req.status == "wrong_answer":
+        return {
+            "guidance": "Your code runs but doesn't produce the expected output. Consider testing with the sample inputs.",
+            "next_action": "retry",
+            "encouragement": "You're on the right track - keep debugging!"
+        }
+    else:
+        return {
+            "guidance": "Let's review your approach and see if we can optimize it.",
+            "next_action": "hint",
+            "encouragement": "Every attempt helps you learn more about the problem!"
+        }
+
 
 @app.post("/generate-report")
 async def generate_report(request: GenerateReportRequest) -> Dict[str, Any]:

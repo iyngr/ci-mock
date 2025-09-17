@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from models import CodeExecutionRequest, EvaluationRequest
+from pydantic import BaseModel, Field
 import httpx
 import asyncio
 import os
@@ -18,6 +19,33 @@ router = APIRouter()
 JUDGE0_API_URL = os.getenv("JUDGE0_API_URL", "https://judge0-ce.p.rapidapi.com")
 JUDGE0_API_KEY = os.getenv("JUDGE0_API_KEY", "")
 USE_JUDGE0 = os.getenv("USE_JUDGE0", "false").lower() == "true"
+
+
+# ===========================
+# Mediated Code Run Contracts
+# ===========================
+
+class CodeRunRequest(BaseModel):
+    submission_id: str = Field(..., alias="submissionId")
+    question_id: str = Field(..., alias="questionId")
+    language: str
+    code: str
+    stdin: str | None = None
+
+
+class CodeRunResponse(BaseModel):
+    run_id: str = Field(..., alias="runId")
+    success: bool
+    output: str | None = None
+    error: str | None = None
+    execution_time: float | None = Field(None, alias="executionTime")
+
+
+class FinalizeRunRequest(BaseModel):
+    submission_id: str = Field(..., alias="submissionId")
+    question_id: str = Field(..., alias="questionId")
+    run_id: str = Field(..., alias="runId")
+    is_final: bool = Field(default=True, alias="isFinal")
 
 
 # Database dependency
@@ -65,6 +93,105 @@ async def run_code(
         print(f"Failed to store execution result: {e}")
     
     return result
+
+
+@router.post("/code-runs", response_model=CodeRunResponse)
+async def create_code_run(request: CodeRunRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+    """Server-authoritative code run: executes via Judge0 or mock, persists as an attempt (is_final=False)."""
+    exec_req = CodeExecutionRequest(language=request.language, code=request.code, stdin=request.stdin, submissionId=request.submission_id)
+
+    if USE_JUDGE0 and JUDGE0_API_KEY:
+        result = await execute_with_judge0(exec_req)
+    else:
+        result = await mock_code_execution(exec_req)
+
+    run_id = str(uuid.uuid4())
+    record = {
+        "id": run_id,
+        "submission_id": request.submission_id,
+        "question_id": request.question_id,
+        "language": request.language,
+        "code": request.code,
+        "stdin": request.stdin,
+        "result": result,
+        "timestamp": datetime.utcnow().isoformat(),
+        "is_final": False,
+        "execution_type": "judge0" if USE_JUDGE0 and JUDGE0_API_KEY else "mock"
+    }
+
+    try:
+        await db.auto_create_item(CONTAINER["CODE_EXECUTIONS"], record)
+    except Exception as e:
+        print(f"Failed to persist code run {run_id}: {e}")
+
+    return CodeRunResponse(
+        runId=run_id,
+        success=bool(result.get("success")),
+        output=result.get("output"),
+        error=result.get("error"),
+        executionTime=result.get("executionTime")
+    )
+
+
+@router.post("/code-runs/finalize")
+async def finalize_code_run(request: FinalizeRunRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+    """Mark a code run as final and persist its outcome into the submission answer for scoring."""
+    # 1) Fetch the run from CODE_EXECUTIONS (partitioned by /submission_id)
+    run_doc = await db.find_one(CONTAINER["CODE_EXECUTIONS"], {"id": request.run_id, "submission_id": request.submission_id})
+    if not run_doc:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # 2) Update is_final flag
+    run_doc["is_final"] = bool(request.is_final)
+    try:
+        await db.update_item(CONTAINER["CODE_EXECUTIONS"], request.run_id, run_doc, partition_key=request.submission_id)
+    except Exception as e:
+        print(f"Failed to mark run final: {e}")
+
+    # 3) Write execution summary into Submission.answers[].evaluation for the question
+    submission_doc = await db.find_one(CONTAINER["SUBMISSIONS"], {"id": request.submission_id})
+    if not submission_doc:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    answers = submission_doc.get("answers", [])
+    updated = False
+    for a in answers:
+        if a.get("questionId") == request.question_id:
+            # Ensure evaluation payload matches models.AnswerEvaluation
+            res = run_doc.get("result", {})
+            a["evaluation"] = {
+                "passed": bool(res.get("success")),
+                "output": res.get("output"),
+                "error": res.get("error"),
+                "testResults": None
+            }
+            updated = True
+            break
+
+    if not updated:
+        # If the answer slot wasn't found, append a minimal one (keeps system robust)
+        res = run_doc.get("result", {})
+        answers.append({
+            "questionId": request.question_id,
+            "questionType": "coding",
+            "submittedAnswer": run_doc.get("code", ""),
+            "timeSpent": 0,
+            "evaluation": {
+                "passed": bool(res.get("success")),
+                "output": res.get("output"),
+                "error": res.get("error"),
+                "testResults": None
+            }
+        })
+
+    submission_doc["answers"] = answers
+
+    try:
+        await db.update_item(CONTAINER["SUBMISSIONS"], request.submission_id, submission_doc, partition_key=submission_doc.get("assessment_id"))
+    except Exception as e:
+        print(f"Failed to update submission with final run: {e}")
+
+    return {"success": True, "message": "Run finalized and persisted."}
 
 
 async def mock_code_execution(request: CodeExecutionRequest):

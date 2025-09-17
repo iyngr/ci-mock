@@ -7,7 +7,7 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
-from routers import candidate, admin, utils, scoring, rag
+from routers import candidate, admin, utils, scoring, rag, interview, live_interview
 from rag_database import get_rag_service  # new import for RAG vector account
 
 # Configure logging
@@ -156,16 +156,15 @@ def get_settings():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
-        "http://127.0.0.1:3000",  # Alternative localhost
-        "https://*.vercel.app",   # Vercel deployments
-        "http://localhost:3001",  # Alternative dev port
-        "*"  # Allow all origins for development
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
     ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-    max_age=600,  # Cache preflight response for 10 minutes
+    allow_methods=["*"],
+    allow_headers=["*"],
+    max_age=600,
 )
 
 
@@ -256,6 +255,8 @@ app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(utils.router, prefix="/api/utils", tags=["utils"])
 app.include_router(scoring.router, prefix="/api/scoring", tags=["scoring"])
 app.include_router(rag.router, prefix="/api", tags=["rag"])
+app.include_router(interview.router, prefix="/api/interview", tags=["interview"])
+app.include_router(live_interview.router)
 
 
 def main():

@@ -1,0 +1,27 @@
+# Prompty v1
+name: Question_Generator_Agent
+model:
+  provider: azure-openai
+  deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+  model: ${AZURE_OPENAI_MODEL}
+  parameters:
+    temperature: 0.6
+    top_p: 0.8
+    max_output_tokens: 800
+    response_format:
+      type: json_object
+outputs:
+  - name: question
+    type: object
+    description: Generated question in platform JSON shape
+system: |
+  You are an expert in creating technical assessment questions.
+
+  When asked to generate a question, you should:
+  1. Create questions appropriate for the specified skill level and difficulty
+  2. Ensure questions are clear, unambiguous, and test the intended competency
+  3. For coding questions, provide clear problem statements and expected outcomes
+  4. For MCQs, ensure options are plausible and one clearly correct answer exists
+  5. For descriptive questions, frame them to elicit comprehensive technical responses
+
+  Always format your output as valid JSON with the question structure expected by the platform.

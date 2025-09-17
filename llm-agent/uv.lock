@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -905,6 +905,8 @@ dependencies = [
     { name = "azure-cosmos" },
     { name = "azure-identity" },
     { name = "fastapi" },
+    { name = "promptflow-tracing" },
+    { name = "prompty" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "uvicorn" },
@@ -925,6 +927,8 @@ requires-dist = [
     { name = "azure-cosmos", specifier = ">=4.5.1" },
     { name = "azure-identity", specifier = ">=1.15.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "promptflow-tracing", specifier = ">=1.18.1" },
+    { name = "prompty", specifier = ">=0.1.50" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "uvicorn", specifier = ">=0.35.0" },
@@ -1349,6 +1353,33 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-sdk"
+version = "1.36.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4c/85/8567a966b85a2d3f971c4d42f781c305b2b91c043724fa08fd37d158e9dc/opentelemetry_sdk-1.36.0.tar.gz", hash = "sha256:19c8c81599f51b71670661ff7495c905d8fdf6976e41622d5245b791b06fa581", size = 162557, upload-time = "2025-07-29T15:12:16.76Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/59/7bed362ad1137ba5886dac8439e84cd2df6d087be7c09574ece47ae9b22c/opentelemetry_sdk-1.36.0-py3-none-any.whl", hash = "sha256:19fe048b42e98c5c1ffe85b569b7073576ad4ce0bcb6e9b4c6a39e890a6c45fb", size = 119995, upload-time = "2025-07-29T15:12:03.181Z" },
+]
+
+[[package]]
+name = "opentelemetry-semantic-conventions"
+version = "0.57b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/31/67dfa252ee88476a29200b0255bda8dfc2cf07b56ad66dc9a6221f7dc787/opentelemetry_semantic_conventions-0.57b0.tar.gz", hash = "sha256:609a4a79c7891b4620d64c7aac6898f872d790d75f22019913a660756f27ff32", size = 124225, upload-time = "2025-07-29T15:12:17.873Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/75/7d591371c6c39c73de5ce5da5a2cc7b72d1d1cd3f8f4638f553c01c37b11/opentelemetry_semantic_conventions-0.57b0-py3-none-any.whl", hash = "sha256:757f7e76293294f124c827e514c2a3144f191ef175b069ce8d1211e1e38e9e78", size = 201627, upload-time = "2025-07-29T15:12:04.174Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "25.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1514,6 +1545,35 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "promptflow-tracing"
+version = "1.18.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openai" },
+    { name = "opentelemetry-sdk" },
+    { name = "tiktoken" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3d/66/fb7f3b4770212954d57d080cc21294581b03e2497e6f59783be52a6b8c78/promptflow_tracing-1.18.1-py3-none-any.whl", hash = "sha256:8bc215f91613738c99c4b94f872d74de1aca913403b8226f9e397d7eed4f7bb4", size = 26986, upload-time = "2025-06-13T18:00:29.964Z" },
+]
+
+[[package]]
+name = "prompty"
+version = "0.1.50"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "click" },
+    { name = "jinja2" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/bb/c2c9d17f23cba698c05cf9542f4d650ac3f3accd381c62c502263ed67ac4/prompty-0.1.50.tar.gz", hash = "sha256:6e0c9c030457f8b0e1a6268d80c53b1e745c47b4df26be2b9dcd0515e9be8630", size = 218307, upload-time = "2025-04-02T04:34:43.442Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/38/feddc252b8de60ab326978403ff63c9ebb46ebd6d93750c0e66d77223702/prompty-0.1.50-py3-none-any.whl", hash = "sha256:068570235ae87d60f7a7b90cc901a90fef6c7e079c2a7259ad048dbb8ceee2b7", size = 37568, upload-time = "2025-04-02T04:34:42.183Z" },
 ]
 
 [[package]]

@@ -858,3 +858,40 @@ class KnowledgeBaseUpdateResponse(BaseModel):
     knowledge_entry_id: Optional[str] = Field(None, alias="knowledgeEntryId", description="ID of the created knowledge entry")
     embedding_generated: bool = Field(False, alias="embeddingGenerated", description="Whether embedding was successfully generated")
     message: str = Field(..., description="Status or error message")
+
+
+# ===========================
+# SPEECH-TO-SPEECH INTERVIEW MODELS
+# ===========================
+
+class S2STurn(BaseModel):
+    """Single turn in a speech-to-speech interview conversation"""
+    role: str = Field(..., description="Role of the speaker: user, assistant, or system")
+    text: str = Field(..., description="Transcribed text of the turn")
+    started_at: float = Field(..., description="Unix timestamp when turn started")
+    ended_at: float = Field(..., description="Unix timestamp when turn ended")
+    annotations: Optional[Dict[str, Any]] = Field(None, description="Additional metadata for the turn")
+
+
+class S2STranscript(BaseModel):
+    """Complete transcript of a speech-to-speech interview session"""
+    schema_version: int = Field(1, description="Schema version for backward compatibility")
+    session_id: str = Field(..., description="Unique identifier for the interview session")
+    assessment_id: Optional[str] = Field(None, description="Associated assessment ID")
+    candidate_id: Optional[str] = Field(None, description="Associated candidate ID")
+    consent_at: Optional[float] = Field(None, description="Unix timestamp when consent was given")
+    turns: List[S2STurn] = Field(default_factory=list, description="List of conversation turns")
+    coding_tasks: Optional[List[Dict[str, Any]]] = Field(None, description="Coding tasks completed during interview")
+    judge0_results: Optional[List[Dict[str, Any]]] = Field(None, description="Code execution results")
+    redaction_info: Optional[Dict[str, Any]] = Field(None, description="Information about PII redaction applied")
+    finalized_at: Optional[float] = Field(None, description="Unix timestamp when transcript was finalized")
+    
+    # Auto-scoring fields for processed transcripts
+    scored_at: Optional[float] = Field(None, description="Unix timestamp when auto-scoring was completed")
+    assessment_score: Optional[float] = Field(None, description="Overall assessment score (0-100)")
+    assessment_feedback: Optional[str] = Field(None, description="AI-generated feedback on performance")
+    assessment_details: Optional[Dict[str, Any]] = Field(None, description="Detailed scoring breakdown and metrics")
+    
+    # TTL and metadata fields
+    retention_months: Optional[int] = Field(6, description="Retention period in months (for TTL)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional session metadata")

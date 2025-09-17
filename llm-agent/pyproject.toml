@@ -12,6 +12,8 @@ dependencies = [
     "autogen-agentchat>=0.4.0",
     "autogen-ext[openai,azure]>=0.4.0",
     "pyyaml>=6.0.0",
+    "prompty>=0.1.50",
+    "promptflow-tracing>=1.18.1",
 ]
 
 [build-system]

@@ -182,6 +182,28 @@ class CosmosDBService:
             CONTAINER["CODE_EXECUTIONS"]: {"pk": "/submission_id", "ttl": 60*60*24*30},  # 30d
             CONTAINER["EVALUATIONS"]: {"pk": "/submission_id"},
             CONTAINER["RAG_QUERIES"]: {"pk": "/assessment_id", "ttl": 60*60*24*30},  # 30d
+            # New S2S containers
+            CONTAINER["INTERVIEWS"]: {"pk": "/assessment_id"},
+            # 6 months TTL (~ 15552000 seconds) with indexes for auto-submit queries
+            CONTAINER["INTERVIEW_TRANSCRIPTS"]: {
+                "pk": "/assessment_id", 
+                "ttl": 60*60*24*30*6,
+                "index_policy": {
+                    "indexingMode": "consistent",
+                    "automatic": True,
+                    "includedPaths": [
+                        {"path": "/finalized_at/?"},
+                        {"path": "/scored_at/?"},
+                        {"path": "/session_id/?"},
+                        {"path": "/assessment_id/?"},
+                        {"path": "/*"}  # Include all paths for flexible querying
+                    ],
+                    "excludedPaths": [
+                        {"path": "/turns/*/text/?"},  # Exclude large text fields from indexing
+                        {"path": "/assessment_feedback/?"}  # Exclude large feedback text
+                    ]
+                }
+            },
         }
         for container_name, cfg in containers_config.items():
             try:

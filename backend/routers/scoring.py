@@ -1,10 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import time
 import asyncio
 import os
 from datetime import datetime
 import uuid
+import json
+from functools import lru_cache
+
+import httpx
 
 from models import (
     ScoringTriageRequest, ScoringTriageResponse,
@@ -23,6 +27,190 @@ router = APIRouter()
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 USE_AZURE_OPENAI = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+
+LLM_AGENT_URL = os.getenv("LLM_AGENT_URL", "http://localhost:8080")
+LLM_HTTP_TIMEOUT = float(os.getenv("LLM_HTTP_TIMEOUT", "8.0"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "2"))
+DB_WRITE_TIMEOUT_S = float(os.getenv("DB_WRITE_TIMEOUT_S", "6.0"))
+
+# --------- Rubric & Azure helpers ---------
+@lru_cache(maxsize=1)
+def _rubric_fallback() -> Dict[str, Any]:
+    return {
+        "weights": {
+            "communication": 0.20,
+            "problemSolving": 0.20,
+            "codingCorrectness": 0.30,
+            "codingEfficiency": 0.15,
+            "explanationQuality": 0.15,
+        },
+        "bands": {
+            "0-39": "Below expectations",
+            "40-59": "Developing",
+            "60-74": "Solid",
+            "75-89": "Strong",
+            "90-100": "Exceptional",
+        },
+        "anchorDescriptors": {}
+    }
+
+@lru_cache(maxsize=4)
+def _rubric_cache_key(name: str) -> str:
+    return name
+
+async def _get_default_rubric(name: str = "default") -> Dict[str, Any]:
+    """Fetch rubric JSON from llm-agent, with fallback to embedded default."""
+    url = f"{LLM_AGENT_URL.rstrip('/')}/rubrics/{name}"
+    try:
+        async with httpx.AsyncClient(timeout=LLM_HTTP_TIMEOUT) as client:
+            r = await client.get(url)
+            if r.status_code == 200:
+                data = r.json() or {}
+                return data.get("rubric") or data
+    except Exception:
+        pass
+    return _rubric_fallback()
+
+
+def _build_rubric_prompt(
+    question_text: str,
+    submission_text: str,
+    criteria: List[str],
+    weights: Dict[str, float],
+    extra_instructions: str = "",
+    is_code: bool = False,
+    language: Optional[str] = None,
+) -> str:
+    crit_str = ", ".join(criteria)
+    lang_line = f"Language: {language}\n" if language else ""
+    code_line = "Submission is CODE.\n" if is_code else "Submission is TEXT.\n"
+    return f"""
+You are an impartial evaluator. Score the candidate submission against the specified criteria.
+
+STRICT POLICIES:
+- Never reveal correct solutions or implementation details
+- Do not suggest improvements; only evaluate
+- Return STRICT JSON that conforms to the schema below
+
+Context:
+{lang_line}{code_line}
+Question: {question_text}
+Submission: {submission_text}
+Additional Rubric Notes: {extra_instructions}
+
+Criteria to score in [0.0..1.0]: {crit_str}
+Weights (for your awareness): {weights}
+
+Respond ONLY with a minified JSON object of this exact shape:
+{{
+  "scores": {{"<criterion>": <float 0..1>}},
+  "rationales": {{"<criterion>": "<one-line reason>"}}
+}}
+""".strip()
+
+
+async def _call_azure_json(prompt: str) -> Dict[str, Any]:
+    """Call Azure OpenAI Chat Completions expecting a JSON object. Retries with backoff and honors timeout."""
+    if not (USE_AZURE_OPENAI and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT):
+        return {}
+    url = f"{AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/deployments/{AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version={AZURE_OPENAI_API_VERSION}"
+    headers = {
+        "api-key": AZURE_OPENAI_API_KEY,
+        "content-type": "application/json",
+    }
+    body = {
+        "messages": [
+            {"role": "system", "content": "You return STRICT JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.0,
+        "response_format": {"type": "json_object"},
+        "max_tokens": 400,
+    }
+    delay = 0.5
+    for attempt in range(LLM_MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=LLM_HTTP_TIMEOUT) as client:
+                resp = await client.post(url, headers=headers, json=body)
+            if resp.status_code == 200:
+                data = resp.json() or {}
+                choices = data.get("choices") or []
+                if choices and choices[0].get("message", {}).get("content"):
+                    content = choices[0]["message"]["content"]
+                    try:
+                        return json.loads(content)
+                    except Exception:
+                        return {}
+            elif resp.status_code in (429, 500, 502, 503, 504) and attempt < LLM_MAX_RETRIES:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 4.0)
+                continue
+            else:
+                return {}
+        except Exception:
+            if attempt < LLM_MAX_RETRIES:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 4.0)
+                continue
+            return {}
+    return {}
+
+
+def _extract_breakdown(result: Dict[str, Any], criteria: List[str]) -> Dict[str, float]:
+    scores = (result or {}).get("scores", {})
+    out: Dict[str, float] = {}
+    for c in criteria:
+        v = scores.get(c, 0.5)
+        try:
+            out[c] = max(0.0, min(1.0, float(v)))
+        except Exception:
+            out[c] = 0.5
+    return out
+
+
+def _weighted_score(breakdown: Dict[str, float], weights: Dict[str, float]) -> float:
+    total_w = 0.0
+    acc = 0.0
+    for k, v in breakdown.items():
+        w = float(weights.get(k, 0.0))
+        if w > 0:
+            acc += v * w
+            total_w += w
+    return (acc / total_w) if total_w > 0 else 0.0
+
+
+def _format_feedback(breakdown: Dict[str, float], rubric: Dict[str, Any]) -> str:
+    weights = rubric.get("weights", {})
+    pct = int(round(_weighted_score(breakdown, weights) * 100))
+    band_label = _band_for_percent(pct, rubric.get("bands", {}))
+    top_dims = sorted(breakdown.items(), key=lambda kv: kv[1], reverse=True)[:2]
+    top_txt = ", ".join([f"{k}: {int(v*100)}%" for k, v in top_dims])
+    return f"Overall {pct}% ({band_label}). Strongest dimensions: {top_txt}."
+
+
+def _band_for_percent(percent: int, bands: Dict[str, str]) -> str:
+    for rng, label in bands.items():
+        try:
+            lo, hi = rng.split("-")
+            if int(lo) <= percent <= int(hi):
+                return label
+        except Exception:
+            continue
+    return "Unspecified"
+
+
+def _summarize_execution(execution_result: Optional[Any]) -> str:
+    if not execution_result:
+        return "no execution context"
+    try:
+        passed = getattr(execution_result, 'passed', None)
+        if passed is None and isinstance(execution_result, dict):
+            passed = execution_result.get('passed')
+        return f"passed={passed}"
+    except Exception:
+        return "execution context available"
 
 
 # Database dependency
@@ -197,7 +385,7 @@ class ScoringTriageService:
         
         if USE_AZURE_OPENAI and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY:
             # Use actual Azure OpenAI for evaluation
-            score, feedback = await self._evaluate_with_text_analyst(
+            score, feedback, breakdown = await self._evaluate_with_text_analyst(
                 question.text, answer.submitted_answer, question.rubric
             )
         else:
@@ -205,13 +393,18 @@ class ScoringTriageService:
             score, feedback = await self._mock_text_evaluation(
                 question.text, answer.submitted_answer
             )
+            # Create a simple breakdown aligned with descriptive criteria
+            rubric_json = await _get_default_rubric()
+            criteria = ["communication", "problemSolving", "explanationQuality"]
+            breakdown = {c: score for c in criteria}
         
         points_awarded = score * question.points
-        
+
         return LLMScoreResult(
             question_id=answer.question_id,
             score=score,
             feedback=feedback,
+            rubric_breakdown=breakdown,
             points_awarded=points_awarded
         )
     
@@ -222,7 +415,7 @@ class ScoringTriageService:
         
         if USE_AZURE_OPENAI and AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY:
             # Use actual Azure OpenAI + Judge0 for evaluation
-            score, feedback = await self._evaluate_with_code_analyst(
+            score, feedback, breakdown = await self._evaluate_with_code_analyst(
                 question, answer.submitted_answer, answer.evaluation
             )
         else:
@@ -230,33 +423,64 @@ class ScoringTriageService:
             score, feedback = await self._mock_code_evaluation(
                 question.text, answer.submitted_answer
             )
+            # Create a simple breakdown aligned with coding criteria
+            rubric_json = await _get_default_rubric()
+            criteria = ["codingCorrectness", "codingEfficiency", "explanationQuality"]
+            breakdown = {c: score for c in criteria}
         
         points_awarded = score * question.points
-        
+
         return LLMScoreResult(
             question_id=answer.question_id,
             score=score,
             feedback=feedback,
+            rubric_breakdown=breakdown,
             points_awarded=points_awarded
         )
     
     async def _evaluate_with_text_analyst(
-        self, question_text: str, answer_text: str, rubric: str = None
-    ) -> Tuple[float, str]:
-        """Evaluate descriptive answer using Azure OpenAI Text_Analyst"""
-        # TODO: Implement Azure OpenAI integration
-        # This would make a call to Azure OpenAI with specialized prompts
-        await asyncio.sleep(1)  # Simulate API call
-        return 0.85, "Good understanding demonstrated with clear explanations."
+        self, question_text: str, answer_text: str, rubric: Optional[str] = None
+    ) -> Tuple[float, str, Dict[str, float]]:
+        """Evaluate descriptive answer using Azure OpenAI and rubric; returns (score_0_1, feedback, breakdown)."""
+        rubric_json = await _get_default_rubric()
+        weights = rubric_json.get("weights", {})
+        # Focus on non-coding dimensions for descriptive
+        criteria = ["communication", "problemSolving", "explanationQuality"]
+        prompt = _build_rubric_prompt(
+            question_text=question_text,
+            submission_text=answer_text,
+            criteria=criteria,
+            weights=weights,
+            extra_instructions=rubric or "",
+        )
+        result = await _call_azure_json(prompt)
+        breakdown = _extract_breakdown(result, criteria)
+        overall = _weighted_score(breakdown, weights)
+        feedback = _format_feedback(breakdown, rubric_json)
+        return overall, feedback, breakdown
     
     async def _evaluate_with_code_analyst(
-        self, question: CodingQuestion, code: str, execution_result = None
-    ) -> Tuple[float, str]:
-        """Evaluate coding answer using Azure OpenAI Code_Analyst"""
-        # TODO: Implement Azure OpenAI integration with code analysis
-        # This would analyze code quality, correctness, efficiency
-        await asyncio.sleep(1.5)  # Simulate API call
-        return 0.9, "Code is correct and well-structured with good practices."
+        self, question: CodingQuestion, code: str, execution_result: Optional[Any] = None
+    ) -> Tuple[float, str, Dict[str, float]]:
+        """Evaluate coding answer using Azure OpenAI and rubric; returns (score_0_1, feedback, breakdown)."""
+        rubric_json = await _get_default_rubric()
+        weights = rubric_json.get("weights", {})
+        criteria = ["codingCorrectness", "codingEfficiency", "explanationQuality"]
+        exec_context = _summarize_execution(execution_result)
+        prompt = _build_rubric_prompt(
+            question_text=question.text,
+            submission_text=code,
+            criteria=criteria,
+            weights=weights,
+            extra_instructions=f"Execution Context: {exec_context}",
+            is_code=True,
+            language=question.programming_language.value if hasattr(question.programming_language, 'value') else str(question.programming_language),
+        )
+        result = await _call_azure_json(prompt)
+        breakdown = _extract_breakdown(result, criteria)
+        overall = _weighted_score(breakdown, weights)
+        feedback = _format_feedback(breakdown, rubric_json)
+        return overall, feedback, breakdown
     
     async def _mock_text_evaluation(self, question: str, answer: str) -> Tuple[float, str]:
         """Mock text evaluation for development"""
@@ -339,7 +563,14 @@ class ScoringTriageService:
                 "llm_calls": len(llm_results)
             }
         )
-        await self.db.auto_create_item(CONTAINER["EVALUATIONS"], record.model_dump(by_alias=True))
+        # Apply a soft timeout to DB write to avoid hanging the scoring pipeline
+        try:
+            await asyncio.wait_for(
+                self.db.auto_create_item(CONTAINER["EVALUATIONS"], record.model_dump(by_alias=True)),
+                timeout=DB_WRITE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            print("Warning: timed out persisting evaluation record; continuing")
         return record.id
 
     async def _update_submission_summary(
@@ -371,16 +602,22 @@ class ScoringTriageService:
                 summary=summary,
                 latestEvaluationId=evaluation_record_id
             )
-            await self.db.update_item(
-                CONTAINER["SUBMISSIONS"],
-                submission_id,
-                {
-                    "score": percentage,
-                    "evaluated_at": datetime.utcnow().isoformat(),
-                    "evaluation": evaluation_field.model_dump(by_alias=True)
-                },
-                partition_key=assessment_id
-            )
+            try:
+                await asyncio.wait_for(
+                    self.db.update_item(
+                        CONTAINER["SUBMISSIONS"],
+                        submission_id,
+                        {
+                            "score": percentage,
+                            "evaluated_at": datetime.utcnow().isoformat(),
+                            "evaluation": evaluation_field.model_dump(by_alias=True)
+                        },
+                        partition_key=assessment_id
+                    ),
+                    timeout=DB_WRITE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                print("Warning: timed out updating submission summary; continuing")
         except Exception as e:
             print(f"Failed to update submission evaluation summary: {e}")
 

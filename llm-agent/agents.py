@@ -9,6 +9,9 @@ from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 from azure.identity import DefaultAzureCredential
 from autogen_ext.auth.azure import AzureTokenProvider
 from tools import fetch_submission_data, score_mcqs, generate_question_from_ai, query_cosmosdb_for_rag, validate_question
+from prompt_loader import load_prompty
+from tracing import traced_run
+from structured import parse_analyst_output, parse_question_rewrite
 
 # RAG imports
 try:
@@ -72,15 +75,86 @@ def create_model_client():
 # Initialize model client
 model_client = create_model_client()
 
+def _agent_kwargs_from_prompty(prompty):
+    """Extract optional kwargs from prompty model.parameters to pass to agents.
+    We keep this minimal to avoid changing runtime behavior; only include safe fields
+    that autogen agents may accept (e.g., temperature, top_p, max_output_tokens),
+    and ignore silently if the underlying client doesn't use them.
+    """
+    if not prompty or not getattr(prompty, "model", None):
+        return {}
+    params = (prompty.model or {}).get("parameters") or {}
+    allowed = {}
+    for key in ("temperature", "top_p", "max_output_tokens"):
+        if key in params:
+            allowed[key] = params[key]
+    # Pass through response_format if provided in prompty (supports JSON mode/schemas)
+    if "response_format" in params:
+        allowed["response_format"] = params["response_format"]
+    return {"generation_config": allowed} if allowed else {}
+
+
+def _client_from_prompty(prompty):
+    """Create a model client override if prompty specifies provider/deployment/model.
+    Falls back to None (caller will use global model_client).
+    """
+    if not prompty or not getattr(prompty, "model", None):
+        return None
+    provider = (prompty.model or {}).get("provider")
+    if provider != "azure-openai":
+        return None
+
+    deployment = prompty.model.get("deployment") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+    model_name = prompty.model.get("model") or os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or "https://mock-openai.openai.azure.com/"
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+
+    # API key auth preferred if present; otherwise try AAD
+    if api_key:
+        return AzureOpenAIChatCompletionClient(
+            azure_deployment=deployment,
+            model=model_name,
+            api_version=api_version,
+            azure_endpoint=azure_endpoint,
+            api_key=api_key,
+        )
+    else:
+        try:
+            token_provider = AzureTokenProvider(
+                DefaultAzureCredential(),
+                "https://cognitiveservices.azure.com/.default",
+            )
+            return AzureOpenAIChatCompletionClient(
+                azure_deployment=deployment,
+                model=model_name,
+                api_version=api_version,
+                azure_endpoint=azure_endpoint,
+                azure_ad_token_provider=token_provider,
+            )
+        except Exception:
+            # Fallback to mock key if AAD fails in dev contexts
+            return AzureOpenAIChatCompletionClient(
+                azure_deployment=deployment,
+                model=model_name,
+                api_version=api_version,
+                azure_endpoint=azure_endpoint,
+                api_key="mock-api-key",
+            )
+
 # --- AGENT DEFINITIONS ---
 
 # 1. Orchestrator Agent - Plans and coordinates the assessment workflow
+_orch_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "orchestrator.prompty"))
 orchestrator_agent = AssistantAgent(
     name="Orchestrator_Agent",
     description="A project manager agent that orchestrates the entire scoring and report generation process.",
-    model_client=model_client,
+    model_client=_client_from_prompty(_orch_prompty) or model_client,
     tools=[fetch_submission_data, score_mcqs],  # Add tools for data fetching and MCQ scoring
-    system_message="""You are the project manager for an AI assessment platform. Your role is to orchestrate the entire scoring and report generation process.
+    system_message=(
+        _orch_prompty.system
+        if _orch_prompty and _orch_prompty.system
+        else """You are the project manager for an AI assessment platform. Your role is to orchestrate the entire scoring and report generation process.
 
 Your workflow:
 1. Start by instructing the team to fetch the submission data using the provided submission_id
@@ -90,14 +164,19 @@ Your workflow:
 
 You do not write code or analyze data yourself. You manage the workflow and ensure all steps are completed.
 End the conversation with "TERMINATE" once the final report is ready."""
+    )
 )
 
 # 2. Code Analysis Agent - Evaluates coding submissions
+_code_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "code_analyst.prompty"))
 code_analyst_agent = AssistantAgent(
     name="Code_Analyst_Agent", 
     description="A senior software engineer specialized in analyzing coding submissions.",
-    model_client=model_client,
-    system_message="""You are a senior software engineer with expertise in code evaluation. Your task is to analyze a candidate's coding submission.
+    model_client=_client_from_prompty(_code_prompty) or model_client,
+    system_message=(
+        _code_prompty.system
+        if _code_prompty and _code_prompty.system
+        else """You are a senior software engineer with expertise in code evaluation. Your task is to analyze a candidate's coding submission.
 
 You will be given:
 - The code submission
@@ -115,14 +194,19 @@ Provide your analysis in a structured JSON format with:
 - Detailed feedback on each aspect
 - Specific recommendations for improvement
 - Strengths identified in the code"""
+    )
 )
 
 # 3. Text Analysis Agent - Evaluates descriptive answers  
+_text_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "text_analyst.prompty"))
 text_analyst_agent = AssistantAgent(
     name="Text_Analyst_Agent",
     description="An expert in technical communication and descriptive answer evaluation.",
-    model_client=model_client, 
-    system_message="""You are an expert in technical communication and knowledge assessment. Your task is to evaluate a candidate's descriptive answer.
+    model_client=_client_from_prompty(_text_prompty) or model_client, 
+    system_message=(
+        _text_prompty.system
+        if _text_prompty and _text_prompty.system
+        else """You are an expert in technical communication and knowledge assessment. Your task is to evaluate a candidate's descriptive answer.
 
 You will be given:
 - The question asked
@@ -140,14 +224,19 @@ Provide your analysis in a structured JSON format with:
 - Detailed feedback on each evaluation criteria
 - Specific areas for improvement
 - Strengths in the response"""
+    )
 )
 
 # 4. Report Synthesizer Agent - Compiles final assessment reports
+_report_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "report_synthesizer.prompty"))
 report_synthesizer_agent = AssistantAgent(
     name="Report_Synthesizer_Agent",
     description="A report writer that synthesizes all scoring data into comprehensive assessment reports.",
-    model_client=model_client,
-    system_message="""You are a professional report writer specialized in technical assessment reports. Your task is to synthesize all the provided scoring data into a single, comprehensive, human-readable report.
+    model_client=_client_from_prompty(_report_prompty) or model_client,
+    system_message=(
+        _report_prompty.system
+        if _report_prompty and _report_prompty.system
+        else """You are a professional report writer specialized in technical assessment reports. Your task is to synthesize all the provided scoring data into a single, comprehensive, human-readable report.
 
 You will receive:
 - MCQ scoring results
@@ -163,6 +252,7 @@ Create a report that includes:
 - Technical competency assessment
 
 Present the final output clearly, starting with the phrase 'FINAL REPORT:' and format it in a professional, easy-to-read structure."""
+    )
 )
 
 # 5. User Proxy Agent - Handles tool execution and user interactions
@@ -339,11 +429,15 @@ def create_question_rewriting_team() -> SelectorGroupChat:
     """
     
     # Question Enhancement Agent - specialized in improving question quality
+    _qe_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_enhancer.prompty"))
     question_enhancer = AssistantAgent(
         name="Question_Enhancer",
         description="An expert technical writer specializing in question enhancement and skill tagging.",
-        model_client=model_client,
-        system_message="""You are an expert technical writer and assessment specialist. Your task is to enhance technical assessment questions.
+        model_client=_client_from_prompty(_qe_prompty) or model_client,
+        system_message=(
+            _qe_prompty.system
+            if _qe_prompty and _qe_prompty.system
+            else """You are an expert technical writer and assessment specialist. Your task is to enhance technical assessment questions.
 
 When given a question, you must:
 1. Correct any grammatical errors and improve clarity to avoid ambiguity
@@ -354,6 +448,7 @@ CRITICAL: Your response MUST be a single, minified JSON object with this exact s
 {"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}
 
 Do not include any other text, explanation, or formatting. Only return the JSON object."""
+        )
     )
     
     # User proxy for managing the conversation
@@ -378,11 +473,15 @@ def create_question_generation_team() -> SelectorGroupChat:
     Creates a simplified team for question generation tasks.
     """
     
+    _qgen_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_generator.prompty"))
     question_generator_agent = AssistantAgent(
         name="Question_Generator_Agent",
         description="An expert in creating technical assessment questions.",
-        model_client=model_client,
-        system_message="""You are an expert in creating technical assessment questions. 
+        model_client=_client_from_prompty(_qgen_prompty) or model_client,
+        system_message=(
+            _qgen_prompty.system
+            if _qgen_prompty and _qgen_prompty.system
+            else """You are an expert in creating technical assessment questions. 
 
 When asked to generate a question, you should:
 1. Create questions appropriate for the specified skill level and difficulty
@@ -392,6 +491,7 @@ When asked to generate a question, you should:
 5. For descriptive questions, frame them to elicit comprehensive technical responses
 
 Always format your output as valid JSON with the question structure expected by the platform."""
+        )
     )
     
     question_team = SelectorGroupChat(
@@ -411,12 +511,16 @@ def create_rag_question_team() -> SelectorGroupChat:
     """
     
     # Enhanced Question Validator with RAG capabilities
+    _rag_val_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_validator.prompty"))
     rag_validator_agent = AssistantAgent(
         name="RAG_Question_Validator",
         description="An expert question validator powered by RAG knowledge retrieval.",
-        model_client=model_client,
+        model_client=_client_from_prompty(_rag_val_prompty) or model_client,
         tools=[validate_question, query_cosmosdb_for_rag],
-        system_message="""You are an expert question validator with access to a comprehensive knowledge base.
+        system_message=(
+            _rag_val_prompty.system
+            if _rag_val_prompty and _rag_val_prompty.system
+            else """You are an expert question validator with access to a comprehensive knowledge base.
 
 Your capabilities:
 1. Validate new questions for duplicates using both exact matching and semantic similarity
@@ -431,15 +535,20 @@ When validating a question:
 4. Recommend whether the question should be added, modified, or rejected
 
 Always provide clear, actionable feedback with specific examples from the knowledge base when relevant."""
+        )
     )
     
     # Question Answering Agent with RAG
+    _rag_qa_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_qa.prompty"))
     rag_qa_agent = AssistantAgent(
         name="RAG_QA_Agent", 
         description="A question-answering agent powered by RAG knowledge retrieval.",
-        model_client=model_client,
+        model_client=_client_from_prompty(_rag_qa_prompty) or model_client,
         tools=[query_cosmosdb_for_rag],
-        system_message="""You are a technical question-answering assistant with access to a comprehensive knowledge base.
+        system_message=(
+            _rag_qa_prompty.system
+            if _rag_qa_prompty and _rag_qa_prompty.system
+            else """You are a technical question-answering assistant with access to a comprehensive knowledge base.
 
 Your role:
 1. Answer technical questions using retrieved context from the knowledge base
@@ -455,6 +564,7 @@ Process for answering questions:
 5. Be transparent about the source of information (knowledge base vs. general knowledge)
 
 Always strive to be helpful, accurate, and comprehensive in your responses."""
+        )
     )
     
     # Create RAG team with specialized agents
@@ -515,10 +625,11 @@ async def run_assessment_async(submission_id: str) -> List[BaseChatMessage]:
     initial_message = f"Please process assessment for submission_id: {submission_id}"
     
     # Run the team conversation asynchronously
-    result = await team.run_stream_async(
-        task=initial_message,
-        termination_condition=MaxMessageTermination(max_messages=10)
-    )
+    with traced_run("assessment_team.run", {"submission_id": submission_id}):
+        result = await team.run_stream_async(
+            task=initial_message,
+            termination_condition=MaxMessageTermination(max_messages=10)
+        )
     
     # Collect messages from the conversation
     messages: List[BaseChatMessage] = []
@@ -551,10 +662,11 @@ async def generate_questions_async(skill: str, question_type: str, difficulty: s
     """
     
     # Run team conversation asynchronously  
-    result = await team.run_stream_async(
-        task=task_message,
-        termination_condition=TextMentionTermination("COMPLETE")
-    )
+    with traced_run("question_team.run", {"skill": skill, "type": question_type, "difficulty": difficulty}):
+        result = await team.run_stream_async(
+            task=task_message,
+            termination_condition=TextMentionTermination("COMPLETE")
+        )
     
     # Collect generated questions as messages
     messages: List[BaseChatMessage] = []
@@ -581,10 +693,11 @@ async def rag_query_async(user_question: str) -> List[BaseChatMessage]:
     """
     
     # Run RAG team conversation asynchronously
-    result = await team.run_stream_async(
-        task=task_message,
-        termination_condition=MaxMessageTermination(max_messages=10)
-    )
+    with traced_run("rag_team.run", {"question_len": len(user_question)}):
+        result = await team.run_stream_async(
+            task=task_message,
+            termination_condition=MaxMessageTermination(max_messages=10)
+        )
     
     # Collect messages from the RAG conversation
     messages: List[BaseChatMessage] = []
@@ -616,10 +729,11 @@ async def validate_question_async(question_text: str) -> List[BaseChatMessage]:
     """
     
     # Run validation team conversation asynchronously
-    result = await team.run_stream_async(
-        task=task_message,
-        termination_condition=MaxMessageTermination(max_messages=8)
-    )
+    with traced_run("rag_validate.run", {"text_len": len(question_text)}):
+        result = await team.run_stream_async(
+            task=task_message,
+            termination_condition=MaxMessageTermination(max_messages=8)
+        )
     
     # Collect validation messages
     messages: List[BaseChatMessage] = []

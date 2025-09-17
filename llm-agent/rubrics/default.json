@@ -1,0 +1,43 @@
+{
+  "weights": {
+    "communication": 0.20,
+    "problemSolving": 0.20,
+    "codingCorrectness": 0.30,
+    "codingEfficiency": 0.15,
+    "explanationQuality": 0.15
+  },
+  "bands": {
+    "0-39": "Below expectations",
+    "40-59": "Developing",
+    "60-74": "Solid",
+    "75-89": "Strong",
+    "90-100": "Exceptional"
+  },
+  "anchorDescriptors": {
+    "communication": {
+      "Below expectations": "Frequent confusion; fails to stay on task; poor clarity.",
+      "Solid": "Clear and organized; occasional filler or minor ambiguity.",
+      "Exceptional": "Crisp, structured, adapts appropriately, minimal ambiguity."
+    },
+    "problemSolving": {
+      "Below expectations": "Does not identify core constraints or trade-offs.",
+      "Solid": "Identifies constraints; proposes plausible path.",
+      "Exceptional": "Rapidly frames problem; articulates trade-offs and risks."
+    },
+    "codingCorrectness": {
+      "Below expectations": "Logic errors; fails basic tests.",
+      "Solid": "Passes primary tests; minor edge cases remain.",
+      "Exceptional": "Passes all tests; robust edge handling."
+    },
+    "codingEfficiency": {
+      "Below expectations": "Inefficient structure; unnecessary complexity.",
+      "Solid": "Reasonable complexity; straightforward approach.",
+      "Exceptional": "Optimized structure with clear complexity rationale."
+    },
+    "explanationQuality": {
+      "Below expectations": "Cannot explain choices or debugging steps.",
+      "Solid": "Explains choices; reasonable debugging steps.",
+      "Exceptional": "Concise, well-reasoned, insightful alternatives."
+    }
+  }
+}

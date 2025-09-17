@@ -13,6 +13,9 @@ COLLECTIONS: Dict[str, Dict[str, str]] = {
     "CODE_EXECUTIONS": {"name": "code_executions", "pk_field": "submission_id"},
     "EVALUATIONS": {"name": "evaluations", "pk_field": "submission_id"},
     "RAG_QUERIES": {"name": "RAGQueries", "pk_field": "assessment_id"},
+    # New: S2S interview docs and transcripts
+    "INTERVIEWS": {"name": "interviews", "pk_field": "assessment_id"},
+    "INTERVIEW_TRANSCRIPTS": {"name": "interview_transcripts", "pk_field": "assessment_id"},
 }
 
 # Default embedding dimensionality used for KnowledgeBase entries (Azure OpenAI small embedding model)

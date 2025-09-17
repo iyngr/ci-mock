@@ -1035,3 +1035,185 @@ async def bulk_confirm_import(
     except Exception as e:
         logger.error(f"Error in bulk confirm: {e}")
         raise HTTPException(status_code=500, detail="Failed to import questions")
+
+
+# Live Interview Analytics Endpoints
+@router.get("/live-interviews/sessions")
+async def get_live_interview_sessions(
+    admin: dict = Depends(verify_admin_token),
+    db_service: CosmosDBService = Depends(get_cosmosdb)
+):
+    """Get all active and recent live interview sessions"""
+    try:
+        # Query interview_transcripts collection for active sessions
+        sessions = []
+        
+        # Mock data for development - in production, this would query Cosmos DB
+        from datetime import datetime, timedelta
+        import uuid
+        
+        # Generate mock active sessions
+        mock_sessions = []
+        for i in range(5):  # 5 active sessions
+            session_id = f"session_{uuid.uuid4().hex[:12]}"
+            started_at = datetime.utcnow() - timedelta(minutes=30 + i * 10)
+            
+            mock_sessions.append({
+                "id": f"live_{uuid.uuid4().hex[:8]}",
+                "sessionId": session_id,
+                "candidateId": f"candidate_{i+1}",
+                "candidateName": f"John Doe {i+1}",
+                "testId": f"test_{uuid.uuid4().hex[:8]}",
+                "testName": f"Senior Developer Assessment {i+1}",
+                "status": "active" if i < 3 else "completed" if i == 3 else "failed",
+                "startedAt": started_at.isoformat(),
+                "lastActivity": (datetime.utcnow() - timedelta(seconds=30 + i * 60)).isoformat(),
+                "duration": 1800 + i * 300,  # 30min + extras
+                "currentQuestion": min(i + 2, 5),
+                "totalQuestions": 5,
+                "audioQuality": ["excellent", "good", "poor", "good", "excellent"][i],
+                "connectionStatus": ["connected", "connected", "connecting", "connected", "disconnected"][i],
+                "webrtcState": ["connected", "connected", "connecting", "connected", "failed"][i],
+                "conversationTurns": 12 + i * 3,
+                "analysisRequests": 8 + i * 2,
+                "orchestrationRequests": 6 + i,
+                "errorCount": i if i > 2 else 0,
+                "transcript": {
+                    "wordCount": 450 + i * 100,
+                    "lastUpdate": (datetime.utcnow() - timedelta(minutes=2)).isoformat(),
+                    "sentiment": ["positive", "neutral", "positive", "neutral", "negative"][i]
+                } if i < 4 else None,
+                "performance": {
+                    "avgResponseTime": 150 + i * 50,
+                    "apiSuccessRate": 98 - i,
+                    "reconnectionCount": 1 if i > 3 else 0
+                }
+            })
+        
+        return {
+            "sessions": mock_sessions,
+            "total": len(mock_sessions),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching live interview sessions: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch live interview sessions")
+
+
+@router.get("/live-interviews/stats")
+async def get_live_interview_stats(
+    admin: dict = Depends(verify_admin_token),
+    db_service: CosmosDBService = Depends(get_cosmosdb)
+):
+    """Get live interview analytics statistics"""
+    try:
+        # Mock statistics for development
+        from datetime import datetime
+        
+        stats = {
+            "totalActiveSessions": 3,
+            "totalCompletedToday": 15,
+            "averageSessionDuration": 1650,  # 27.5 minutes
+            "systemHealthScore": 94,
+            "apiPerformance": {
+                "analysisAvgTime": 180,
+                "orchestrationAvgTime": 120,
+                "errorRate": 2.1
+            },
+            "audioQualityDistribution": {
+                "excellent": 8,
+                "good": 5,
+                "poor": 2,
+                "unknown": 0
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return {
+            "stats": stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching live interview stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch live interview statistics")
+
+
+@router.get("/live-interviews/session/{session_id}")
+async def get_live_interview_session_details(
+    session_id: str,
+    admin: dict = Depends(verify_admin_token),
+    db_service: CosmosDBService = Depends(get_cosmosdb)
+):
+    """Get detailed information about a specific live interview session"""
+    try:
+        # In production, query the specific session from interview_transcripts
+        # For development, return mock detailed data
+        from datetime import datetime, timedelta
+        
+        session_details = {
+            "id": f"live_{session_id[:8]}",
+            "sessionId": session_id,
+            "candidateId": "candidate_detail",
+            "candidateName": "Jane Smith",
+            "testId": "test_detail_123",
+            "testName": "Senior Full-Stack Developer Assessment",
+            "status": "active",
+            "startedAt": (datetime.utcnow() - timedelta(minutes=45)).isoformat(),
+            "lastActivity": (datetime.utcnow() - timedelta(seconds=15)).isoformat(),
+            "duration": 2700,  # 45 minutes
+            "currentQuestion": 3,
+            "totalQuestions": 5,
+            "audioQuality": "excellent",
+            "connectionStatus": "connected",
+            "webrtcState": "connected",
+            "conversationTurns": 18,
+            "analysisRequests": 12,
+            "orchestrationRequests": 8,
+            "errorCount": 0,
+            "transcript": {
+                "wordCount": 850,
+                "lastUpdate": (datetime.utcnow() - timedelta(seconds=30)).isoformat(),
+                "sentiment": "positive",
+                "fullTranscript": "The candidate has been providing detailed technical responses about React, Node.js, and system architecture. Their communication is clear and demonstrates strong technical knowledge."
+            },
+            "performance": {
+                "avgResponseTime": 145,
+                "apiSuccessRate": 100,
+                "reconnectionCount": 0
+            },
+            "questions": [
+                {
+                    "id": 1,
+                    "question": "Tell me about your experience with React and state management",
+                    "status": "completed",
+                    "startTime": (datetime.utcnow() - timedelta(minutes=42)).isoformat(),
+                    "endTime": (datetime.utcnow() - timedelta(minutes=35)).isoformat(),
+                    "wordCount": 185
+                },
+                {
+                    "id": 2,
+                    "question": "How would you design a scalable microservices architecture?",
+                    "status": "completed", 
+                    "startTime": (datetime.utcnow() - timedelta(minutes=35)).isoformat(),
+                    "endTime": (datetime.utcnow() - timedelta(minutes=25)).isoformat(),
+                    "wordCount": 320
+                },
+                {
+                    "id": 3,
+                    "question": "Explain the difference between SQL and NoSQL databases",
+                    "status": "active",
+                    "startTime": (datetime.utcnow() - timedelta(minutes=25)).isoformat(),
+                    "endTime": None,
+                    "wordCount": 245
+                }
+            ]
+        }
+        
+        return {
+            "session": session_details
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching session details: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch session details")

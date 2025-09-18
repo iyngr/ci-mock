@@ -102,3 +102,92 @@ To host the open-source Judge0 Community Edition (CE) as a separate service in a
 - **Compliance**: Ensure data handling complies with Azure's policies (e.g., for code execution).
 
 If you encounter issues, check Azure Function logs via the portal or CLI (`az functionapp logs`). For more details, refer to the [Judge0 CE GitHub repo](https://github.com/judge0/judge0) and [Azure Functions docs](https://docs.microsoft.com/en-us/azure/azure-functions/). Let me know if you need code for specific parts!
+
+## Judge0 — Reliability, Normalization, and Safety
+
+### Submission Policy
+
+**Best practices for reliable code execution:**
+
+1. **Normalize languages to Judge0 IDs at the backend** (never trust client)
+   - Map client language names to standardized Judge0 language IDs server-side
+   - Validate language support before submission
+   - Reject unsupported languages early with clear error messages
+
+2. **Enforce strict limits and reject early with clear messages:**
+   - **Max source size**: Limit code length (e.g., 10KB)
+   - **Max execution time**: Set reasonable timeout (e.g., 5-10 seconds)
+   - **Max memory usage**: Prevent memory exhaustion
+   - **Max stdout size**: Limit output to prevent abuse
+
+3. **Prefer polling with backoff unless you've set up webhooks**
+   - Implement exponential backoff for polling
+   - Cap polling at N seconds (e.g., 30 seconds)
+   - Report "Inconclusive" gracefully for timeouts
+   - Consider webhook setup for production workloads
+
+### Normalization (Standard Response Format)
+
+**Standardized Judge0 response structure for consistent handling:**
+
+```json
+{
+  "status": "Accepted|Wrong Answer|Runtime Error|Compilation Error|In Queue|Processing",
+  "stdout": "base64 or utf-8",
+  "stderr": "base64 or utf-8", 
+  "time": "float-seconds",
+  "memory": "int-kb"
+}
+```
+
+**Response handling recommendations:**
+- Always check `status` field first
+- Handle base64 encoded outputs appropriately
+- Normalize time/memory units across different language runtimes
+- Provide meaningful error messages for each status type
+
+### Safety
+
+**Critical security considerations:**
+
+1. **Output Sanitization**
+   - **Never echo back raw stderr to candidates without sanitizing** (XSS risk)
+   - Always render outputs in `<pre>` tags with proper HTML escaping
+   - Strip or sanitize any potentially malicious content
+   - Consider content filtering for inappropriate output
+
+2. **Sandbox Security**
+   - **Ensure no network access** from the execution sandbox
+   - If Judge0 instance permits file operations:
+     - Restrict file size limits
+     - Restrict file count limits
+     - Disable file system write access where possible
+   - Monitor for resource abuse attempts
+
+3. **Additional Security Measures**
+   - Implement rate limiting per user/session
+   - Log all execution attempts for security monitoring
+   - Use separate Judge0 instances for different security tiers
+   - Regular security updates and patching of Judge0 containers
+
+**Example secure output handling:**
+```python
+import html
+import base64
+
+def sanitize_output(output: str, is_base64: bool = False) -> str:
+    """Safely sanitize Judge0 output for display"""
+    if is_base64:
+        try:
+            output = base64.b64decode(output).decode('utf-8')
+        except:
+            return "Invalid output encoding"
+    
+    # HTML escape to prevent XSS
+    sanitized = html.escape(output)
+    
+    # Additional filtering if needed
+    # sanitized = filter_inappropriate_content(sanitized)
+    
+    return sanitized
+```

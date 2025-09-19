@@ -1,36 +1,23 @@
 {
-  "routes": [
-    {
-      "route": "/*",
-      "serve": "/index.html",
-      "statusCode": 200
-    }
-  ],
-  "navigationFallback": {
-    "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/styles.css", "/script.js", "/*.{js,css,png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}"]
-  },
-  "responseOverrides": {
-    "401": {
-      "rewrite": "/index.html"
-    },
-    "404": {
-      "rewrite": "/index.html"
-    }
-  },
-  "globalHeaders": {
-    "X-Content-Type-Options": "nosniff",
-    "X-Frame-Options": "DENY",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
-  },
-  "mimeTypes": {
-    ".json": "application/json",
-    ".css": "text/css",
-    ".js": "text/javascript",
-    ".html": "text/html"
-  },
-  "forwardingGateway": {
-    "allowedForwardedHosts": [],
-    "requiredHeaders": {}
-  }
+	"globalHeaders": {
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options": "DENY",
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+		"Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+		"Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+		"Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+	},
+	"responseOverrides": {
+		"404": { "statusCode": 404 }
+	},
+	"mimeTypes": {
+		".json": "application/json",
+		".css": "text/css",
+		".js": "text/javascript",
+		".html": "text/html"
+	},
+	"_comments": {
+		"reason": "Next.js SSR build has no generated index.html; platform runtime handles route resolution. Removed SPA-style index.html rewrites.",
+		"static_export_option": "If you later use `next export` (adding output: 'export' in next.config and producing /index.html), reintroduce a navigationFallback rewriting to /index.html." 
+	}
 }

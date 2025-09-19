@@ -1,34 +1,40 @@
 {
-  "name": "talens-suite-showcase",
-  "version": "1.0.0",
-  "description": "A stunning showcase website for the Talens Suite - AI-Powered Talent Intelligence Platform",
-  "keywords": ["azure", "static-web-app", "ai", "talent-management", "showcase", "demo"],
-  "author": "Talens Suite Team",
-  "license": "MIT",
-  "homepage": "https://talens-suite-showcase.azurestaticapps.net",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/your-org/ci-mock.git",
-    "directory": "talens-suite-showcase"
-  },
+  "name": "talens-suite",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "start": "python -m http.server 8000",
-    "serve": "npx serve src",
-    "validate": "html-validate src/index.html",
-    "lighthouse": "npx lighthouse http://localhost:8000 --output html --output-path ./lighthouse-report.html"
+    "dev": "next dev -p 3010",
+    "build": "next build",
+    "start": "next start -p 3010",
+    "lint": "next lint",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "15.4.7",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "framer-motion": "^11.2.10",
+    "clsx": "^2.1.1"
   },
   "devDependencies": {
-    "html-validate": "^8.0.0",
-    "lighthouse": "^11.0.0",
-    "serve": "^14.0.0"
+    "typescript": "^5.5.4",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/node": "^20.12.7",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/postcss": "^4.1.13",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.7",
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.0",
+    "@testing-library/user-event": "^14.5.2",
+    "jsdom": "^24.0.0",
+    "vitest": "^2.0.5"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "browserslist": [
-    "> 1%",
-    "last 2 versions",
-    "not dead",
-    "not ie 11"
-  ]
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": ["supports-color"]
+    }
+  }
 }

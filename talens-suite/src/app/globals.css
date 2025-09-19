@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    min-height: 100vh;
+}
+
+/* Panel aesthetic similar to Google Store cards */
+.panel-card {
+    border-radius: 1.5rem;
+    /* rounded-3xl */
+    background: #ffffff;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    transition: transform .35s cubic-bezier(.4, 0, .2, 1), box-shadow .35s cubic-bezier(.4, 0, .2, 1);
+    will-change: transform;
+    position: relative;
+}
+
+.panel-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Product trio layout helpers */
+.product-grid {
+    display: grid;
+    gap: 1.5rem;
+}
+
+@media (min-width:768px) {
+    .product-grid {
+        gap: 2rem;
+    }
+}
+
+@media (min-width:1024px) {
+    .product-grid {
+        gap: 2.5rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width:1023px) {
+    .product-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Scroll snap sections for immersive product storytelling */
+.snap-container {
+    scroll-snap-type: y mandatory;
+}
+
+.snap-section {
+    scroll-snap-align: start;
+}
+
+/* Gradient text accents */
+.gradient-text {
+    background: linear-gradient(90deg, #2563eb, #6d28d9, #db2777);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* Motion safety */
+@media (prefers-reduced-motion: reduce) {
+    .motion-safe-hide {
+        animation: none !important;
+        transition: none !important;
+    }
+}

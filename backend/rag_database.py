@@ -26,6 +26,7 @@ import logging
 from typing import Optional
 from azure.cosmos import CosmosClient, PartitionKey
 from azure.cosmos.cosmos_client import ConnectionPolicy
+from azure.cosmos.documents import RetryOptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError, CosmosHttpResponseError
 from azure.identity import DefaultAzureCredential
 
@@ -46,11 +47,16 @@ def _create_client(endpoint: str) -> CosmosClient:
     preferred = os.getenv("RAG_COSMOS_DB_PREFERRED_LOCATIONS", "").split(",")
     if preferred and preferred[0]:
         policy.preferred_locations = [p.strip() for p in preferred]
-    policy.retry_options.max_retry_attempt_count = 3
-    policy.retry_options.fixed_retry_interval_in_milliseconds = 1000
-    policy.retry_options.max_wait_time_in_seconds = 10
-    credential = DefaultAzureCredential()
-    return CosmosClient(url=endpoint, credential=credential, connection_policy=policy)
+    retry_opts = RetryOptions()
+    retry_opts._max_retry_attempt_count = 3
+    retry_opts._fixed_retry_interval_in_milliseconds = 1000
+    retry_opts._max_wait_time_in_seconds = 10
+    rag_key = os.getenv("RAG_COSMOS_DB_KEY") or None
+    if rag_key:
+        credential = rag_key
+    else:
+        credential = DefaultAzureCredential()
+    return CosmosClient(url=endpoint, credential=credential, connection_policy=policy, retry_options=retry_opts)
 
 
 async def _ensure_rag_containers(service: CosmosDBService):
@@ -69,20 +75,11 @@ async def _ensure_rag_containers(service: CosmosDBService):
     except CosmosHttpResponseError as e:
         logger.error(f"Error reading KnowledgeBase container: {e}")
 
-    # Optionally ensure RAGQueries (if you want logging in same account)
-    rq_name = CONTAINER["RAG_QUERIES"]
-    try:
-        service.get_container(rq_name).read()
-    except CosmosResourceNotFoundError:
-        try:
-            service.database_client.create_container(
-                id=rq_name,
-                partition_key=PartitionKey(path="/assessment_id"),
-                default_ttl=60*60*24*30  # 30 days
-            )
-            logger.info("Created RAGQueries container in RAG account")
-        except CosmosHttpResponseError as e:
-            logger.error(f"Failed to create RAGQueries container in RAG account: {e}")
+    # We intentionally do not verify or create non-vector telemetry containers
+    # (like RAGQueries) in the RAG account. Telemetry should be written to the
+    # primary transactional account by default. Operators who wish to colocate
+    # telemetry in the RAG account should create the container manually; we do
+    # not perform that check here to avoid unnecessary 404/noise during startup.
 
 
 async def get_rag_service() -> Optional[CosmosDBService]:

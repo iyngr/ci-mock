@@ -13,13 +13,105 @@ from prompt_loader import load_prompty
 from tracing import traced_run
 from structured import parse_analyst_output, parse_question_rewrite
 
-# RAG imports
+# --- Optional LangChain adapter support (guarded imports) ---
+_langchain_adapter_available = False
+_langchain_adapter_builder = None
 try:
-    from autogen_agentchat.agents import RetrieveUserProxyAgent
-    RAG_AVAILABLE = True
-except ImportError:
-    print("Warning: RetrieveUserProxyAgent not available in this AutoGen version")
-    RAG_AVAILABLE = False
+    # LangChain & LangChain vectorstore imports (guarded)
+    from langchain_core.tools import Tool
+    from langchain_core.tools.retriever import create_retriever_tool
+    try:
+        # Prefer the new package
+        from langchain_azure_ai.vectorstores import AzureCosmosDBNoSqlVectorSearch as CosmosNoSqlVS
+    except Exception:
+        try:
+            from langchain_community.vectorstores.azure_cosmos_db_no_sql import AzureCosmosDBNoSqlVectorSearch as CosmosNoSqlVS
+        except Exception:
+            CosmosNoSqlVS = None
+
+    from autogen_ext.tools.langchain import LangChainToolAdapter
+
+    def _build_langchain_adapter_from_env() -> object | None:
+        """Build a LangChainToolAdapter for Cosmos DB vector store using env vars.
+
+        Returns the adapter (AutoGen tool) or None if prerequisites are missing.
+        """
+        try:
+            EMBED_DEPLOYMENT = os.environ.get("AZURE_OPENAI_EMBED_DEPLOYMENT")
+            COSMOS_URI = os.environ.get("RAG_COSMOS_DB_ENDPOINT") or os.environ.get("COSMOS_DB_ENDPOINT")
+            COSMOS_KEY = os.environ.get("RAG_COSMOS_DB_KEY") or os.environ.get("COSMOS_DB_KEY")
+            DB_NAME = os.environ.get("RAG_COSMOS_DB_DATABASE") or os.environ.get("DATABASE_NAME")
+            CONT_NAME = os.environ.get("RAG_COSMOS_CONTAINER") or os.environ.get("RAG_COSMOS_CONTAINER") or "KnowledgeBase"
+
+            if not (EMBED_DEPLOYMENT and COSMOS_URI and COSMOS_KEY and DB_NAME and CONT_NAME and CosmosNoSqlVS):
+                return None
+
+            # Lazy imports for embeddings
+            try:
+                from langchain_openai import OpenAIEmbeddings
+            except Exception:
+                return None
+
+            embeddings = OpenAIEmbeddings(deployment=EMBED_DEPLOYMENT)
+
+            # Build Cosmos client for LangChain vector store
+            from azure.cosmos import CosmosClient as AzureCosmosClient
+            cosmos_client = AzureCosmosClient(COSMOS_URI, COSMOS_KEY)
+
+            vs = CosmosNoSqlVS(
+                cosmos_client=cosmos_client,
+                database_name=DB_NAME,
+                container_name=CONT_NAME,
+                embedding=embeddings,
+                create_container=False,
+            )
+
+            retriever = vs.as_retriever(search_kwargs={"k": 5})
+            lc_tool = create_retriever_tool(retriever=retriever, name="cosmos_nosql_retriever", description="Cosmos DB NoSQL retriever")
+            ag_tool = LangChainToolAdapter(lc_tool)
+            return ag_tool
+        except Exception as e:
+            print(f"LangChain adapter not available: {e}")
+            return None
+
+    _langchain_adapter_available = True
+    _langchain_adapter_builder = _build_langchain_adapter_from_env
+except Exception:
+    _langchain_adapter_available = False
+    _langchain_adapter_builder = None
+
+
+# Lightweight in-memory cache for recent RAG queries (acts as a simple Memory)
+_rag_query_cache: dict = {}
+
+
+async def rag_tool_cached(query_text: str) -> str:
+    """
+    Async tool wrapper around `query_cosmosdb_for_rag` that provides a small
+    in-memory cache. This acts as a simple short-term memory for RAG queries
+    and avoids calling the vector DB repeatedly for identical queries.
+    """
+    key = (query_text or "").strip().lower()
+    if not key:
+        return ""
+    # Return cached value when available
+    if key in _rag_query_cache:
+        # cache hit
+        return _rag_query_cache[key]
+    # Cache miss: delegate to actual RAG retrieval function
+    try:
+        result = await query_cosmosdb_for_rag(query_text)
+        # Store a short-lived cache entry
+        try:
+            _rag_query_cache[key] = result
+        except Exception:
+            # If cache store fails for any reason, ignore silently
+            pass
+        return result
+    except Exception as e:
+        print(f"RAG TOOL ERROR: {e}")
+        # Fall back to raw call (let caller decide how to handle failure)
+        return await query_cosmosdb_for_rag(query_text)
 
 # Configure Azure OpenAI client
 def create_model_client():
@@ -36,14 +128,30 @@ def create_model_client():
         azure_endpoint = "https://mock-openai.openai.azure.com/"
         api_key = "mock-api-key"
     
+    # Build a minimal model_info for autogen_ext when using Azure OpenAI.
+    # autogen_ext expects model_info for non-standard OpenAI model names.
+    def _default_model_info(model_name: str) -> dict:
+        # conservative defaults; these can be overridden by providing a full model_info
+        return {
+            "vision": False,
+            "function_calling": True,
+            "json_output": True,
+            "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
+            "structured_output": True,
+            "multiple_system_messages": True,
+        }
+
     # Option 1: Using API Key authentication
     if api_key:
+        model_name = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
+        print(f"Using Azure OpenAI API key auth; deployment={os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}, model={model_name}")
         return AzureOpenAIChatCompletionClient(
             azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-            model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o"),
+            model=model_name,
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
             azure_endpoint=azure_endpoint,
             api_key=api_key,
+            model_info=_default_model_info(model_name),
         )
     
     # Option 2: Using Azure AD authentication (recommended for production)
@@ -54,12 +162,15 @@ def create_model_client():
                 "https://cognitiveservices.azure.com/.default",
             )
             
+            model_name = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
+            print(f"Using Azure AD auth for Azure OpenAI; deployment={os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}, model={model_name}")
             return AzureOpenAIChatCompletionClient(
                 azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o"),
+                model=model_name,
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
                 azure_endpoint=azure_endpoint,
                 azure_ad_token_provider=token_provider,
+                model_info=_default_model_info(model_name),
             )
         except Exception as e:
             print(f"Warning: Could not create Azure AD token provider: {e}")
@@ -118,6 +229,13 @@ def _client_from_prompty(prompty):
             api_version=api_version,
             azure_endpoint=azure_endpoint,
             api_key=api_key,
+            model_info={
+                "vision": False,
+                "function_calling": True,
+                "json_output": True,
+                "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
+                "structured_output": True,
+            },
         )
     else:
         try:
@@ -131,6 +249,13 @@ def _client_from_prompty(prompty):
                 api_version=api_version,
                 azure_endpoint=azure_endpoint,
                 azure_ad_token_provider=token_provider,
+                model_info={
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
+                    "structured_output": True,
+                },
             )
         except Exception:
             # Fallback to mock key if AAD fails in dev contexts
@@ -265,54 +390,33 @@ user_proxy_agent = UserProxyAgent(
 def create_rag_agent():
     """
     Creates a RAG-enabled agent for knowledge base queries.
-    Falls back to regular AssistantAgent if RetrieveUserProxyAgent is not available.
+    Builds an AssistantAgent that uses a tool-backed retrieval function.
+    This approach works across AutoGen versions and avoids dependency on
+    RetrieveUserProxyAgent which is not present in older releases.
     """
-    if RAG_AVAILABLE:
-        try:
-            # Configure RetrieveUserProxyAgent with Azure Cosmos DB backend
-            rag_agent = RetrieveUserProxyAgent(
-                name="RAG_Knowledge_Agent",
-                description="A RAG-enabled agent that retrieves context from the knowledge base to answer questions.",
-                retrieve_config={
-                    "task": "qa",  # Question-answering task
-                    "chunk_token_size": 1000,
-                    "model": model_client,
-                    "client": None,  # Will use our custom query function
-                    "embedding_model": "text-embedding-ada-002",
-                    "get_or_create": False,  # Don't create new collections
-                    "custom_function": query_cosmosdb_for_rag,  # Our RAG retrieval function
-                },
-                code_execution_config=False,  # Disable code execution for security
-                human_input_mode="NEVER",  # Fully automated
-                max_consecutive_auto_reply=3,
-            )
-            return rag_agent
-        except Exception as e:
-            print(f"Warning: Could not create RetrieveUserProxyAgent: {e}")
-            print("Falling back to regular AssistantAgent with RAG tools")
-    
-    # Fallback: Regular AssistantAgent with RAG tools
-    rag_fallback_agent = AssistantAgent(
+    # Build an AssistantAgent that uses our async cached rag tool. This is
+    # compatible with AutoGen versions that don't include RetrieveUserProxyAgent.
+    rag_agent = AssistantAgent(
         name="RAG_Knowledge_Agent",
-        description="A knowledge agent that uses RAG tools to answer questions based on the knowledge base.",
+        description="A knowledge assistant that uses RAG tools to answer questions based on the knowledge base.",
         model_client=model_client,
-        tools=[query_cosmosdb_for_rag],  # Add RAG tool
-        system_message="""You are a knowledge assistant powered by a RAG (Retrieval-Augmented Generation) system. 
+        tools=[rag_tool_cached],  # Use the async cached wrapper tool
+        system_message="""You are a knowledge assistant powered by a RAG (Retrieval-Augmented Generation) system.
 
 Your capabilities:
 1. Answer questions about technical assessment topics
-2. Retrieve relevant context from the knowledge base using vector similarity search
-3. Provide informed responses based on existing questions and solutions
+2. Retrieve relevant context from the knowledge base using vector similarity search via the provided RAG tool
+3. Provide informed responses that combine retrieved context with model knowledge
 
 When a user asks a question:
-1. Use the query_cosmosdb_for_rag tool to retrieve relevant context
-2. Analyze the retrieved information carefully
-3. Provide a comprehensive answer that combines the retrieved context with your knowledge
-4. If no relevant context is found, provide a general response based on your training
+1. Call the provided RAG tool to fetch context from the knowledge base
+2. Use the retrieved context to craft accurate, cited answers
+3. If the RAG tool returns no results, respond based on general knowledge and note the lack of KB context
 
-Always be helpful, accurate, and acknowledge when information comes from the knowledge base vs. general knowledge."""
+Be concise, cite KB snippets when used, and clearly mark when information is drawn from the KB.""",
     )
-    return rag_fallback_agent
+
+    return rag_agent
 
 # Initialize RAG agent
 rag_agent = create_rag_agent()
@@ -626,17 +730,17 @@ async def run_assessment_async(submission_id: str) -> List[BaseChatMessage]:
     
     # Run the team conversation asynchronously
     with traced_run("assessment_team.run", {"submission_id": submission_id}):
-        result = await team.run_stream_async(
+        result_stream = team.run_stream(
             task=initial_message,
             termination_condition=MaxMessageTermination(max_messages=10)
         )
-    
-    # Collect messages from the conversation
+
+    # Collect messages from the conversation (async iterator)
     messages: List[BaseChatMessage] = []
-    async for message in result:
+    async for message in result_stream:
         if isinstance(message, BaseChatMessage):
             messages.append(message)
-    
+
     return messages
 
 
@@ -663,17 +767,16 @@ async def generate_questions_async(skill: str, question_type: str, difficulty: s
     
     # Run team conversation asynchronously  
     with traced_run("question_team.run", {"skill": skill, "type": question_type, "difficulty": difficulty}):
-        result = await team.run_stream_async(
+        result_stream = team.run_stream(
             task=task_message,
             termination_condition=TextMentionTermination("COMPLETE")
         )
-    
-    # Collect generated questions as messages
+
     messages: List[BaseChatMessage] = []
-    async for message in result:
+    async for message in result_stream:
         if isinstance(message, BaseChatMessage):
             messages.append(message)
-    
+
     return messages
 
 
@@ -694,17 +797,16 @@ async def rag_query_async(user_question: str) -> List[BaseChatMessage]:
     
     # Run RAG team conversation asynchronously
     with traced_run("rag_team.run", {"question_len": len(user_question)}):
-        result = await team.run_stream_async(
+        result_stream = team.run_stream(
             task=task_message,
             termination_condition=MaxMessageTermination(max_messages=10)
         )
-    
-    # Collect messages from the RAG conversation
+
     messages: List[BaseChatMessage] = []
-    async for message in result:
+    async for message in result_stream:
         if isinstance(message, BaseChatMessage):
             messages.append(message)
-    
+
     return messages
 
 
@@ -730,15 +832,14 @@ async def validate_question_async(question_text: str) -> List[BaseChatMessage]:
     
     # Run validation team conversation asynchronously
     with traced_run("rag_validate.run", {"text_len": len(question_text)}):
-        result = await team.run_stream_async(
+        result_stream = team.run_stream(
             task=task_message,
             termination_condition=MaxMessageTermination(max_messages=8)
         )
-    
-    # Collect validation messages
+
     messages: List[BaseChatMessage] = []
-    async for message in result:
+    async for message in result_stream:
         if isinstance(message, BaseChatMessage):
             messages.append(message)
-    
+
     return messages

@@ -117,6 +117,33 @@ cp .env.sample .env
 uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
+## Local development (run all services)
+
+To run the full stack locally (backend + frontend + llm-agent):
+
+1. Start the backend (port 8000):
+
+```powershell
+cd backend; uv sync; cp .env.example .env; uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+2. Start the llm-agent (port 8001):
+
+```powershell
+cd llm-agent; uv sync; cp .env.sample .env; uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+3. Start the frontend (port 3000):
+
+```powershell
+cd frontend; pnpm install; pnpm dev
+```
+
+Notes:
+- Ensure `COSMOS_DB_*` and optional `RAG_COSMOS_DB_*` env vars are set in the appropriate `.env` files before starting.
+- If you need AutoGen Studio for visual tooling, see `llm-agent/README.md` for manual install guidance.
+
+
 ### Auto-Submit Function (local)
 ```bash
 cd auto-submit

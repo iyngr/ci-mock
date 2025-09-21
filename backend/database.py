@@ -17,6 +17,7 @@ from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError
 )
 import logging
+from datetime import datetime, date
 from constants import CONTAINER, COLLECTIONS, EMBEDDING_DIM  # updated import
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,31 @@ class CosmosDBService:
         if container_name not in self._containers:
             self._containers[container_name] = self.database_client.get_container_client(container_name)
         return self._containers[container_name]
+
+    def _serialize_for_cosmos(self, obj: Any) -> Any:
+        """Recursively convert objects not JSON serializable (like datetime) to strings.
+
+        Keeps primitives untouched, converts datetimes to ISO strings, and
+        traverses dicts/lists/tuples to transform nested values.
+        """
+        if obj is None:
+            return None
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        if isinstance(obj, (datetime, date)):
+            # Use ISO format which is JSON safe
+            return obj.isoformat()
+        if isinstance(obj, dict):
+            return {k: self._serialize_for_cosmos(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._serialize_for_cosmos(v) for v in obj]
+        if isinstance(obj, tuple):
+            return [self._serialize_for_cosmos(v) for v in obj]
+        # Fallback to string representation for unknown types
+        try:
+            return str(obj)
+        except Exception:
+            return None
     
     async def ensure_containers_exist(self):
         """Ensure required containers exist with proper partition keys, TTL, and indexing."""
@@ -161,49 +187,24 @@ class CosmosDBService:
             CONTAINER["GENERATED_QUESTIONS"]: {"pk": "/skill"},
             # KnowledgeBase: include vector policy + vector index definitions.
             # NOTE: Per current Cosmos DB limitations, vector feature must be enabled at account level first.
-            CONTAINER["KNOWLEDGE_BASE"]: {"pk": "/skill", "index_policy": {
-                "indexingMode": "consistent",
-                "automatic": True,
-                "includedPaths": [
-                    {"path": "/*"}
-                ],
-                # Exclude the raw embedding array from the traditional property index to optimize ingestion RUs
-                "excludedPaths": [
-                    {"path": "/_etag/?"},
-                    {"path": "/embedding/*"}
-                ],
-                # Vector index definitions (one path). Keep minimal; dimension & similarity defined in vector policy separately in future SDKs.
-                # Current docs show vector policy (vectorEmbeddings) specified at container creation; azure-cosmos Python may evolve.
-                # Here we supply vectorIndexes consistent with GA examples for indexing policy.
-                "vectorIndexes": [
-                    {"path": "/embedding", "type": "quantizedFlat"}
-                ]
-            }},
+            # KnowledgeBase is a vector-indexed container and must be provisioned in the
+            # serverless/vector-enabled RAG account. We intentionally skip creating it here
+            # for the transactional account to avoid vector-indexing configuration errors.
+            # Provision KnowledgeBase manually in the RAG account (see docs) or use
+            # `rag_database.get_rag_service()` which validates RAG account containers.
+            # CONTAINER["KNOWLEDGE_BASE"]: {"pk": "/skill", "index_policy": { ... }},
             CONTAINER["CODE_EXECUTIONS"]: {"pk": "/submission_id", "ttl": 60*60*24*30},  # 30d
             CONTAINER["EVALUATIONS"]: {"pk": "/submission_id"},
             CONTAINER["RAG_QUERIES"]: {"pk": "/assessment_id", "ttl": 60*60*24*30},  # 30d
             # New S2S containers
             CONTAINER["INTERVIEWS"]: {"pk": "/assessment_id"},
-            # 6 months TTL (~ 15552000 seconds) with indexes for auto-submit queries
-            CONTAINER["INTERVIEW_TRANSCRIPTS"]: {
-                "pk": "/assessment_id", 
-                "ttl": 60*60*24*30*6,
-                "index_policy": {
-                    "indexingMode": "consistent",
-                    "automatic": True,
-                    "includedPaths": [
-                        {"path": "/finalized_at/?"},
-                        {"path": "/scored_at/?"},
-                        {"path": "/session_id/?"},
-                        {"path": "/assessment_id/?"},
-                        {"path": "/*"}  # Include all paths for flexible querying
-                    ],
-                    "excludedPaths": [
-                        {"path": "/turns/*/text/?"},  # Exclude large text fields from indexing
-                        {"path": "/assessment_feedback/?"}  # Exclude large feedback text
-                    ]
-                }
-            },
+            # interview_transcripts has a complex indexing policy (nested paths) that
+            # may not be accepted by all Cosmos DB accounts/SDK versions. To avoid
+            # startup failures when the environment's indexing rules differ, we do
+            # NOT auto-create `interview_transcripts` here. Provision it manually
+            # in the target account with a validated indexing policy, or adjust
+            # the policy in this code to use only simple paths.
+            # Example manual creation (Azure CLI) is provided in docs.
         }
         for container_name, cfg in containers_config.items():
             try:
@@ -212,20 +213,22 @@ class CosmosDBService:
                 logger.info(f"Container '{container_name}' already exists")
                 # Apply TTL or indexing updates only if needed (skip heavy diff logic for now)
             except CosmosResourceNotFoundError:
-                create_kwargs = {
-                    "id": container_name,
-                    "partition_key": PartitionKey(path=cfg["pk"]),
-                }
-                if "ttl" in cfg:
-                    create_kwargs["default_ttl"] = cfg["ttl"]
-                if "index_policy" in cfg:
-                    create_kwargs["indexing_policy"] = cfg["index_policy"]
-                try:
-                    self.database_client.create_container(**create_kwargs)
-                    logger.info(f"Created container '{container_name}' with pk '{cfg['pk']}'")
-                except CosmosHttpResponseError as e:
-                    logger.error(f"Failed to create container '{container_name}': {e}")
-                    raise
+                # Do NOT auto-create containers. Log clear instructions for the
+                # operator to create the missing container manually. Automatic
+                # creation can lead to accidental provisioning with incorrect
+                # indexing/partition settings (especially for vector-indexed
+                # containers). Operators should provision containers using the
+                # Azure Portal, CLI, or ARM/Bicep with the correct settings.
+                pk = cfg.get("pk")
+                logger.warning(
+                    "Container '%s' not found. Manual creation required. "
+                    "Create with partition key=%s and consult docs for indexing/TTL.",
+                    container_name, pk
+                )
+                logger.info(
+                    "Manual creation examples: az cosmosdb sql container create --account-name <account> --database-name <db> --name %s --partition-key-path %s",
+                    container_name, pk
+                )
 
     # Helper to infer partition key value based on container logical mapping
     def infer_partition_key(self, container_name: str, item: Dict[str, Any]) -> Optional[str]:
@@ -253,8 +256,16 @@ class CosmosDBService:
         if partition_key is None:
             partition_key = item.get("id", item.get("_id"))
         
+        # Ensure item is JSON-serializable by converting datetimes
+        serializable_item = self._serialize_for_cosmos(item)
+
         async def _create_operation():
-            return container.create_item(body=item)
+            # Do not forward partition_key as a keyword to the SDK transport.
+            # The Cosmos SDK will infer the partition from the item body when
+            # the partition field is present. Forwarding it here caused some
+            # SDK/transport versions to pass the kwarg down to requests and
+            # raise a TypeError.
+            return container.create_item(body=serializable_item)
         
         try:
             response = await cosmos_retry_wrapper(_create_operation)
@@ -289,8 +300,14 @@ class CosmosDBService:
         try:
             if partition_key is None:
                 partition_key = item.get("id", item.get("_id"))
-                
-            response = container.upsert_item(body=item)
+
+            # Serialize datetimes/complex types before sending to Cosmos
+            serializable_item = self._serialize_for_cosmos(item)
+
+            # Avoid passing partition_key into the SDK call as a kwarg; let
+            # the SDK infer the partition from the item body. This avoids
+            # compatibility issues across SDK/transport layers.
+            response = container.upsert_item(body=serializable_item)
             logger.info(f"Upserted item in '{container_name}': {response.get('id')}")
             return response
         except CosmosHttpResponseError as e:
@@ -311,16 +328,66 @@ class CosmosDBService:
             raise
     
     async def query_items(self, container_name: str, query: str, parameters: Optional[List[Dict[str, Any]]] = None, 
-                         cross_partition: bool = True) -> List[Dict[str, Any]]:
-        """Query items using SQL syntax"""
+                         cross_partition: bool = True, return_request_charge: bool = False) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+        """Query items using SQL syntax.
+
+        If `return_request_charge` is True, returns a dict {"items": [...], "request_charge": float}.
+        Otherwise returns the list of items (backwards compatible).
+        The method iterates pages and aggregates the `x-ms-request-charge` header when present.
+        """
         container = self.get_container(container_name)
         try:
+            start_time = time.time()
             query_results = container.query_items(
                 query=query,
                 parameters=parameters or [],
                 enable_cross_partition_query=cross_partition
             )
-            return list(query_results)
+
+            items: List[Dict[str, Any]] = []
+            total_request_charge = 0.0
+
+            # Iterate by pages to capture request charge from page headers
+            try:
+                pages = query_results.by_page()
+            except Exception:
+                # Some SDK versions may not expose by_page(), fall back to single iteration
+                pages = [query_results]
+
+            for page in pages:
+                try:
+                    page_items = list(page)
+                except TypeError:
+                    # If page is already an iterator of items
+                    page_items = list(page)
+                items.extend(page_items)
+
+                # Try several ways to access headers depending on SDK internals
+                headers = None
+                if hasattr(page, 'headers'):
+                    headers = getattr(page, 'headers')
+                elif hasattr(page, '_response') and getattr(page, '_response') is not None:
+                    resp = getattr(page, '_response')
+                    headers = getattr(resp, 'headers', None)
+
+                if headers and 'x-ms-request-charge' in headers:
+                    try:
+                        total_request_charge += float(headers['x-ms-request-charge'])
+                    except Exception:
+                        pass
+
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000.0
+
+            # Record aggregated metrics
+            try:
+                cosmos_metrics.record_operation(total_request_charge, duration_ms, 'query')
+            except Exception:
+                logger.debug('Failed to record cosmos metrics for query')
+
+            if return_request_charge:
+                return {"items": items, "request_charge": total_request_charge}
+            return items
         except CosmosHttpResponseError as e:
             logger.error(f"Query failed in '{container_name}': {e}")
             raise
@@ -509,6 +576,9 @@ class CosmosDBService:
 
 async def get_cosmosdb_service(database_client: DatabaseProxy) -> CosmosDBService:
     """Get initialized CosmosDB service with containers"""
+    # Intentionally do not perform container existence checks at startup.
+    # Containers should be provisioned manually by operators. This avoids
+    # noisy startup logs and removes any runtime dependency on container
+    # existence verification during application boot.
     service = CosmosDBService(database_client)
-    await service.ensure_containers_exist()
     return service

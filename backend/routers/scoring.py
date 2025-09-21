@@ -15,6 +15,7 @@ from models import (
     MCQValidationRequest, MCQBatchValidationRequest, MCQBatchValidationResponse,
     MCQScoreResult, LLMScoreResult,
     QuestionType, MCQQuestion, DescriptiveQuestion, CodingQuestion,
+    MCQOption, SubmissionStatus,
     Submission, Assessment, Answer,
     EvaluationRecord, EvaluationSummary, SubmissionEvaluationField
 )
@@ -234,6 +235,11 @@ class ScoringTriageService:
         
         # 1. Fetch submission and assessment data
         submission, assessment = await self._fetch_submission_data(submission_id)
+        # Build a quick lookup map of question_id -> points for accurate max point calculation
+        try:
+            self._assessment_questions_map = {q.id: getattr(q, 'points', 1.0) for q in assessment.questions}
+        except Exception:
+            self._assessment_questions_map = {}
         
         # 2. Separate answers by question type
         mcq_answers, descriptive_answers, coding_answers = await self._categorize_answers(
@@ -292,10 +298,89 @@ class ScoringTriageService:
             assessment_id = submission_data.get("assessment_id")
             if not assessment_id:
                 raise HTTPException(status_code=500, detail="Submission missing assessment_id")
+            # Remove Cosmos DB SDK metadata fields (e.g., _rid, _self, _etag, _ts)
+            submission_data = {k: v for k, v in submission_data.items() if not (isinstance(k, str) and k.startswith("_"))}
+
+            # Defensive normalization: remove any accidental runtime-added keys (e.g., partition_key)
+            if 'partition_key' in submission_data:
+                submission_data.pop('partition_key', None)
+
+            # Remove evaluation summary fields that may have been added by prior runs or dev helpers
+            for extra_key in ('evaluated_at', 'evaluatedAt', 'evaluation'):
+                if extra_key in submission_data:
+                    submission_data.pop(extra_key, None)
+
+            # Normalize assessment id key (support both alias and pythonic names)
+            assessment_id = submission_data.get("assessment_id") or submission_data.get("assessmentId")
+            if not assessment_id:
+                raise HTTPException(status_code=500, detail="Submission missing assessment_id")
+
+            # Normalize answers to use the alias-style keys Answer expects (questionId, questionType, submittedAnswer, timeSpent)
+            # Some write paths persist snake_case keys (question_id, submitted_answer, etc.). Convert them here so Pydantic
+            # validation (which expects alias keys on Answer) succeeds regardless of storage shape.
+            raw_answers = submission_data.get('answers', []) or []
+            normalized_answers = []
+            for a in raw_answers:
+                if isinstance(a, dict):
+                    # Build a new dict containing alias keys only
+                    na = {}
+                    # direct alias-preserving (if already stored in alias form)
+                    if 'questionId' in a:
+                        na['questionId'] = a.get('questionId')
+                    if 'questionType' in a:
+                        na['questionType'] = a.get('questionType')
+                    if 'submittedAnswer' in a:
+                        na['submittedAnswer'] = a.get('submittedAnswer')
+                    if 'timeSpent' in a:
+                        na['timeSpent'] = a.get('timeSpent')
+
+                    # snake_case fallbacks
+                    if 'question_id' in a and 'questionId' not in na:
+                        na['questionId'] = a.get('question_id')
+                    if 'question_type' in a and 'questionType' not in na:
+                        na['questionType'] = a.get('question_type')
+                    if 'submitted_answer' in a and 'submittedAnswer' not in na:
+                        na['submittedAnswer'] = a.get('submitted_answer')
+                    if 'time_spent' in a and 'timeSpent' not in na:
+                        na['timeSpent'] = a.get('time_spent')
+
+                    # Preserve evaluation object if present
+                    if 'evaluation' in a:
+                        na['evaluation'] = a.get('evaluation')
+
+                    # If still empty (unexpected shape), keep original dict to let Pydantic produce a helpful error
+                    normalized_answers.append(na if na else a)
+                else:
+                    # Not a dict (already model instance or other), keep as-is
+                    normalized_answers.append(a)
+
+            submission_data['answers'] = normalized_answers
+
+            # Instantiate Pydantic Submission model (populate_by_name enabled)
             submission = Submission(**submission_data)
+
             assessment_data = await self.db.find_one(CONTAINER["ASSESSMENTS"], {"id": submission.assessment_id})
             if not assessment_data:
                 raise HTTPException(status_code=404, detail="Assessment not found")
+            # Strip SDK metadata from assessment document before validation
+            assessment_data = {k: v for k, v in assessment_data.items() if not (isinstance(k, str) and k.startswith("_"))}
+
+            # Remove any runtime-inserted partition keys or other unexpected extras that
+            # may have been persisted by dev helpers or other services. This function
+            # walks the document and strips keys named 'partition_key' or 'partitionKey'.
+            def _strip_partition_keys(obj):
+                if isinstance(obj, dict):
+                    for bad in ('partition_key', 'partitionKey'):
+                        if bad in obj:
+                            obj.pop(bad, None)
+                    for v in obj.values():
+                        _strip_partition_keys(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        _strip_partition_keys(item)
+
+            _strip_partition_keys(assessment_data)
+
             assessment = Assessment(**assessment_data)
             return submission, assessment
             
@@ -508,16 +593,32 @@ class ScoringTriageService:
         self, mcq_results: List[MCQScoreResult], llm_results: List[LLMScoreResult]
     ) -> Tuple[float, float, float]:
         """Calculate final scores from all results"""
-        
-        total_points = sum(r.points_awarded for r in mcq_results) + \
-                      sum(r.points_awarded for r in llm_results)
-        
-        max_points = sum(r.points_awarded if r.correct else 
-                        self._get_max_points_for_question(r.question_id) for r in mcq_results) + \
-                    sum(self._get_max_points_for_question(r.question_id) for r in llm_results)
-        
-        percentage = (total_points / max_points * 100) if max_points > 0 else 0
-        
+        total_points = sum(float(r.points_awarded) for r in mcq_results) + \
+                       sum(float(r.points_awarded) for r in llm_results)
+
+        # Derive the max possible points from the questions earlier attached to the assessment.
+        # We expect the assessment to have been fetched by the caller and available in scope
+        # where this helper is called. To keep the function pure, we attempt to look up max
+        # points by interrogating each result's question id against the global assessment
+        # mapping if available; fallback to 1.0 if not found.
+        try:
+            # Build a map of question_id -> points from the assessment stored on `self` if present
+            # (the caller constructs this service and passes assessment to scoring functions)
+            assessment_questions_map = getattr(self, '_assessment_questions_map', None)
+        except Exception:
+            assessment_questions_map = None
+
+        def _max_for(qid: str) -> float:
+            if assessment_questions_map and qid in assessment_questions_map:
+                return float(assessment_questions_map[qid])
+            return 1.0
+
+        max_points = sum(_max_for(r.question_id) for r in mcq_results) + sum(_max_for(r.question_id) for r in llm_results)
+
+        percentage = (total_points / max_points * 100) if max_points > 0 else 0.0
+        # Cap percentage between 0 and 100
+        percentage = max(0.0, min(100.0, percentage))
+
         return total_points, max_points, percentage
     
     def _get_max_points_for_question(self, question_id: str) -> float:
@@ -565,8 +666,9 @@ class ScoringTriageService:
         )
         # Apply a soft timeout to DB write to avoid hanging the scoring pipeline
         try:
+            # Dump by_alias=False so top-level `id` and snake_case partition keys are present for Cosmos
             await asyncio.wait_for(
-                self.db.auto_create_item(CONTAINER["EVALUATIONS"], record.model_dump(by_alias=True)),
+                self.db.auto_create_item(CONTAINER["EVALUATIONS"], record.model_dump(by_alias=False)),
                 timeout=DB_WRITE_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
@@ -709,6 +811,21 @@ async def process_submission_scoring(
         raise HTTPException(status_code=500, detail=f"Submission scoring failed: {str(e)}")
 
 
+# Backwards-compatible endpoint: some clients call /triage
+@router.post("/triage", response_model=ScoringTriageResponse)
+async def triage_compat(
+    request: ScoringTriageRequest,
+    background_tasks: BackgroundTasks,
+    db: CosmosDBService = Depends(get_cosmosdb)
+):
+    """Compatibility wrapper for legacy /triage clients.
+
+    Forwards to the new process_submission_scoring implementation to
+    avoid duplicating orchestration logic.
+    """
+    return await process_submission_scoring(request, background_tasks, db)
+
+
 @router.get("/health")
 async def scoring_health_check():
     """Health check endpoint for scoring service"""
@@ -719,6 +836,136 @@ async def scoring_health_check():
         "azure_openai_enabled": USE_AZURE_OPENAI,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@router.post("/dev/create-mock-submission")
+async def create_mock_submission(db: CosmosDBService = Depends(get_cosmosdb)):
+    """Dev-only helper: create a minimal assessment and submission to test scoring end-to-end.
+
+    This will create:
+    - an `assessments` document with two questions (one MCQ, one descriptive)
+    - a `submissions` document with answers for those questions
+
+    Returns the created submission id.
+    """
+    # Only enable in non-production environments
+    if os.getenv("ENVIRONMENT", "development") == "production":
+        raise HTTPException(status_code=403, detail="Not allowed in production")
+
+    # Build Pydantic objects to ensure schema compliance and avoid extra fields
+    assessment_id = f"assess_{uuid.uuid4().hex[:8]}"
+    q1_id = f"q_{uuid.uuid4().hex[:8]}"
+    q2_id = f"q_{uuid.uuid4().hex[:8]}"
+
+    mcq_q = MCQQuestion(
+        id=q1_id,
+        text="What is 2+2?",
+        skill="general",
+        options=[
+            MCQOption(id="a", text="3"),
+            MCQOption(id="b", text="4"),
+            MCQOption(id="c", text="5"),
+        ],
+        correct_answer="b",
+        points=1
+    )
+
+    desc_q = DescriptiveQuestion(
+        id=q2_id,
+        text="Explain the concept of a binary search.",
+        skill="algorithms",
+        points=4
+    )
+
+    assessment_obj = Assessment(
+        id=assessment_id,
+        title="Mock Assessment",
+        description="Auto-generated mock assessment for scoring tests",
+        duration=30,
+        created_by="admin_mock",
+        questions=[mcq_q, desc_q]
+    )
+
+    submission_id = f"sub_{uuid.uuid4().hex[:8]}"
+    now = datetime.utcnow()
+    # Create Answer objects using aliases/names
+    # Create Answer dicts using alias keys so Pydantic expects the correct field names
+    ans1_dict = {
+        "questionId": q1_id,
+        "questionType": QuestionType.MCQ,
+        "submittedAnswer": "b",
+        "timeSpent": 5
+    }
+    ans2_dict = {
+        "questionId": q2_id,
+        "questionType": QuestionType.DESCRIPTIVE,
+        "submittedAnswer": "Binary search repeatedly halves the search space...",
+        "timeSpent": 120
+    }
+
+    # Instantiate Answer models from alias-dicts to validate shape
+    ans1 = Answer(**ans1_dict)
+    ans2 = Answer(**ans2_dict)
+
+    submission_obj = Submission(
+        id=submission_id,
+        assessmentId=assessment_id,
+        candidateId="candidate_mock",
+        status=SubmissionStatus.COMPLETED,
+        startTime=now,
+        expirationTime=now,
+        loginCode=f"code_{uuid.uuid4().hex[:6]}",
+        createdBy="admin_mock",
+        answers=[ans1, ans2]
+    )
+
+    # Persist both documents using by_alias to store expected field names
+    try:
+        # Dump without aliases to ensure top-level 'id' field is present for Cosmos
+        assessment_payload = assessment_obj.model_dump(by_alias=False)
+        submission_payload = submission_obj.model_dump(by_alias=False)
+
+        # Ensure partition keys are explicit where our service infers them
+        await db.upsert_item(CONTAINER["ASSESSMENTS"], assessment_payload, partition_key=assessment_obj.id)
+        await db.upsert_item(CONTAINER["SUBMISSIONS"], submission_payload, partition_key=submission_obj.assessment_id)
+        return {"success": True, "submission_id": submission_id, "assessment_id": assessment_id}
+    except Exception as e:
+        # DEV-only: return exception details to help debug failures during local runs
+        import traceback as _tb
+        tb = _tb.format_exc()
+        print("create_mock_submission error:\n", tb)
+        return {"success": False, "error": str(e), "traceback": tb}
+
+
+@router.get("/dev/evaluations/{submission_id}")
+async def dev_get_evaluations(submission_id: str, db: CosmosDBService = Depends(get_cosmosdb)):
+    """Dev-only: get evaluations for a submission and the submission doc itself for verification."""
+    if os.getenv("ENVIRONMENT", "development") == "production":
+        raise HTTPException(status_code=403, detail="Not allowed in production")
+
+    try:
+        # Query evaluations by submissionId (snake_case persisted)
+        results = await db.find_many(CONTAINER["EVALUATIONS"], {"submission_id": submission_id})
+        # Also return the submission document
+        submission = await db.find_one(CONTAINER["SUBMISSIONS"], {"id": submission_id})
+        return {"evaluations": results, "submission": submission}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dev/rag-queries")
+async def dev_get_rag_queries(limit: int = 10, db: CosmosDBService = Depends(get_cosmosdb)):
+    """Dev-only: return recent RAG_QUERIES entries for telemetry checks."""
+    if os.getenv("ENVIRONMENT", "development") == "production":
+        raise HTTPException(status_code=403, detail="Not allowed in production")
+    try:
+        # Simple query to get recent entries (assuming created_at or _ts presence)
+        items = await db.query_items(f"SELECT TOP {limit} * FROM c ORDER BY c._ts DESC", return_request_charge=False, container_name=CONTAINER["RAG_QUERIES"]) if False else None
+        # Fallback: use find_many for compatibility
+        results = await db.find_many(CONTAINER["RAG_QUERIES"], {}, limit=limit)
+        return {"count": len(results), "items": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ===========================

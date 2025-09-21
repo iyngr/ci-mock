@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from azure.cosmos import CosmosClient
 from azure.cosmos.cosmos_client import ConnectionPolicy
+from azure.cosmos.documents import RetryOptions
 from azure.identity import DefaultAzureCredential
 import os
 import logging
@@ -13,13 +14,15 @@ from rag_database import get_rag_service  # new import for RAG vector account
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# Reduce noisy Azure SDK HTTP request/response logging during startup
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 
 # Cosmos DB connection
 cosmos_client = None
 database_client = None
 
 
-def create_optimized_cosmos_client(endpoint: str) -> CosmosClient:
+def create_optimized_cosmos_client(endpoint: str, key: str | None = None) -> CosmosClient:
     """Create Cosmos DB client with performance optimizations"""
     
     # Configure connection policy for optimal performance
@@ -34,17 +37,24 @@ def create_optimized_cosmos_client(endpoint: str) -> CosmosClient:
     if preferred_locations and preferred_locations[0]:
         connection_policy.preferred_locations = [loc.strip() for loc in preferred_locations]
     
-    # Retry options
-    connection_policy.retry_options.max_retry_attempt_count = 3
-    connection_policy.retry_options.fixed_retry_interval_in_milliseconds = 1000
-    connection_policy.retry_options.max_wait_time_in_seconds = 10
-    
-    credential = DefaultAzureCredential()
-    
+    # Retry options — create RetryOptions object and pass to CosmosClient to be compatible
+    retry_opts = RetryOptions()
+    # These internal attributes are used by the SDK internals
+    retry_opts._max_retry_attempt_count = 3
+    retry_opts._fixed_retry_interval_in_milliseconds = 1000
+    retry_opts._max_wait_time_in_seconds = 10
+
+    # Prefer key-based auth when provided (useful for local/dev or when RBAC isn't configured)
+    if key:
+        credential = key
+    else:
+        credential = DefaultAzureCredential()
+
     return CosmosClient(
-        url=endpoint, 
+        url=endpoint,
         credential=credential,
         connection_policy=connection_policy,
+        retry_options=retry_opts,
         consistency_level=os.getenv("COSMOS_DB_CONSISTENCY_LEVEL", "Session")  # Session is optimal for most cases
     )
 
@@ -61,13 +71,15 @@ async def lifespan(app: FastAPI):
     try:
         # Initialize Azure Cosmos DB client with optimizations
         if cosmos_endpoint:
-            cosmos_client = create_optimized_cosmos_client(cosmos_endpoint)
+            cosmos_key = os.getenv("COSMOS_DB_KEY") or None
+            cosmos_client = create_optimized_cosmos_client(cosmos_endpoint, key=cosmos_key)
             database_client = cosmos_client.get_database_client(database_name)
             
             # Initialize containers with proper partition keys and throughput
             from database import get_cosmosdb_service
+            # get_cosmosdb_service already calls ensure_containers_exist(),
+            # so avoid calling it a second time here to prevent duplicate checks/logs.
             db_service = await get_cosmosdb_service(database_client)
-            await db_service.ensure_containers_exist()
             
             print(f"✓ Connected to Cosmos DB: {database_name}")
             print(f"✓ Optimized connection policy applied")

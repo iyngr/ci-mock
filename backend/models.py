@@ -3,6 +3,7 @@ from enum import Enum
 from typing import List, Optional, Any, Dict, Union, Annotated, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
 import uuid
+import os
 
 
 # ===========================
@@ -334,7 +335,6 @@ class QuestionValidationResponse(BaseModel):
     question_hash: Optional[str] = Field(None, alias="questionHash", description="SHA256 hash of the question")
     existing_question: Optional[Dict[str, Any]] = Field(None, alias="existingQuestion", description="Existing question if exact duplicate")
     similar_questions: Optional[List[Dict[str, Any]]] = Field(None, alias="similarQuestions", description="Similar questions if duplicates found")
-    similarity_scores: Optional[List[float]] = Field(None, alias="similarityScores", description="Similarity scores for found duplicates")
     validation_time: Optional[float] = Field(None, alias="validationTime", description="Time taken for validation in seconds")
 
 
@@ -374,7 +374,8 @@ class KnowledgeBaseEntry(CosmosDocument):
     
     # Additional metadata for enhanced functionality
     source_type: str = Field(default="question", alias="sourceType", description="Type of source: 'question', 'assessment', 'generated_question'")
-    embedding_model: str = Field(default="text-embedding-ada-002", alias="embeddingModel", description="Model used for embedding")
+    # Default to canonical embedding deployment env var, fallback to text-embedding-3-small
+    embedding_model: str = Field(default=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", "text-embedding-3-small"), alias="embeddingModel", description="Model used for embedding")
     
     # Searchable metadata and timestamps
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Searchable metadata (tags, type, etc.)")
@@ -404,14 +405,14 @@ class VectorSearchRequest(BaseModel):
 
 
 class VectorSearchResponse(BaseModel):
-    """Response model for vector similarity search.
+    """Response model for vector search.
 
-    `results` entries are expected to include a similarity score (normalized from distance) when
-    native vector querying is used; fallback text search may omit or approximate that metric.
-    `total_results` reflects the count returned after threshold filtering, not total corpus size.
+    `results` entries include the found document content and metadata. When native vector
+    querying is used, implementations may also include a relevance metric; consumers should
+    handle its optional presence. `total_results` reflects the count returned after filtering.
     """
     success: bool = Field(..., description="Whether search was successful")
-    results: List[Dict[str, Any]] = Field(default_factory=list, description="Search results with similarity scores")
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="Search results (content and metadata)")
     search_time: float = Field(..., alias="searchTime", description="Time taken for search in seconds")
     total_results: int = Field(..., alias="totalResults", description="Total number of results found")
 
@@ -596,6 +597,7 @@ class UpdateSubmissionRequest(BaseModel):
 
 class MCQScoreResult(BaseModel):
     """Result of MCQ direct validation"""
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
     question_id: str = Field(..., alias="questionId")
     correct: bool = Field(..., description="Whether the answer is correct")
     selected_option_id: str = Field(..., alias="selectedOptionId")
@@ -605,6 +607,7 @@ class MCQScoreResult(BaseModel):
 
 class LLMScoreResult(BaseModel):
     """Result of LLM-based scoring for descriptive/coding questions"""
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
     question_id: str = Field(..., alias="questionId")
     score: float = Field(..., description="Score from 0.0 to 1.0")
     feedback: Optional[str] = Field(None, description="AI-generated feedback")
@@ -619,6 +622,7 @@ class ScoringTriageRequest(BaseModel):
 
 class ScoringTriageResponse(BaseModel):
     """Response from hybrid scoring workflow"""
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
     submission_id: str = Field(..., alias="submissionId")
     total_score: float = Field(..., alias="totalScore")
     max_possible_score: float = Field(..., alias="maxPossibleScore")
@@ -858,6 +862,31 @@ class KnowledgeBaseUpdateResponse(BaseModel):
     knowledge_entry_id: Optional[str] = Field(None, alias="knowledgeEntryId", description="ID of the created knowledge entry")
     embedding_generated: bool = Field(False, alias="embeddingGenerated", description="Whether embedding was successfully generated")
     message: str = Field(..., description="Status or error message")
+
+
+class RAGQueryLog(CosmosDocument):
+    """Telemetry log for RAG retrievals persisted in `RAGQueries` container.
+
+    Stored in the primary transactional DB (not in the vector RAG account). Partition key is
+    `assessment_id` when available; clients may fall back to `id` when `assessment_id` is unknown.
+    """
+    # telemetry fields
+    id: str = Field(..., description="Unique telemetry id")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="ISO timestamp of the query")
+    question: Optional[str] = Field(None, description="Original question text")
+    assessment_id: Optional[str] = Field(None, alias="assessmentId", description="Assessment id to partition by when available")
+    skill: Optional[str] = Field(None, description="Skill context if supplied")
+    limit: Optional[int] = Field(None, description="Context/limit used for retrieval")
+    similarity_threshold: Optional[float] = Field(None, description="Similarity threshold used")
+    request_charge: Optional[float] = Field(None, alias="requestCharge", description="Aggregated RU cost observed for the query")
+    result_count: Optional[int] = Field(None, alias="resultCount", description="Number of results returned")
+    success: bool = Field(default=True, description="Whether the retrieval succeeded")
+
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        """Partition by assessment_id when present, else fall back to telemetry id."""
+        return self.assessment_id or self.id
 
 
 # ===========================

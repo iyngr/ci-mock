@@ -876,6 +876,8 @@ class RAGQueryRequest(BaseModel):
     question: str
     context_limit: int = 5
     similarity_threshold: float = 0.7
+    skill: str | None = None
+    limit: int | None = None
 
 
 class EmbeddingGenerationRequest(BaseModel):
@@ -950,43 +952,83 @@ async def rag_search(request: RAGQueryRequest) -> Dict[str, Any]:
         # Import RAG tools
         from tools import query_cosmosdb_for_rag
         
-        # Perform the search
-        context = await query_cosmosdb_for_rag(request.question)
-        
-        # Parse context to extract documents (if structured)
+        # Perform the search (forward optional filters to the tool)
+        result = await query_cosmosdb_for_rag(
+            request.question,
+            skill=request.skill,
+            limit=(request.limit or request.context_limit),
+            threshold=request.similarity_threshold,
+        )
+
+        # result can be a structured dict {"documents": [...], "context": str, "request_charge": float}
+        # or the older {"context": str, "request_charge": float} or a mock string.
+        request_charge = 0.0
         documents = []
-        if context and context != f"Mock context for query: {request.question}":
-            # Try to parse structured context
-            try:
-                # Context should contain numbered sections
-                sections = context.split("\n")
-                current_doc = {}
-                
-                for line in sections:
-                    line = line.strip()
-                    if line.startswith(("1.", "2.", "3.", "4.", "5.")):
+        context = None
+
+        try:
+            if isinstance(result, dict):
+                # Prefer structured 'documents' if present
+                documents = result.get('documents') or []
+                context = result.get('context')
+                request_charge = float(result.get('request_charge', 0.0))
+            else:
+                # Fallback to the older string context
+                context = result
+
+            # If the tool returned a plain context string, try to parse numeric relevance
+            # (backward compatibility). Otherwise ensure documents are in the expected shape.
+            if context and not documents:
+                if isinstance(context, str) and context.startswith('Mock context'):
+                    documents = [{"content": context, "skill": "unknown"}]
+                else:
+                    # Attempt lightweight parse of numbered sections (best-effort)
+                    try:
+                        sections = context.split('\n')
+                        current_doc = None
+                        for line in sections:
+                            line = line.strip()
+                            if line.startswith(('1.', '2.', '3.', '4.', '5.')):
+                                if current_doc:
+                                    documents.append(current_doc)
+                                # start a new document
+                                current_doc = {"content": '', "skill": 'unknown'}
+                                # line may contain the first chunk (keep as content fallback)
+                                current_doc['content'] += line
+                            elif 'Skill:' in line and current_doc is not None:
+                                current_doc['skill'] = line.replace('Skill:', '').strip()
+                            elif 'Content:' in line and current_doc is not None:
+                                current_doc['content'] = line.replace('Content:', '').strip()
+                            # ignore any 'Relevance:' lines - we no longer include relevance
                         if current_doc:
                             documents.append(current_doc)
-                        current_doc = {"content": line}
-                    elif "Skill:" in line:
-                        current_doc["skill"] = line.replace("Skill:", "").strip()
-                    elif "Content:" in line:
-                        current_doc["content"] = line.replace("Content:", "").strip()
-                    elif "Relevance:" in line:
-                        current_doc["relevance"] = line.replace("Relevance:", "").strip()
-                
-                if current_doc:
-                    documents.append(current_doc)
-                    
-            except Exception as parse_error:
-                logger.warning(f"Could not parse context structure: {parse_error}")
-                documents = [{"content": context, "skill": "unknown", "relevance": "N/A"}]
+                    except Exception as parse_error:
+                        logger.warning(f"Could not parse context structure: {parse_error}")
+                        documents = [{"content": context, "skill": "unknown"}]
+
+            # Normalize documents: ensure each document at least has content and skill
+            normalized_docs = []
+            for d in documents:
+                if isinstance(d, dict):
+                    norm = {
+                        'content': d.get('content', ''),
+                        'skill': d.get('skill', 'unknown')
+                    }
+                    normalized_docs.append(norm)
+                else:
+                    normalized_docs.append({'content': str(d), 'skill': 'unknown'})
+
+            documents = normalized_docs
+        except Exception as e:
+            logger.error(f"Error normalizing search result: {e}")
+            documents = [{"content": str(result), "skill": "unknown"}]
         
         return {
             "success": True,
             "results": documents,
             "total_found": len(documents),
             "search_type": "vector_similarity",
+            "request_charge": request_charge,
             "message": f"Found {len(documents)} relevant documents"
         }
         
@@ -1029,19 +1071,22 @@ async def generate_embedding(request: EmbeddingGenerationRequest) -> Dict[str, A
             api_version="2024-02-15-preview"
         )
         
+        # Determine embedding model from env (canonical var) with fallback
+        embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+
         # Generate embedding
         response = await client.embeddings.create(
-            model="text-embedding-ada-002",
+            model=embed_model,
             input=request.text
         )
-        
+
         embedding = response.data[0].embedding
-        
+
         return {
             "success": True,
             "embedding": embedding,
             "dimensions": len(embedding),
-            "model": "text-embedding-ada-002"
+            "model": embed_model
         }
         
     except Exception as e:
@@ -1055,4 +1100,4 @@ async def generate_embedding(request: EmbeddingGenerationRequest) -> Dict[str, A
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

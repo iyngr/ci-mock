@@ -1,3 +1,12 @@
+# Code Generation Instructions
+- When generating commands to be executed in a termnial, ensure that the commands are compatible with Powershell on Windows.
+- Powershell expects commands to be separated by semicolons, and environment variables to be set using `$env:VAR_NAME="value"`.
+- Poweshell does not support `&&` for command chaining; use semicolons instead.
+- Powershell does not support CURL natively; use `Invoke-RestMethod` or `Invoke-WebRequest` for HTTP requests.
+- When generating file paths, use backslashes `\` for Windows paths.
+- Whenever you intend to run commands such as running a PNPM server or a UV Server, ensure after starting the server, subsequent commands should be run in a new terminal session to prevent stopping the server.
+- Avoid documentation unnecessarily. Only provide documentation if explicitly asked for.
+
 # AI-Powered Technical Assessment Platform
 
 This repository contains a comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation and real-time proctoring capabilities.

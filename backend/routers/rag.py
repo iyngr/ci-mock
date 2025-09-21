@@ -6,13 +6,14 @@ import os
 import uuid
 from datetime import datetime
 import json
+import traceback
 
 from models import (
-    RAGQueryRequest, 
-    RAGQueryResponse, 
-    KnowledgeBaseUpdateRequest, 
+    RAGQueryRequest,
+    RAGQueryResponse,
+    KnowledgeBaseUpdateRequest,
     KnowledgeBaseUpdateResponse,
-    KnowledgeBaseEntry
+    KnowledgeBaseEntry,
 )
 from database import CosmosDBService, get_cosmosdb_service
 from constants import normalize_skill, CONTAINER
@@ -56,7 +57,10 @@ async def ask_rag_question(
             payload = {
                 "question": request.question,
                 "context_limit": request.context_limit,
-                "similarity_threshold": request.similarity_threshold
+                "similarity_threshold": request.similarity_threshold,
+                # forward optional guidance for partition-aware retrieval
+                "skill": getattr(request, "skill", None),
+                "limit": getattr(request, "context_limit", None)
             }
             
             response = await client.post(
@@ -94,10 +98,42 @@ async def ask_rag_question(
                 "context_count": len(context_docs),
                 "confidence_score": confidence,
                 "similarity_threshold": request.similarity_threshold,
+                "skill": getattr(request, "skill", None),
+                "limit": getattr(request, "context_limit", None),
                 "success": True
             }
-            await db.upsert_item(CONTAINER["RAG_QUERIES"], query_log)
-            
+            # If the agent included diagnostics, capture the container-level request charge
+            try:
+                diag = rag_result.get('diagnostics') if isinstance(rag_result, dict) else None
+                if diag and isinstance(diag, dict):
+                    # capture container-level RU if present
+                    container_charge = diag.get('container_last_request_charge')
+                    if container_charge is not None:
+                        try:
+                            query_log['request_charge'] = float(container_charge)
+                        except Exception:
+                            query_log['request_charge'] = container_charge
+            except Exception:
+                pass
+            # Write telemetry only to the primary transactional DB. Do NOT fall
+            # back to the RAG service; RAG account must remain vector-only.
+            from main import database_client as primary_db_client
+            from database import get_cosmosdb_service
+            try:
+                primary_service = await get_cosmosdb_service(primary_db_client)
+            except Exception as err:
+                # If the primary DB can't be resolved, skip telemetry rather than
+                # writing to the RAG DB.
+                print(f"Warning: primary DB unavailable for telemetry: {err}; telemetry skipped")
+                primary_service = None
+
+            if primary_service:
+                # Use assessment_id as partition key if provided in the request metadata
+                partition_key = (getattr(request, 'metadata', {}) or {}).get("assessment_id")
+                # Ensure we always have a non-empty partition key (fallback to telemetry id)
+                partition_key = partition_key or query_log["id"]
+                await primary_service.upsert_item(CONTAINER["RAG_QUERIES"], query_log, partition_key=partition_key)
+
         except Exception as log_error:
             print(f"Warning: Could not log RAG query: {log_error}")
         
@@ -156,15 +192,16 @@ async def update_knowledge_base(
                 embedding_result = response.json()
                 embedding = embedding_result.get("embedding")
         
-        # Create knowledge base entry
+        # Create knowledge base entry (ensure embedding is a list when generation failed)
         knowledge_entry = KnowledgeBaseEntry(
             id=str(uuid.uuid4()),
             content=request.content,
             skill=normalize_skill(request.skill),
-            embedding=embedding,
-            content_type=request.content_type,
-            metadata=request.metadata or {},
-            created_at=datetime.utcnow()
+            embedding=embedding if embedding is not None else [],
+            # model uses `source_type` (alias `sourceType`) rather than content_type
+            source_type=request.content_type,
+            metadata=request.metadata or {}
+            # indexed_at will default to now; do not pass created_at which is not a model field
         )
         
         # Store in KnowledgeBase container
@@ -178,27 +215,26 @@ async def update_knowledge_base(
         )
         
     except httpx.RequestError as e:
-        # Still create entry without embedding
+        # Still create entry without embedding (ensure field names align to model)
         try:
             knowledge_entry = KnowledgeBaseEntry(
                 id=str(uuid.uuid4()),
                 content=request.content,
                 skill=normalize_skill(request.skill),
-                embedding=None,
-                content_type=request.content_type,
-                metadata=request.metadata or {},
-                created_at=datetime.utcnow()
+                embedding=[],
+                source_type=request.content_type,
+                metadata=request.metadata or {}
             )
-            
+
             await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
-            
+
             return KnowledgeBaseUpdateResponse(
                 success=True,
                 knowledge_entry_id=knowledge_entry.id,
                 embedding_generated=False,
                 message=f"Knowledge base updated (embedding generation failed: {str(e)})"
             )
-            
+
         except Exception as fallback_error:
             raise HTTPException(
                 status_code=500,
@@ -206,11 +242,21 @@ async def update_knowledge_base(
             )
             
     except Exception as e:
-        print(f"Error updating knowledge base: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal error updating knowledge base: {str(e)}"
-        )
+        # Provide richer traceback in development to help debugging
+        tb = traceback.format_exc()
+        print(f"Error updating knowledge base: {e}\n{tb}")
+        env = os.getenv("ENVIRONMENT", "development")
+        if env != "production":
+            # include traceback in detail for local debugging
+            raise HTTPException(
+                status_code=500,
+                detail={"error": str(e), "traceback": tb}
+            )
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Internal error updating knowledge base: {str(e)}"
+            )
 
 
 @router.get("/knowledge-base/search")
@@ -230,10 +276,13 @@ async def search_knowledge_base(
         try:
             async with httpx.AsyncClient(timeout=LLM_AGENT_TIMEOUT) as client:
                 search_payload = {
-                    "query": query,
+                    # align naming with llm-agent RAGQueryRequest
+                    "question": query,
                     "limit": limit,
-                    "threshold": threshold,
-                    "skill_filter": skill
+                    "similarity_threshold": threshold,
+                    "skill": skill,
+                    # context_limit helps the agent decide how many context docs to return
+                    "context_limit": limit
                 }
                 
                 response = await client.post(
@@ -277,17 +326,50 @@ async def search_knowledge_base(
                 {"name": "@limit", "value": limit}
             ]
         
-        results = list(knowledge_container.query_items(
-            query=search_query,
+        query_response = await db.query_items(
+            CONTAINER["KNOWLEDGE_BASE"],
+            search_query,
             parameters=parameters,
-            enable_cross_partition_query=True
-        ))
-        
+            cross_partition=True,
+            return_request_charge=True
+        )
+
+        results = query_response.get("items", [])
+        request_charge = query_response.get("request_charge", 0.0)
+
+        # Include RU in telemetry/logging
+        try:
+            query_log = {
+                "id": str(uuid.uuid4()),
+                "timestamp": datetime.utcnow().isoformat(),
+                "query": query,
+                "skill": skill,
+                "limit": limit,
+                "request_charge": request_charge,
+                "result_count": len(results)
+            }
+            # Write telemetry only to the primary transactional DB. No fallback.
+            from main import database_client as primary_db_client
+            from database import get_cosmosdb_service
+            try:
+                primary_service = await get_cosmosdb_service(primary_db_client)
+            except Exception as err:
+                print(f"Warning: primary DB unavailable for telemetry: {err}; telemetry skipped")
+                primary_service = None
+
+            if primary_service:
+                # Not all searches are tied to an assessment; use query id as fallback
+                partition_key = query_log["id"]
+                await primary_service.upsert_item(CONTAINER["RAG_QUERIES"], query_log, partition_key=partition_key)
+        except Exception as e:
+            print(f"Warning: could not log RU telemetry: {e}")
+
         return {
             "success": True,
             "results": results,
             "total_found": len(results),
             "search_type": "text_based",
+            "request_charge": request_charge,
             "message": f"Found {len(results)} results using text search"
         }
         
@@ -332,3 +414,42 @@ async def rag_health_check():
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
+
+
+@router.get("/telemetry")
+async def read_rag_telemetry(limit: int = 10):
+    """Dev-only: Read recent RAG telemetry entries from the primary transactional DB.
+
+    This endpoint is intentionally lightweight and should only be used in development
+    when the primary Cosmos DB is configured. It will return an empty list if the
+    primary DB is not available.
+    """
+    try:
+        from main import database_client as primary_db_client
+        from database import get_cosmosdb_service
+        if primary_db_client is None:
+            return {"success": False, "message": "Primary DB not configured", "entries": []}
+
+        primary_service = await get_cosmosdb_service(primary_db_client)
+
+        # Simple SQL to return most recent telemetry entries
+        query = "SELECT TOP @limit * FROM c ORDER BY c.timestamp DESC"
+        parameters = [{"name": "@limit", "value": limit}]
+
+        resp = await primary_service.query_items(
+            CONTAINER["RAG_QUERIES"],
+            query,
+            parameters=parameters,
+            cross_partition=True,
+            return_request_charge=False
+        )
+
+        # If query_items returns dict when return_request_charge is true, handle both shapes
+        if isinstance(resp, dict) and "items" in resp:
+            entries = resp["items"]
+        else:
+            entries = resp
+
+        return {"success": True, "entries": entries}
+    except Exception as e:
+        return {"success": False, "message": f"Failed to read telemetry: {e}", "entries": []}

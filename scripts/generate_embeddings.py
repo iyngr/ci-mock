@@ -47,7 +47,8 @@ class EmbeddingGenerator:
         self.assessments_container = None
         self.knowledge_base_container = None
         self.openai_client = None
-        self.embedding_model = "text-embedding-ada-002"
+        # Canonical embedding model env var with fallback
+        self.embedding_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
         
     async def initialize(self):
         """Initialize Azure services"""

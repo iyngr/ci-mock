@@ -9,11 +9,16 @@ dependencies = [
     "python-dotenv>=1.0.1",
     "azure-cosmos>=4.5.1",
     "azure-identity>=1.15.0",
-    "autogen-agentchat>=0.4.0",
-    "autogen-ext[openai,azure]>=0.4.0",
+    "autogen-agentchat==0.7.4",
+    "autogen-ext[azure,openai,langchain]==0.7.4",
+    "langchain-core>=0.2.0",
+    "langchain-openai>=0.0.0",
+    "langchain-azure-ai>=0.1.0",
     "pyyaml>=6.0.0",
     "prompty>=0.1.50",
     "promptflow-tracing>=1.18.1",
+    # autogenstudio intentionally omitted from runtime dependencies because it constrains autogen-ext
+    # (see dev-dependencies below). Keep autogenstudio pinned in dev-dependencies for local tooling.
 ]
 
 [build-system]
@@ -25,7 +30,14 @@ packages = ["llm_agent"]  # Add this to specify
 
 [tool.uv]
 dev-dependencies = [
-    "autogenstudio",
+    # Note: autogenstudio is intentionally NOT listed here — it constrains autogen-ext to <0.7 and
+    # would make dependency resolution unsatisfiable. If you need autogenstudio for local tooling,
+    # install it manually into your environment (example below) using pip with --no-deps.
+    # Example: pip install autogenstudio==0.4.3.dev2 --no-deps
+    "autogen-agentchat==0.7.4",
+    "autogen-ext[azure,openai,langchain]==0.7.4",
+    "langchain-openai",
+    "langchain-azure-ai",
     "pytest>=8.0.0",
     "black>=24.0.0",
     "ruff>=0.6.0",

@@ -53,6 +53,58 @@ Multi-agent orchestration using Microsoft AutoGen (AgentChat) for question gener
    # Edit .env with your Azure OpenAI and Cosmos DB credentials
    ```
 
+### Quick local-run checklist (concise)
+
+1. Create and activate a Python 3.12+ virtualenv (PowerShell):
+
+```powershell
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+```
+
+2. Sync dependencies with `uv`:
+
+```powershell
+cd llm-agent
+uv sync
+```
+
+3. If you need AutoGen Studio tooling locally, install the pre-release manually into your venv (it constrains autogen-ext < 0.7 so we do NOT include it in `uv` deps):
+
+```powershell
+pip install autogenstudio==0.4.3.dev2 --no-deps
+```
+
+4. Copy `.env.sample` to `.env` and fill required values (see the Configuration section below). For RAG, set `RAG_COSMOS_DB_*` and `AZURE_OPENAI_EMBED_DEPLOYMENT`.
+
+5. Quick import test (from the activated venv):
+
+```powershell
+python -c "import sys; sys.path.insert(0, r'..\\llm-agent'); import agents; print('agents import OK')"
+```
+
+If you see `agents import OK`, core runtime wiring looks good.
+
+## RAG (vector) provisioning notes
+
+- Use a separate, serverless/vector-enabled Cosmos account for the KnowledgeBase to avoid RU contention with transactional workloads.
+- Provision the KnowledgeBase container ahead of time with a vector index. The embedding dimension must match the chosen embedding model (set `AZURE_OPENAI_EMBED_DEPLOYMENT` in `.env`).
+- Avoid auto-creating vector-enabled containers from application code in production; provision via CLI/portal/IaC with the correct index policy.
+
+Minimal Azure CLI example (illustrative):
+
+```powershell
+# Create resource group and serverless Cosmos account
+az group create -n rg-llm -l eastus
+az cosmosdb create -n my-rag-cosmos -g rg-llm --capabilities EnableServerless
+
+# Create database and container (example)
+az cosmosdb sql database create -a my-rag-cosmos -g rg-llm -n ci-rag-database
+az cosmosdb sql container create -a my-rag-cosmos -g rg-llm -d ci-rag-database -n KnowledgeBase --partition-key-path "/id"
+```
+
+Refer to Azure docs for vector-index details and embedding dimension matching.
+
+
 4. **Start the Service**
    ```bash
    # Using UV

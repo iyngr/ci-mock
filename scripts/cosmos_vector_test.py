@@ -48,7 +48,7 @@ async def embed_text(text: str):
         openai.api_type = 'azure'
         openai.api_base = os.getenv('AZURE_OPENAI_ENDPOINT')
         openai.api_key = os.getenv('AZURE_OPENAI_API_KEY')
-        model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
+        model = os.getenv('AZURE_OPENAI_EMBED_DEPLOYMENT', os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small'))
         resp = openai.Embeddings.create(model=model, input=text)
         return resp['data'][0]['embedding']
     except Exception as e:

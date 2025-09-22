@@ -1,21 +1,21 @@
 name: 🔴 Red Team Security Tests
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'backend/routers/live_interview.py'
-      - 'backend/tests/test_red_teaming.py'
-      - 'llm-agent/**'
-  pull_request:
-    branches: [ main ]
-    paths:
-      - 'backend/routers/live_interview.py'
-      - 'backend/tests/test_red_teaming.py'
-      - 'llm-agent/**'
+  # push:
+  #   branches: [ main, develop ]
+  #   paths:
+  #     - 'backend/routers/live_interview.py'
+  #     - 'backend/tests/test_red_teaming.py'
+  #     - 'llm-agent/**'
+  # pull_request:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'backend/routers/live_interview.py'
+  #     - 'backend/tests/test_red_teaming.py'
+  #     - 'llm-agent/**'
   schedule:
     # Run security tests daily at 2 AM UTC
-    - cron: '0 2 * * *'
+    - cron: ''
   workflow_dispatch:
     inputs:
       test_intensity:

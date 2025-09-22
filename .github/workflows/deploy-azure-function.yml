@@ -1,11 +1,13 @@
 name: Deploy Azure Function - Auto Submit
 
 on:
-  push:
-    branches: [ main ]
-    paths: 
-      - 'azure-functions/**'
-  workflow_dispatch:
+  schedule:
+    - cron: ''  # Runs daily at midnight UTC
+  # push:
+  #   branches: [ main ]
+  #   paths: 
+  #     - 'azure-functions/**'
+  # workflow_dispatch:
 
 env:
   AZURE_FUNCTIONAPP_NAME: 'assessment-auto-submit'

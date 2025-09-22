@@ -165,7 +165,7 @@ class MCQQuestion(Question):
 class DescriptiveQuestion(Question):
     """Descriptive/Essay Question model"""
     type: Literal["descriptive"] = Field(default="descriptive", description="Always descriptive type")
-    max_words: Optional[Annotated[int, Field(gt=0, le=5000)]] = Field(None, alias="maxWords", description="Word limit (1-5000)")
+    # Removed maxWords per product decision (no enforced limit); rubric retained for future scoring enhancements
     rubric: Optional[Annotated[str, Field(min_length=10, max_length=2000)]] = Field(None, description="Evaluation rubric (10-2000 chars)")
 
 
@@ -175,7 +175,6 @@ class CodingQuestion(Question):
     starter_code: Annotated[str, Field(min_length=1, max_length=10000)] = Field(..., alias="starter_code", description="Initial code template (1-10k chars)")
     test_cases: Annotated[List[TestCase], Field(min_length=1, max_length=20)] = Field(..., alias="testCases", description="1-20 test cases required")
     programming_language: ProgrammingLanguage = Field(..., alias="programmingLanguage", description="Required programming language")
-    time_limit: Annotated[int, Field(gt=0, le=300)] = Field(default=30, alias="timeLimit", description="Execution time limit (1-300 seconds)")
 
 
 # Union type for polymorphic questions - this is the key feature!

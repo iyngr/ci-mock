@@ -140,8 +140,7 @@ async def test_single_question_addition():
                 "tags": ["algorithms", "python", "arrays"],
                 "starterCode": "def find_max(arr):\n    # Your code here\n    pass",
                 "testCases": ["[1,2,3,4,5] -> 5", "[10,5,8] -> 10"],
-                "programmingLanguage": "python",
-                "timeLimit": 30
+                "programmingLanguage": "python"
             }
         },
         {
@@ -150,7 +149,6 @@ async def test_single_question_addition():
                 "text": "Explain the difference between HTTP and HTTPS protocols",
                 "type": "descriptive",
                 "tags": ["networking", "security", "protocols"],
-                "maxWords": 500,
                 "rubric": "Should cover encryption, certificates, and practical differences"
             }
         }
@@ -183,10 +181,10 @@ async def test_bulk_upload():
     token = await get_admin_token()
     
     # Create test CSV content
-    csv_content = '''type,text,tags,options,correct_answer,starter_code,test_cases,programming_language,time_limit,max_words,rubric
-mcq,"What is the Big O notation for binary search?","algorithms,complexity","a) O(n)|b) O(log n)|c) O(n²)|d) O(1)",b,,,,,,,
-coding,"Implement a sorting algorithm","algorithms,sorting",,,"def sort_array(arr):\n    # Your code here\n    pass","[3,1,4,1,5] -> [1,1,3,4,5]",python,60,,,
-descriptive,"Describe the MVC architecture pattern","architecture,design",,,,,,,300,"Should explain Model, View, Controller separation"'''
+    csv_content = '''type,text,tags,options,correct_answer,starter_code,test_cases,programming_language,rubric
+mcq,"What is the Big O notation for binary search?","algorithms,complexity","a) O(n)|b) O(log n)|c) O(n²)|d) O(1)",b,,,,
+coding,"Implement a sorting algorithm","algorithms,sorting",,,"def sort_array(arr):\n    # Your code here\n    pass","[3,1,4,1,5] -> [1,1,3,4,5]",python,
+descriptive,"Describe the MVC architecture pattern","architecture,design",,,,,,"Should explain Model, View, Controller separation"'''
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

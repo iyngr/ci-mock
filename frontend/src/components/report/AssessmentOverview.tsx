@@ -2,7 +2,7 @@ interface AssessmentOverviewProps {
     data: {
         assessmentName: string
         candidateName: string
-        testDate: string
+        testDate: string | null
         email: string
         testTakerId: string
     }
@@ -11,34 +11,27 @@ interface AssessmentOverviewProps {
 export default function AssessmentOverview({ data }: AssessmentOverviewProps) {
     return (
         <div className="p-8 min-h-[800px] flex flex-col justify-center">
-            {/* Header */}
-            <div className="text-center mb-16">
-                <h1 className="text-4xl font-bold text-gray-800 mb-2">
-                    Technical Assessment Report
-                </h1>
-                <div className="w-24 h-1 bg-blue-600 mx-auto"></div>
-            </div>
 
             {/* Assessment Details */}
             <div className="space-y-12 max-w-2xl mx-auto">
                 <div className="text-center">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4">Assessment Name</h2>
+                    <h3 className="text-2xl font-semibold text-gray-700 mb-4">Assessment Name</h3>
                     <p className="text-3xl font-bold text-blue-600 bg-blue-50 py-4 px-6 rounded-lg">
                         {data.assessmentName}
                     </p>
                 </div>
 
                 <div className="text-center">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4">Candidate Name</h2>
+                    <h3 className="text-2xl font-semibold text-gray-700 mb-4">Candidate Name</h3>
                     <p className="text-3xl font-bold text-green-600 bg-green-50 py-4 px-6 rounded-lg">
                         {data.candidateName}
                     </p>
                 </div>
 
                 <div className="text-center">
-                    <h2 className="text-2xl font-semibold text-gray-700 mb-4">Test Date</h2>
+                    <h3 className="text-2xl font-semibold text-gray-700 mb-4">Test Date</h3>
                     <p className="text-2xl font-semibold text-gray-800 bg-gray-50 py-4 px-6 rounded-lg">
-                        {data.testDate}
+                        {data.testDate || '—'}
                     </p>
                 </div>
 

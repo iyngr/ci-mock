@@ -98,12 +98,21 @@ The comprehensive "Add Questions" feature has been successfully implemented with
 4. Choose "Add Single Question" or "Bulk Upload" tab
 
 ### CSV Template Format
+Current canonical header row (lowercase):
 ```csv
-type,text,tags,options,correct_answer,starter_code,test_cases,programming_language,time_limit,max_words,rubric
-mcq,"Question text","tag1,tag2","a) Option1|b) Option2",b,,,,,,,
-coding,"Question text","tag1,tag2",,,"code here","input->output",python,30,,,
-descriptive,"Question text","tag1,tag2",,,,,,,500,"rubric text"
+text,type,tags,options,correct_answer,starter_code,test_cases,programming_language,rubric
 ```
+Example rows:
+```csv
+What is the output of print(len(set([1,2,2,3])))?,mcq,python|sets,1|2|3|Error,b,,,,
+Implement a function to reverse a string.,coding,algorithms|strings,,,"input:hello|expected:olleh|input:abc|expected:cba",python,
+Describe the difference between a list and a tuple in Python,descriptive,python|core,,,,,,Lists are mutable; tuples are immutable and hashable when containing hashable elements.
+```
+Notes:
+- `options` & `correct_answer` apply only to MCQ.
+- `starter_code`, `test_cases`, `programming_language` apply only to coding.
+- `rubric` applies only to descriptive.
+- Deprecated fields `time_limit` and `max_words` have been removed platform‑wide.
 
 ## 🔧 Configuration
 
@@ -176,8 +185,7 @@ Content-Type: application/json
   "starterCode": "code", // Coding only
   "testCases": ["input->output"], // Coding only
   "programmingLanguage": "python", // Coding only
-  "timeLimit": 30, // Coding only
-  "maxWords": 500, // Descriptive only
+  // timeLimit & maxWords removed (handled globally by assessment timing and evaluation policy)
   "rubric": "evaluation criteria" // Descriptive only
 }
 ```

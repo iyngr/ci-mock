@@ -222,7 +222,7 @@ mock_questions = [
         skill="networking",
         tags=["networking", "security"],
         role="fullstack-js",
-        maxWords=300
+        # maxWords removed globally
     ),
     CodingQuestion(
         _id="q3",
@@ -242,7 +242,7 @@ mock_questions = [
                 expectedOutput="-1"
             )
         ],
-        timeLimit=30
+        # timeLimit removed globally
     )
 ]
 

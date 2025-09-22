@@ -417,37 +417,6 @@ export default function AddQuestions() {
                                     </div>
                                 )}
 
-                                {/* Descriptive Question Fields */}
-                                {questionData.type === "descriptive" && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div>
-                                            <label className="block text-sm font-light text-warm-brown/70 mb-3">
-                                                Max Words (Optional)
-                                            </label>
-                                            <Input
-                                                type="number"
-                                                value={questionData.maxWords || ""}
-                                                onChange={(e) => setQuestionData(prev => ({ ...prev, maxWords: parseInt(e.target.value) || undefined }))}
-                                                placeholder="500"
-                                                className="h-12"
-                                            />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-light text-warm-brown/70 mb-3">
-                                                Time Limit (minutes)
-                                            </label>
-                                            <Input
-                                                type="number"
-                                                value={questionData.timeLimit || ""}
-                                                onChange={(e) => setQuestionData(prev => ({ ...prev, timeLimit: parseInt(e.target.value) || undefined }))}
-                                                placeholder="30"
-                                                className="h-12"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
                                 <div className="flex justify-end pt-6">
                                     <Button
                                         type="submit"
@@ -476,7 +445,7 @@ export default function AddQuestions() {
                                     <div className="border-2 border-dashed border-warm-brown/20 rounded-xl p-8 text-center hover:border-warm-brown/40 transition-colors">
                                         <input
                                             type="file"
-                                            accept=".csv,.json,.xlsx"
+                                            accept=".csv"
                                             onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                                             className="hidden"
                                             id="file-upload"
@@ -491,19 +460,38 @@ export default function AddQuestions() {
                                                 {uploadFile ? uploadFile.name : "Click to upload or drag and drop"}
                                             </p>
                                             <p className="text-xs text-warm-brown/60">
-                                                Supports CSV, JSON, and Excel files
+                                                Supports CSV files
                                             </p>
                                         </label>
                                     </div>
                                 </div>
 
-                                <div className="bg-warm-brown/5 rounded-xl p-6">
-                                    <h3 className="text-sm font-medium text-warm-brown mb-3">File Format Guidelines</h3>
-                                    <ul className="text-xs text-warm-brown/70 space-y-1 font-light">
-                                        <li>• CSV: Include headers for question_text, type, tags, options (for MCQ)</li>
-                                        <li>• JSON: Array of question objects with required fields</li>
-                                        <li>• Excel: First row should contain column headers</li>
-                                    </ul>
+                                <div className="bg-warm-brown/5 rounded-xl p-6 space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-sm font-medium text-warm-brown">File Format Guidelines</h3>
+                                        <a
+                                            href="/question-bulk-template.csv"
+                                            download
+                                            className="text-xs text-warm-brown/70 hover:text-warm-brown underline"
+                                        >Download CSV Template</a>
+                                    </div>
+                                    <div className="text-xs text-warm-brown/70 font-light space-y-2">
+                                        <p>Supported upload types: <span className="font-medium">CSV</span></p>
+                                        <p className="font-medium">CSV Required Headers (lowercase):</p>
+                                        <pre className="whitespace-pre-wrap bg-white/70 p-2 rounded border border-warm-brown/10 text-[10px] leading-relaxed">text,type,tags,options,correct_answer,starter_code,test_cases,programming_language,rubric</pre>
+                                        <ul className="list-disc pl-4 space-y-1">
+                                            <li><span className="font-medium">text</span>: Question text (required).</li>
+                                            <li><span className="font-medium">type</span>: One of <code>mcq</code>, <code>coding</code>, <code>descriptive</code>.</li>
+                                            <li><span className="font-medium">tags</span>: Comma-separated tags (optional).</li>
+                                            <li><span className="font-medium">options</span>: For MCQ only. Pipe-delimited options (e.g. <code>Red|Green|Blue|Yellow</code>).</li>
+                                            <li><span className="font-medium">correct_answer</span>: MCQ only. Single option id (a,b,c,d...).</li>
+                                            <li><span className="font-medium">starter_code</span>: Coding only. Starter code snippet.</li>
+                                            <li><span className="font-medium">test_cases</span>: Coding only. Pipe-delimited inputs or input:expected pairs.</li>
+                                            <li><span className="font-medium">programming_language</span>: Coding only. Defaults to python if blank.</li>
+                                            <li><span className="font-medium">rubric</span>: Descriptive only. Free-form evaluation notes.</li>
+                                        </ul>
+                                        <p className="pt-2">Unused columns are ignored. Leave irrelevant fields empty for each row.</p>
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end">

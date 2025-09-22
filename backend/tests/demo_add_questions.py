@@ -52,8 +52,7 @@ async def demo_add_questions():
                 "tags": ["python", "algorithms"],
                 "starterCode": "def fibonacci(n):\n    # implement here\n    pass",
                 "testCases": ["fibonacci(5) -> 5", "fibonacci(10) -> 55"],
-                "programmingLanguage": "python",
-                "timeLimit": 45
+                "programmingLanguage": "python"
             }
         },
         {
@@ -62,7 +61,6 @@ async def demo_add_questions():
                 "text": "explain microservices architecture",
                 "type": "descriptive",
                 "tags": ["architecture", "system-design"],
-                "maxWords": 750,
                 "rubric": "Should cover service independence, communication, scalability"
             }
         }

@@ -9,19 +9,11 @@ interface TestTakerDetailsProps {
         testTakerId: string
         overallScore: number
         detailedStatus: string
-        testFinishTime: string
-        lastName: string
-        dateOfBirth: string
-        contactNo: string
-        gender: string
-        country: string
+        testFinishTime: string | null
         strengths: string[]
         areasOfDevelopment: string[]
-        competencyAnalysis: {
-            name: string
-            score: number
-            category: 'unsatisfactory' | 'average' | 'good' | 'exceptional' | 'benchmark'
-        }[]
+        competencyAnalysis: { name: string; score: number; category: 'unsatisfactory' | 'average' | 'good' | 'exceptional' | 'benchmark' }[]
+        lifecycleEvents?: { event: string; timestamp: string }[]
     }
 }
 
@@ -135,7 +127,7 @@ export default function TestTakerDetails({ data }: TestTakerDetailsProps) {
         <div className="p-8">
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 mb-2">Test Taker Details</h1>
+                <h3 className="text-3xl font-bold text-gray-800 mb-2">Test Taker Details</h3>
                 <div className="w-16 h-1 bg-blue-600"></div>
             </div>
 
@@ -153,28 +145,7 @@ export default function TestTakerDetails({ data }: TestTakerDetailsProps) {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                            <span className="text-gray-600">Last Name:</span>
-                            <span className="ml-2 font-medium">{data.lastName}</span>
-                        </div>
-                        <div>
-                            <span className="text-gray-600">Date of birth:</span>
-                            <span className="ml-2 font-medium">{data.dateOfBirth}</span>
-                        </div>
-                        <div>
-                            <span className="text-gray-600">Contact No:</span>
-                            <span className="ml-2 font-medium">{data.contactNo}</span>
-                        </div>
-                        <div>
-                            <span className="text-gray-600">Gender:</span>
-                            <span className="ml-2 font-medium">{data.gender}</span>
-                        </div>
-                        <div className="col-span-2">
-                            <span className="text-gray-600">Country:</span>
-                            <span className="ml-2 font-medium">{data.country}</span>
-                        </div>
-                    </div>
+                    {/* Removed personal demographic fields */}
                 </div>
 
                 <div className="bg-white border border-gray-200 p-6 rounded-lg">
@@ -189,15 +160,23 @@ export default function TestTakerDetails({ data }: TestTakerDetailsProps) {
                         </div>
                         <div className="col-span-2">
                             <span className="text-gray-600">Test Finish Time:</span>
-                            <span className="ml-2 font-medium">{data.testFinishTime}</span>
+                            <span className="ml-2 font-medium">{data.testFinishTime || '—'}</span>
                         </div>
+                        {data.lifecycleEvents && data.lifecycleEvents.length > 0 && (
+                            <div className="col-span-2 mt-4">
+                                <span className="text-gray-600 block mb-1">Lifecycle:</span>
+                                <ol className="text-xs text-gray-500 space-y-1">
+                                    {data.lifecycleEvents.map((e, i) => (<li key={i}>{e.event} • {e.timestamp}</li>))}
+                                </ol>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
 
             {/* Overall Assessment Score */}
             <div className="mb-8">
-                <h2 className="text-2xl font-semibold mb-4">Overall Assessment Score:</h2>
+                <h3 className="text-2xl font-semibold mb-4">Overall Assessment Score:</h3>
                 <div className="flex items-center">
                     <canvas
                         ref={overallScoreRef}
@@ -262,7 +241,7 @@ export default function TestTakerDetails({ data }: TestTakerDetailsProps) {
 
             {/* Competency Wise Analysis */}
             <div>
-                <h2 className="text-2xl font-semibold mb-4">Competency Wise Analysis:</h2>
+                <h3 className="text-2xl font-semibold mb-4">Competency Wise Analysis:</h3>
                 <canvas
                     ref={competencyChartRef}
                     width={800}

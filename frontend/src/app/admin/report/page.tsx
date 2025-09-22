@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,12 +29,11 @@ export default function ReportsPage() {
 
     useEffect(() => {
         // Check if admin is logged in
-        const token = localStorage.getItem("adminToken")
+        const token = typeof window !== 'undefined' ? localStorage.getItem("adminToken") : null
         if (!token) {
             router.push("/admin")
             return
         }
-
         fetchReports()
     }, [router])
 
@@ -43,12 +42,13 @@ export default function ReportsPage() {
         let filtered = reports
 
         if (searchTerm) {
-            filtered = filtered.filter(
-                report =>
-                    report.candidateName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    report.candidateEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    report.role.toLowerCase().includes(searchTerm.toLowerCase())
-            )
+            const lowered = searchTerm.toLowerCase()
+            filtered = filtered.filter(report => {
+                const name = (report.candidateName || "").toLowerCase()
+                const email = (report.candidateEmail || "").toLowerCase()
+                const role = (report.role || "").toLowerCase()
+                return name.includes(lowered) || email.includes(lowered) || role.includes(lowered)
+            })
         }
 
         if (statusFilter !== "all") {
@@ -58,65 +58,91 @@ export default function ReportsPage() {
         setFilteredReports(filtered)
     }, [reports, searchTerm, statusFilter])
 
-    const fetchReports = async () => {
+    const fetchReports = useCallback(async () => {
         try {
             setLoading(true)
-
-            // Mock data for now - replace with actual API call
-            const mockReports: AssessmentReport[] = [
-                {
-                    id: "1",
-                    candidateName: "John Doe",
-                    candidateEmail: "john.doe@example.com",
-                    role: "Python Backend Developer",
-                    status: "completed",
-                    score: 85,
-                    completedAt: "2024-03-15T10:30:00Z",
-                    duration: 120,
-                    totalQuestions: 10,
-                    correctAnswers: 8
-                },
-                {
-                    id: "2",
-                    candidateName: "Jane Smith",
-                    candidateEmail: "jane.smith@example.com",
-                    role: "React Frontend Developer",
-                    status: "completed",
-                    score: 92,
-                    completedAt: "2024-03-14T14:20:00Z",
-                    duration: 105,
-                    totalQuestions: 12,
-                    correctAnswers: 11
-                },
-                {
-                    id: "3",
-                    candidateName: "Mike Johnson",
-                    candidateEmail: "mike.johnson@example.com",
-                    role: "Full Stack JavaScript Developer",
-                    status: "in-progress",
-                    totalQuestions: 15
-                },
-                {
-                    id: "4",
-                    candidateName: "Sarah Wilson",
-                    candidateEmail: "sarah.wilson@example.com",
-                    role: "DevOps Engineer",
-                    status: "expired",
-                    totalQuestions: 8
-                }
-            ]
-
-            // Simulate API delay
-            setTimeout(() => {
-                setReports(mockReports)
+            const token = localStorage.getItem('adminToken')
+            if (!token) {
                 setLoading(false)
-            }, 500)
+                return
+            }
 
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+            // Fetch submissions (tests) and assessments in parallel
+            const [subRes, assessRes] = await Promise.all([
+                fetch(`${baseUrl}/api/admin/tests`, { headers: { Authorization: `Bearer ${token}` } }),
+                fetch(`${baseUrl}/api/admin/assessments`, { headers: { Authorization: `Bearer ${token}` } })
+            ])
+
+            if (!subRes.ok) throw new Error(`Submissions fetch failed: ${subRes.status}`)
+            if (!assessRes.ok) throw new Error(`Assessments fetch failed: ${assessRes.status}`)
+
+            const submissionsRaw = await subRes.json()
+            const assessmentsRaw = await assessRes.json()
+
+            // Build assessment lookup for question counts + role
+            const assessmentById: Record<string, any> = {}
+            for (const a of assessmentsRaw) {
+                if (a && (a.id || a._id)) {
+                    assessmentById[a.id || a._id] = a
+                }
+            }
+
+            const transformed: AssessmentReport[] = (submissionsRaw || []).map((s: any) => {
+                const assessment = assessmentById[s.assessment_id] || {}
+                const questions = assessment.questions || []
+                // Normalize status mapping
+                let status: AssessmentReport['status'] = 'in-progress'
+                const rawStatus = s.status || s.state || 'pending'
+                if (rawStatus === 'completed') status = 'completed'
+                else if (rawStatus === 'expired') status = 'expired'
+                else status = 'in-progress'
+
+                const createdAt = s.created_at || s.createdAt
+                const completedAt = s.completed_at || s.completedAt
+                let duration: number | undefined = undefined
+                if (createdAt && completedAt) {
+                    try {
+                        const start = new Date(createdAt).getTime()
+                        const end = new Date(completedAt).getTime()
+                        if (!isNaN(start) && !isNaN(end) && end > start) {
+                            duration = Math.round((end - start) / 1000 / 60) // minutes
+                        }
+                    } catch { }
+                }
+
+                const scoreRaw = s.overall_score ?? s.overallScore ?? s.score
+                const score = typeof scoreRaw === 'number' ? Math.round(scoreRaw) : (typeof scoreRaw === 'string' ? parseFloat(scoreRaw) : undefined)
+
+                const email = s.candidate_email || s.candidateEmail || s.email || s.initiated_by || ''
+                const candidateName = s.candidate_name || email?.split('@')[0] || 'Candidate'
+
+                return {
+                    id: s.id || s._id || s.submission_id,
+                    candidateName,
+                    candidateEmail: email,
+                    role: assessment.target_role || assessment.role || '—',
+                    status,
+                    score: score && !isNaN(score) ? score : undefined,
+                    completedAt: completedAt,
+                    duration,
+                    totalQuestions: Array.isArray(questions) ? questions.length : 0,
+                    correctAnswers: undefined // Placeholder until per-question scoring available
+                }
+            })
+
+            setReports(transformed)
         } catch (error) {
-            console.error("Failed to fetch reports:", error)
+            console.error('Failed to fetch reports:', error)
+        } finally {
             setLoading(false)
         }
-    }
+    }, [])
+
+        // Expose refetch in case of future UI actions
+        ; (globalThis as any).refetchReports = fetchReports
+
 
     const formatDate = (dateString: string) => {
         return new Date(dateString).toLocaleDateString("en-US", {

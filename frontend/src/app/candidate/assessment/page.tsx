@@ -535,10 +535,10 @@ export default function Assessment() {
     // Legacy autosave support (can be removed in future)
     const saved = localStorage.getItem("assessment_autosave")
     if (saved) {
-      try {
-        const parsed = JSON.parse(saved)
+      (async () => {
+        const { safeParseJSON } = await import('@/lib/safeJson');
+        const parsed = safeParseJSON<any>(saved, 'assessment_autosave');
         if (parsed?.answers && Array.isArray(parsed.answers)) {
-          // Defer merge until questions fetched
           const interval = setInterval(() => {
             if (questions.length > 0 && parsed.answers.length === questions.length) {
               setAnswers(prev => prev.map((a, i) => ({ ...a, submittedAnswer: parsed.answers[i]?.submittedAnswer ?? a.submittedAnswer })))
@@ -548,7 +548,7 @@ export default function Assessment() {
           }, 300)
           setTimeout(() => clearInterval(interval), 5000)
         }
-      } catch { /* ignore */ }
+      })();
     }
 
     // Force fullscreen on assessment start

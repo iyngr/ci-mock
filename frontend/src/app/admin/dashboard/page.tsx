@@ -67,9 +67,11 @@ export default function AdminDashboard() {
     }
   }
 
-  const filteredTests = tests.filter(test =>
-    test.candidateEmail.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // Defensive filtering: handle cases where backend returns unexpected shape or empty list
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+  const filteredTests = (tests || [])
+    .filter(t => t && typeof (t as any).candidateEmail === "string")
+    .filter(t => (t.candidateEmail || "").toLowerCase().includes(normalizedSearch))
 
   const statusData = {
     labels: ["Completed", "Pending", "In Progress"],
@@ -241,22 +243,26 @@ export default function AdminDashboard() {
                   filteredTests.slice(0, 12).map((test, index) => (/* Show more tests due to increased space */
                     <div key={index} className="flex items-center justify-between p-4 bg-white/40 rounded-xl border border-warm-brown/5 hover:bg-white/60 transition-colors">
                       <div className="flex-1 min-w-0">{/* Added min-w-0 for better text truncation */}
-                        <p className="font-medium text-warm-brown text-sm truncate">{test.candidateEmail}</p>
+                        <p className="font-medium text-warm-brown text-sm truncate">{test.candidateEmail || '—'}</p>
                         <div className="flex items-center gap-4 mt-1">
-                          <p className="text-xs text-warm-brown/60">
-                            {new Date(test.createdAt).toLocaleDateString()}
-                          </p>
+                          {test.createdAt ? (
+                            <p className="text-xs text-warm-brown/60">
+                              {new Date(test.createdAt).toLocaleDateString()}
+                            </p>
+                          ) : <p className="text-xs text-warm-brown/40">n/a</p>}
                           {/* Add time information */}
-                          <p className="text-xs text-warm-brown/50">
-                            {new Date(test.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </p>
+                          {test.createdAt ? (
+                            <p className="text-xs text-warm-brown/50">
+                              {new Date(test.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 ml-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-light border ${getStatusBadge(test.status)}`}>
-                          {test.status.replace('_', ' ')}
+                        <span className={`px-3 py-1 rounded-full text-xs font-light border ${getStatusBadge((test.status || '').toLowerCase())}`}>
+                          {(test.status || 'unknown').replace('_', ' ')}
                         </span>
-                        {test.overallScore && (
+                        {typeof test.overallScore === 'number' && (
                           <span className="text-sm font-medium text-warm-brown min-w-[3rem] text-right">
                             {Math.round(test.overallScore)}%
                           </span>
@@ -266,7 +272,7 @@ export default function AdminDashboard() {
                   ))
                 ) : (
                   <div className="text-center py-12">
-                    <p className="text-warm-brown/60 font-light">No tests found</p>
+                    <p className="text-warm-brown/60 font-light">{normalizedSearch ? 'No matching tests' : 'No tests available yet'}</p>
                   </div>
                 )}
               </div>

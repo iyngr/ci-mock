@@ -94,7 +94,7 @@ export default function SubSkillAnalysis({ data }: SubSkillAnalysisProps) {
         <div className="p-8">
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 mb-2">Sub-Skill Wise Analysis:</h1>
+                <h3 className="text-3xl font-bold text-gray-800 mb-2">Sub-Skill Wise Analysis:</h3>
                 <div className="w-16 h-1 bg-blue-600"></div>
             </div>
 

@@ -16,6 +16,8 @@ COLLECTIONS: Dict[str, Dict[str, str]] = {
     # New: S2S interview docs and transcripts
     "INTERVIEWS": {"name": "interviews", "pk_field": "assessment_id"},
     "INTERVIEW_TRANSCRIPTS": {"name": "interview_transcripts", "pk_field": "assessment_id"},
+    # Bulk upload session storage for admins to review/confirm uploads
+    "BULK_UPLOAD_SESSIONS": {"name": "bulk_upload_sessions", "pk_field": "id"},
 }
 
 # Default embedding dimensionality used for KnowledgeBase entries (Azure OpenAI small embedding model)

@@ -156,115 +156,124 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
     # In a real implementation, you would query generated_questions_container here.
     # For now, we simulate calling OpenAI and returning a new question.
     
-    # This is where you would call the Question_Generator_Agent
-    # For simplicity in this tool definition, we are returning a mock response.
-    mock_ai_question = {
+    # This is where you would call the Question_Generator_Agent. For now we
+    # generate the question structure and attempt to persist it to GeneratedQuestions
+    ai_question = {
         "text": f"This is a newly generated {difficulty} {question_type} question about {skill}.",
-        "prompt_hash": prompt_hash,  # Include hash for question tracking
-        # ... other fields like options, correct answer etc.
+        "prompt_hash": prompt_hash,
+        "skill": skill,
+        "question_type": question_type,
+        "difficulty": difficulty,
+        # Placeholders for richer fields
+        "options": [],
+        "correct_answer": None,
     }
-    
-    # You would then save this to your `GeneratedQuestions` container.
-    print("TOOL: Caching new question.")
-    
-    return json.dumps(mock_ai_question)
 
-def validate_question_exact_match(question_text: str) -> Dict[str, Any]:
-    """
-    Phase 1 validation: Check for exact duplicate using SHA256 hash.
-    Returns status and matching question if found.
-    """
-    print(f"TOOL: Checking exact match for question: {question_text[:50]}...")
-    
-    # Generate SHA256 hash of the question text
-    question_hash = hashlib.sha256(question_text.strip().lower().encode()).hexdigest()
-    print(f"Question hash: {question_hash[:8]}...")
-    
+    # Attempt to persist to generated_questions_container when available
+    saved = None
     try:
-        # Query assessments container for exact hash match
-        # In production, this would query the actual database
-        # For development, we simulate the check
-        
-        # Mock check - in real implementation, query Cosmos DB
-        # query = f"SELECT * FROM c WHERE c.question_hash = '{question_hash}'"
-        # existing_questions = list(assessments_container.query_items(query=query))
-        
-        # For demo purposes, simulate occasional duplicates
-        mock_existing_questions = []
-        if "duplicate" in question_text.lower():
-            mock_existing_questions = [{"id": "existing_q1", "text": question_text}]
-        
-        if mock_existing_questions:
-            print("Exact duplicate found!")
-            return {
-                "status": "exact_duplicate",
-                "existing_question": mock_existing_questions[0],
-                "question_hash": question_hash
-            }
-        else:
-            print("No exact duplicate found")
-            return {
-                "status": "unique_hash",
-                "question_hash": question_hash
-            }
-            
+        if hasattr(generated_questions_container, "upsert_item"):
+            saved = generated_questions_container.upsert_item(ai_question)
+            print(f"TOOL: Saved generated question to GeneratedQuestions (id={saved.get('id')})")
+        elif hasattr(generated_questions_container, "create_item"):
+            saved = generated_questions_container.create_item(ai_question)
+            print(f"TOOL: Created generated question in GeneratedQuestions (id={saved.get('id')})")
     except Exception as e:
-        print(f"Error in exact match validation: {e}")
-        return {
-            "status": "validation_error",
-            "error": str(e),
-            "question_hash": question_hash
-        }
+        print(f"Warning: could not persist generated question: {e}")
 
-def validate_question_similarity(question_text: str) -> Dict[str, Any]:
-    """
-    Phase 2 validation: Check for semantic similarity using vector embeddings.
-    Returns status and similar questions if found above threshold.
-    """
-    print(f"TOOL: Checking semantic similarity for question: {question_text[:50]}...")
-    
-    try:
-        # In production, this would:
-        # 1. Generate vector embedding for the question text using Azure OpenAI
-        # 2. Perform vector similarity search against KnowledgeBase container
-        # 3. Return results above similarity threshold (e.g., 0.95)
-        
-        # Mock similarity check - simulate finding similar questions
-        mock_similar_questions = []
-        
-        # Simulate similarity detection based on keywords
-        similarity_keywords = ["algorithm", "complexity", "sorting", "search", "array"]
-        question_lower = question_text.lower()
-        
-        for keyword in similarity_keywords:
-            if keyword in question_lower:
-                # Simulate finding 1-2 similar questions
-                mock_similar_questions.append({
-                    "id": f"similar_{keyword}_q1",
-                    "text": f"Related question about {keyword} algorithms",
-                    "similarity_score": 0.87
-                })
-                break
-        
-        if mock_similar_questions:
-            print(f"Found {len(mock_similar_questions)} similar questions")
-            return {
-                "status": "similar_duplicate",
-                "similar_questions": mock_similar_questions,
-                "similarity_threshold": 0.85
-            }
-        else:
-            print("No similar questions found")
-            return {
-                "status": "unique"
-            }
-            
-    except Exception as e:
-        print(f"Error in similarity validation: {e}")
-        return {
-            "status": "validation_error", 
-            "error": str(e)
-        }
+    # If we successfully persisted, attempt to generate and store an embedding
+    if saved is not None:
+        try:
+            # Attempt to import the OpenAI SDK and create an embedding
+            try:
+                import openai
+            except Exception:
+                openai = None
+
+            query_embedding = None
+            if openai is not None:
+                openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+                openai_key = os.getenv('AZURE_OPENAI_API_KEY')
+                if openai_endpoint and openai_key:
+                    try:
+                        # Prefer synchronous client if available
+                        if hasattr(openai, 'AzureOpenAI'):
+                            client = openai.AzureOpenAI(
+                                azure_endpoint=openai_endpoint,
+                                api_key=openai_key,
+                                api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                            )
+                            embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+                            resp = client.embeddings.create(model=embed_model, input=ai_question['text'])
+                            query_embedding = resp.data[0].embedding
+                        elif hasattr(openai, 'AsyncAzureOpenAI'):
+                            import asyncio
+
+                            async def _embed_async(text: str):
+                                client = openai.AsyncAzureOpenAI(
+                                    azure_endpoint=openai_endpoint,
+                                    api_key=openai_key,
+                                    api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                                )
+                                embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+                                resp = await client.embeddings.create(model=embed_model, input=text)
+                                return resp.data[0].embedding
+
+                            try:
+                                import asyncio as _asyncio
+                                if not _asyncio.get_event_loop().is_running():
+                                    query_embedding = _asyncio.run(_embed_async(ai_question['text']))
+                            except Exception:
+                                query_embedding = None
+                    except Exception as e:
+                        print(f"Warning: embedding generation failed for generated question: {e}")
+
+            # Persist embedding into the KnowledgeBase container if available
+            if query_embedding is not None:
+                try:
+                    kb = rag_knowledge_container if rag_knowledge_container is not None else None
+                    if kb is None and database is not None:
+                        try:
+                            kb = database.get_container_client("KnowledgeBase")
+                        except Exception:
+                            kb = None
+
+                    if kb is not None:
+                        kb_doc = {
+                            "id": saved.get('id') or hashlib.sha256(ai_question['text'].encode()).hexdigest(),
+                            "content": ai_question['text'],
+                            "skill": ai_question.get('skill'),
+                            "embedding": query_embedding,
+                        }
+                        try:
+                            if hasattr(kb, 'upsert_item'):
+                                kb.upsert_item(kb_doc)
+                            else:
+                                kb.create_item(kb_doc)
+                            print(f"TOOL: Stored embedding in KnowledgeBase for generated question id={kb_doc['id']}")
+                        except Exception as e:
+                            print(f"Warning: Could not persist KB embedding: {e}")
+                except Exception as e:
+                    print(f"Warning: embedding storage skipped: {e}")
+
+        except Exception as e:
+            print(f"Warning: embedding generation encountered an error: {e}")
+
+        try:
+            return json.dumps(saved)
+        except Exception:
+            pass
+
+    # If persistence is not available, fall back to returning the in-memory object
+    print("TOOL: Returning generated question without persistence")
+    return json.dumps(ai_question)
+
+
+# Per-phase validator fragments removed. A single `validate_question` implementation
+# is defined below (after the RAG retrieval function) and performs:
+# 1) exact content match against KnowledgeBase/GeneratedQuestions
+# 2) semantic similarity via embeddings (when available)
+# 3) token-overlap heuristic fallback
 
 # ===========================
 # RAG SYSTEM FUNCTIONS
@@ -284,28 +293,32 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
     print(f"RAG TOOL: Searching knowledge base for: {query_text[:50]}...")
     
     try:
-        # Import Azure OpenAI for embedding generation
+        # Import Azure OpenAI if available; we'll only use embeddings when the SDK
+        # and configuration are present. Otherwise we'll fall back to text search
+        # against the KnowledgeBase container below.
+        openai = None
         try:
-            import openai
-            from azure.core.credentials import AzureKeyCredential
-        except ImportError:
-            print("Warning: Azure OpenAI not available, using mock RAG response")
-            return f"Mock context for query: {query_text}"
-        
-        # Initialize Azure OpenAI client
+            import openai as _openai
+            openai = _openai
+        except Exception:
+            print("Warning: Azure OpenAI SDK not available; will use text-based fallback for RAG")
+
+        # Initialize Azure OpenAI client only when endpoint+key and SDK are present
+        openai_client = None
         openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
         openai_key = os.getenv('AZURE_OPENAI_API_KEY')
-        
-        if not openai_endpoint or not openai_key:
-            print("Warning: Azure OpenAI not configured, using mock RAG response")
-            return f"Mock context for query: {query_text}"
-        
-        # Create OpenAI client
-        openai_client = openai.AsyncAzureOpenAI(
-            azure_endpoint=openai_endpoint,
-            api_key=openai_key,
-            api_version="2024-02-15-preview"
-        )
+        if openai is not None and openai_endpoint and openai_key:
+            # Warn if legacy AZURE_OPENAI_MODEL is present (do not use it at runtime)
+            if os.getenv("AZURE_OPENAI_MODEL"):
+                print("Warning: AZURE_OPENAI_MODEL is set but is ignored at runtime. Use AZURE_OPENAI_DEPLOYMENT_NAME or AZURE_OPENAI_EMBED_DEPLOYMENT instead.")
+            try:
+                openai_client = openai.AsyncAzureOpenAI(
+                    azure_endpoint=openai_endpoint,
+                    api_key=openai_key,
+                    api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                )
+            except Exception as e:
+                print(f"Warning: could not initialize AsyncAzureOpenAI client: {e}; falling back to text search")
         
         # Validate and clamp parameters
         try:
@@ -325,14 +338,19 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
         # clamp threshold between 0.0 and 1.0
         threshold = max(0.0, min(1.0, threshold))
 
-        # Generate embedding for the query (use canonical env var with fallback)
+        # Generate embedding for the query only if we have a working client.
         print(f"Generating embedding for query (skill={skill}, limit={limit}, threshold={threshold})...")
-        embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
-        embedding_response = await openai_client.embeddings.create(
-            model=embed_model,
-            input=query_text
-        )
-        query_embedding = embedding_response.data[0].embedding
+        query_embedding = None
+        if openai_client is not None:
+            try:
+                embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+                embedding_response = await openai_client.embeddings.create(
+                    model=embed_model,
+                    input=query_text
+                )
+                query_embedding = embedding_response.data[0].embedding
+            except Exception as e:
+                print(f"Warning: embedding generation failed: {e}; will fall back to text search")
         
         # Get KnowledgeBase container: prefer RAG client if configured
         knowledge_base_container = None
@@ -356,47 +374,52 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
             total_request_charge = 0.0
             items = []
 
-            if skill:
-                vector_search_query = f"""
-                SELECT TOP {limit} c.content, c.skill
-                FROM c
-                WHERE c.skill = @skill AND {similarity_fn}(c.embedding, @queryEmbedding) > @threshold
-                ORDER BY {similarity_fn}(c.embedding, @queryEmbedding)
-                """
-                parameters = [
-                    {"name": "@queryEmbedding", "value": query_embedding},
-                    {"name": "@skill", "value": skill},
-                    {"name": "@threshold", "value": threshold}
-                ]
-                try:
-                    iterator = knowledge_base_container.query_items(
-                        query=vector_search_query,
-                        parameters=parameters,
-                        enable_cross_partition_query=False,
-                        partition_key=skill
-                    )
-                except TypeError:
+            # Only attempt vector search when we have a query_embedding
+            if query_embedding is not None:
+                if skill:
+                    vector_search_query = f"""
+                    SELECT TOP {limit} c.content, c.skill
+                    FROM c
+                    WHERE c.skill = @skill AND {similarity_fn}(c.embedding, @queryEmbedding) > @threshold
+                    ORDER BY {similarity_fn}(c.embedding, @queryEmbedding)
+                    """
+                    parameters = [
+                        {"name": "@queryEmbedding", "value": query_embedding},
+                        {"name": "@skill", "value": skill},
+                        {"name": "@threshold", "value": threshold}
+                    ]
+                    try:
+                        iterator = knowledge_base_container.query_items(
+                            query=vector_search_query,
+                            parameters=parameters,
+                            enable_cross_partition_query=False,
+                            partition_key=skill
+                        )
+                    except TypeError:
+                        iterator = knowledge_base_container.query_items(
+                            query=vector_search_query,
+                            parameters=parameters,
+                            enable_cross_partition_query=True
+                        )
+                else:
+                    vector_search_query = f"""
+                    SELECT TOP {limit} c.content, c.skill
+                    FROM c
+                    WHERE {similarity_fn}(c.embedding, @queryEmbedding) > @threshold
+                    ORDER BY {similarity_fn}(c.embedding, @queryEmbedding)
+                    """
+                    parameters = [
+                        {"name": "@queryEmbedding", "value": query_embedding},
+                        {"name": "@threshold", "value": threshold}
+                    ]
                     iterator = knowledge_base_container.query_items(
                         query=vector_search_query,
                         parameters=parameters,
                         enable_cross_partition_query=True
                     )
             else:
-                vector_search_query = f"""
-                SELECT TOP {limit} c.content, c.skill
-                FROM c
-                WHERE {similarity_fn}(c.embedding, @queryEmbedding) > @threshold
-                ORDER BY {similarity_fn}(c.embedding, @queryEmbedding)
-                """
-                parameters = [
-                    {"name": "@queryEmbedding", "value": query_embedding},
-                    {"name": "@threshold", "value": threshold}
-                ]
-                iterator = knowledge_base_container.query_items(
-                    query=vector_search_query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True
-                )
+                # No embedding available; raise to trigger the fallback text search
+                raise RuntimeError("No query embedding available; skipping vector search")
 
             # Try to iterate by pages to collect per-page RU charges
             try:
@@ -454,7 +477,7 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
             print(f"Vector search not available, using fallback: {e}")
             # Fallback: regular text-based search, capture RU similarly
             total_request_charge = 0.0
-            fallback_query = f"SELECT TOP 5 c.content, c.skill FROM c WHERE CONTAINS(LOWER(c.content), LOWER(@query))"
+            fallback_query = "SELECT TOP 5 c.content, c.skill FROM c WHERE CONTAINS(LOWER(c.content), LOWER(@query))"
             parameters = [{"name": "@query", "value": query_text}]
             iterator = knowledge_base_container.query_items(
                 query=fallback_query,
@@ -548,94 +571,196 @@ Use this context to provide a comprehensive answer to the user's question.
 
 
 def validate_question(question_text: str) -> dict:
-    """
-    Enhanced validation function that performs both exact hash matching 
+    """Enhanced validation function that performs both exact hash matching
     and vector similarity detection.
-    
-    Args:
-        question_text: The question text to validate
-        
-    Returns:
-        Dict with validation status and details
+
+    Steps:
+      1) Exact content match against KnowledgeBase and GeneratedQuestions
+      2) Semantic similarity check using embeddings (when available)
+      3) Token-overlap heuristic fallback
+
+    Returns a dict with one of the statuses:
+      - exact_duplicate: includes existing_question and question_hash
+      - similar_duplicate: includes similar_questions and similarity_threshold
+      - unique: includes question_hash
+      - validation_error: includes error details
     """
-    print(f"VALIDATION TOOL: Validating question: {question_text[:50]}...")
-    
     try:
-        # Phase 1: Exact hash matching
-        exact_result = validate_question_exact_match(question_text)
-        
-        if exact_result["status"] == "exact_duplicate":
-            print("Exact duplicate found in Phase 1")
+        # Compute a stable hash for the question for deduplication and telemetry
+        question_hash = hashlib.sha256((question_text or "").encode()).hexdigest()
+
+        # 1) Exact match: check KnowledgeBase first, then GeneratedQuestions
+        existing_questions = []
+
+        kb = rag_knowledge_container if rag_knowledge_container is not None else None
+        if kb is None and database is not None:
+            try:
+                kb = database.get_container_client("KnowledgeBase")
+            except Exception:
+                kb = None
+
+        if kb is not None and hasattr(kb, "query_items"):
+            try:
+                safe_text = (question_text or "").replace("'", "''")
+                q = f"SELECT TOP 1 c.id, c.content FROM c WHERE c.content = '{safe_text}'"
+                kb_items = list(kb.query_items(query=q, enable_cross_partition_query=True))
+                for it in kb_items:
+                    existing_questions.append({"id": it.get("id"), "text": it.get("content")})
+            except Exception:
+                # Ignore KB exact-match errors and continue to other checks
+                pass
+
+        # Also check GeneratedQuestions container as a fallback exact-match
+        if not existing_questions and generated_questions_container is not None and hasattr(generated_questions_container, "query_items"):
+            try:
+                safe_text = (question_text or "").replace("'", "''")
+                q2 = f"SELECT TOP 1 c.id, c.text FROM c WHERE c.text = '{safe_text}'"
+                gen_items = list(generated_questions_container.query_items(query=q2, enable_cross_partition_query=True))
+                for it in gen_items:
+                    existing_questions.append({"id": it.get("id"), "text": it.get("text")})
+            except Exception:
+                pass
+
+        if existing_questions:
+            first = existing_questions[0]
+            print("Exact duplicate found in DB")
             return {
                 "status": "exact_duplicate",
-                "existing_question": exact_result.get("existing_question"),
-                "question_hash": exact_result.get("question_hash")
+                "existing_question": {"id": first.get("id"), "text": first.get("text")},
+                "question_hash": question_hash,
             }
-        
-        # Phase 2: Vector similarity check (only if no exact match)
-        if exact_result["status"] == "unique_hash":
-            print("No exact match, checking for similarity...")
-            similarity_result = validate_question_similarity(question_text)
-            
-            if similarity_result["status"] == "similar_duplicate":
-                print("Similar questions found in Phase 2")
-                return {
-                    "status": "similar_duplicate",
-                    "similar_questions": similarity_result.get("similar_questions", []),
-                    "similarity_threshold": similarity_result.get("similarity_threshold", 0.85),
-                    "question_hash": exact_result.get("question_hash")
-                }
-        
-        # Phase 3: Generate embedding for unique questions (for later use)
-        print("Question appears to be unique, generating embedding...")
+
+        # 2) Semantic similarity: attempt to generate embedding for the query
+        query_embedding = None
         try:
-            import asyncio
-            import openai
-            
-            # Get embedding for the unique question
-            async def get_embedding():
+            try:
+                import openai
+            except Exception:
+                openai = None
+
+            if openai is not None:
                 openai_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
                 openai_key = os.getenv('AZURE_OPENAI_API_KEY')
-                
-                if not openai_endpoint or not openai_key:
-                    return None
-                
-                client = openai.AsyncAzureOpenAI(
-                    azure_endpoint=openai_endpoint,
-                    api_key=openai_key,
-                    api_version="2024-02-15-preview"
-                )
-                
-                embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
-                response = await client.embeddings.create(
-                    model=embed_model,
-                    input=question_text
-                )
-                return response.data[0].embedding
-            
-            # Run async function
-            embedding = asyncio.run(get_embedding()) if asyncio.get_event_loop().is_running() == False else None
-            
-            return {
-                "status": "unique",
-                "question_hash": exact_result.get("question_hash"),
-                "embedding": embedding,
-                "message": "Question is unique and ready to be added"
-            }
-            
-        except Exception as e:
-            print(f"Warning: Could not generate embedding: {e}")
-            return {
-                "status": "unique",
-                "question_hash": exact_result.get("question_hash"),
-                "embedding": None,
-                "message": "Question is unique (embedding generation failed)"
-            }
-    
+                if openai_endpoint and openai_key:
+                    try:
+                        # Prefer synchronous client if available; fall back to async via asyncio.run
+                        if hasattr(openai, 'AzureOpenAI'):
+                            client = openai.AzureOpenAI(
+                                azure_endpoint=openai_endpoint,
+                                api_key=openai_key,
+                                api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                            )
+                            embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+                            resp = client.embeddings.create(model=embed_model, input=question_text)
+                            query_embedding = resp.data[0].embedding
+                        elif hasattr(openai, 'AsyncAzureOpenAI'):
+                            import asyncio
+
+                            async def _embed_async(text: str):
+                                client = openai.AsyncAzureOpenAI(
+                                    azure_endpoint=openai_endpoint,
+                                    api_key=openai_key,
+                                    api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+                                )
+                                embed_model = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+                                resp = await client.embeddings.create(model=embed_model, input=text)
+                                return resp.data[0].embedding
+
+                            try:
+                                # Only use asyncio.run when there is no running loop
+                                import asyncio as _asyncio
+                                if not _asyncio.get_event_loop().is_running():
+                                    query_embedding = _asyncio.run(_embed_async(question_text))
+                            except Exception:
+                                query_embedding = None
+                    except Exception:
+                        query_embedding = None
+        except Exception:
+            query_embedding = None
+
+        # Gather candidates from KnowledgeBase (and fall back to GeneratedQuestions)
+        candidates = []
+        if kb is not None and hasattr(kb, "query_items"):
+            try:
+                items = list(kb.query_items(query="SELECT TOP 500 c.id, c.content, c.embedding FROM c", enable_cross_partition_query=True))
+                for it in items:
+                    candidates.append({"id": it.get("id"), "text": it.get("content"), "embedding": it.get("embedding")})
+            except Exception:
+                pass
+
+        # 2a) If we have embeddings, compute cosine similarity
+        if query_embedding and any(c.get("embedding") for c in candidates):
+            import math
+
+            def cosine(a, b):
+                dot = sum(x * y for x, y in zip(a, b))
+                norm_a = math.sqrt(sum(x * x for x in a))
+                norm_b = math.sqrt(sum(x * x for x in b))
+                if norm_a == 0 or norm_b == 0:
+                    return 0.0
+                return dot / (norm_a * norm_b)
+
+            threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.80'))
+            similar_found = []
+            for cand in candidates:
+                emb = cand.get("embedding")
+                if not emb:
+                    continue
+                try:
+                    score = cosine(query_embedding, emb)
+                except Exception:
+                    continue
+                if score >= threshold:
+                    similar_found.append({"id": cand.get("id"), "text": cand.get("text"), "similarity_score": score})
+
+            if similar_found:
+                similar_found.sort(key=lambda x: x["similarity_score"], reverse=True)
+                print(f"Found {len(similar_found)} similar questions (embeddings)")
+                return {"status": "similar_duplicate", "similar_questions": similar_found, "similarity_threshold": threshold}
+
+        # 3) Fallback: token overlap heuristic
+        import re
+
+        def tokenize_local(text: str):
+            toks = re.findall(r"[a-zA-Z0-9]+", (text or "").lower())
+            stop = {"the", "is", "in", "at", "of", "a", "an", "how", "what", "why", "to", "for"}
+            return set([t for t in toks if t and t not in stop])
+
+        q_tokens = tokenize_local(question_text)
+        token_candidates = [c for c in candidates if c.get("text")]
+
+        if not token_candidates and generated_questions_container is not None and hasattr(generated_questions_container, "query_items"):
+            try:
+                items = list(generated_questions_container.query_items(query="SELECT TOP 200 c.id, c.text FROM c", enable_cross_partition_query=True))
+                for it in items:
+                    token_candidates.append({"id": it.get("id"), "text": it.get("text")})
+            except Exception:
+                pass
+
+        def jaccard_local(a: set, b: set) -> float:
+            if not a or not b:
+                return 0.0
+            inter = len(a & b)
+            uni = len(a | b)
+            return inter / uni if uni > 0 else 0.0
+
+        threshold_tokens = float(os.getenv('TOKEN_SIMILARITY_THRESHOLD', '0.60'))
+        similar_token_matches = []
+        for cand in token_candidates:
+            cand_tokens = tokenize_local(cand.get("text") or "")
+            score = jaccard_local(q_tokens, cand_tokens)
+            if score >= threshold_tokens:
+                similar_token_matches.append({"id": cand.get("id"), "text": cand.get("text"), "similarity_score": score})
+
+        if similar_token_matches:
+            similar_token_matches.sort(key=lambda x: x["similarity_score"], reverse=True)
+            print(f"Found {len(similar_token_matches)} similar questions (tokens)")
+            return {"status": "similar_duplicate", "similar_questions": similar_token_matches, "similarity_threshold": threshold_tokens}
+
+        # No duplicates found
+        print("No similar questions found")
+        return {"status": "unique", "question_hash": question_hash}
+
     except Exception as e:
-        print(f"Error in question validation: {e}")
-        return {
-            "status": "validation_error",
-            "error": str(e),
-            "message": "Validation failed due to system error"
-        }
+        print(f"Error in validation: {e}")
+        return {"status": "validation_error", "error": str(e)}

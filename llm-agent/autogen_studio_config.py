@@ -39,11 +39,11 @@ def create_autogen_studio_config():
                 "component_type": "model",
                 "version": 1,
                 "component_version": 1,
-                "description": "Azure OpenAI GPT-4o for assessment tasks",
+                "description": "Azure OpenAI GPT-5 family (e.g. gpt-5-mini) for assessment tasks",
                 "label": "AzureOpenAI-GPT4o",
                 "config": {
-                    "model": "gpt-4o",
-                    "azure_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+                        # Only deployment name is required for Azure OpenAI clients
+                        "azure_deployment": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                     "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "https://your-endpoint.openai.azure.com/"),
                     "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
                     "api_key": "REPLACE_WITH_YOUR_API_KEY"
@@ -51,6 +51,13 @@ def create_autogen_studio_config():
             }
         ]
     }
+    # Warn if deployment not configured
+    try:
+        azure_dep = model_config["models"][0]["config"].get("azure_deployment")
+    except Exception:
+        azure_dep = None
+    if not azure_dep:
+        print("WARNING: AZURE_OPENAI_DEPLOYMENT_NAME is not set. Set it to your Azure deployment name (e.g. 'gpt-5-mini').")
     
     # Agent team configuration
     team_config = {

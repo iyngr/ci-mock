@@ -79,10 +79,10 @@ async def lifespan(app: FastAPI):
             from database import get_cosmosdb_service
             # get_cosmosdb_service already calls ensure_containers_exist(),
             # so avoid calling it a second time here to prevent duplicate checks/logs.
-            db_service = await get_cosmosdb_service(database_client)
+            _db_service = await get_cosmosdb_service(database_client)
             
             print(f"✓ Connected to Cosmos DB: {database_name}")
-            print(f"✓ Optimized connection policy applied")
+            print("✓ Optimized connection policy applied")
         else:
             print("⚠️ COSMOS_DB_ENDPOINT not provided, running in development mode")
             cosmos_client = None
@@ -105,6 +105,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Failed to initialize RAG service: {e}")
         app.state.rag_service = None
+
+    # Enforce Azure OpenAI deployment-name policy at startup when Azure OpenAI is configured.
+    # This avoids accidental silent fallbacks to legacy model names and surfacing confusing runtime errors.
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
+    if azure_endpoint and azure_key:
+        dep = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        if not dep:
+            raise RuntimeError(
+                "AZURE_OPENAI_DEPLOYMENT_NAME is required when AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set. "
+                "Please set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g. 'gpt-5-mini')."
+            )
 
     yield
     

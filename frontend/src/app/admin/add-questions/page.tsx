@@ -31,6 +31,27 @@ interface SingleQuestionData {
     rubric?: string
 }
 
+interface BulkSessionMeta {
+    session_id: string
+    created_at?: string
+    filename?: string
+    validated_count?: number
+    flagged_count?: number
+}
+
+interface BulkSessionRow {
+    text: string
+    reason?: string
+}
+
+interface BulkSessionDetail {
+    session_id: string
+    created_at?: string
+    filename?: string
+    validated: BulkSessionRow[]
+    flagged: BulkSessionRow[]
+}
+
 export default function AddQuestions() {
     const [activeTab, setActiveTab] = useState<"single" | "bulk">("single")
     const [loading, setLoading] = useState(false)
@@ -54,6 +75,8 @@ export default function AddQuestions() {
 
     // Bulk upload state
     const [uploadFile, setUploadFile] = useState<File | null>(null)
+    const [bulkSessions, setBulkSessions] = useState<BulkSessionMeta[]>([])
+    const [selectedSession, setSelectedSession] = useState<BulkSessionDetail | null>(null)
 
     useEffect(() => {
         // Check if admin is logged in
@@ -114,6 +137,45 @@ export default function AddQuestions() {
                 },
                 body: JSON.stringify(questionData),
             })
+            // Surface backend errors (409 duplicate, etc.) with a friendly message
+            if (!response.ok) {
+                let errBody: Record<string, unknown> = {}
+                try {
+                    errBody = await response.json()
+                } catch {
+                    errBody = { detail: 'Server returned an error' }
+                }
+
+                // Normalize fields safely
+                const statusStr = typeof errBody['status'] === 'string' ? String(errBody['status']) : ''
+                const detailStr = typeof errBody['detail'] === 'string' ? String(errBody['detail']) : (typeof errBody['message'] === 'string' ? String(errBody['message']) : '')
+
+                // HTTP 409 likely indicates duplicate or similar question
+                if (response.status === 409) {
+                    if (statusStr === 'exact_duplicate' || detailStr.toLowerCase().includes('already exists')) {
+                        setError('A question with the same text already exists. Please modify your question.')
+                    } else if (statusStr === 'similar_duplicate' || detailStr.toLowerCase().includes('similar')) {
+                        const similar = Array.isArray(errBody['similar_questions']) ? (errBody['similar_questions'] as unknown[]) : (Array.isArray(errBody['similar']) ? (errBody['similar'] as unknown[]) : [])
+                        let sample = ''
+                        if (similar.length) {
+                            const first = similar[0]
+                            if (first && typeof first === 'object' && 'text' in (first as Record<string, unknown>)) {
+                                const t = (first as Record<string, unknown>)['text']
+                                sample = t && typeof t === 'string' ? ` Sample similar question: "${t}"` : ''
+                            } else if (typeof first === 'string') {
+                                sample = ` Sample similar question: "${first}"`
+                            }
+                        }
+                        setError('A similar question already exists. Please review suggested changes or create a new question.' + sample)
+                    } else {
+                        setError(detailStr || 'Duplicate question detected. Please review.')
+                    }
+                } else {
+                    setError(detailStr || 'Failed to add question')
+                }
+
+                return
+            }
 
             const data = await response.json()
 
@@ -159,8 +221,8 @@ export default function AddQuestions() {
 
             const adminToken = localStorage.getItem("adminToken")
 
-            // Mock API call - replace with actual endpoint
-            const response = await fetch("http://localhost:8000/api/admin/questions/bulk", {
+            // POST to backend bulk-validate endpoint
+            const response = await fetch("http://localhost:8000/api/admin/questions/bulk-validate", {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${adminToken}`
@@ -168,11 +230,47 @@ export default function AddQuestions() {
                 body: formData,
             })
 
+            if (!response.ok) {
+                let errBody: Record<string, unknown> = {}
+                try {
+                    errBody = await response.json()
+                } catch {
+                    errBody = { detail: 'Server returned an error' }
+                }
+
+                const flaggedCount = typeof errBody['flagged_count'] === 'number' ? errBody['flagged_count'] as number : 0
+                const detailStr = typeof errBody['detail'] === 'string' ? String(errBody['detail']) : (typeof errBody['message'] === 'string' ? String(errBody['message']) : '')
+
+                if (response.status === 400 && flaggedCount > 0) {
+                    setError(`Bulk upload contained ${flaggedCount} flagged rows. Fix them and retry.`)
+                } else if (response.status === 409) {
+                    setError(detailStr || 'Duplicate questions detected in upload')
+                } else {
+                    setError(detailStr || 'Failed to upload questions')
+                }
+
+                return
+            }
+
             const data = await response.json()
 
-            if (data.success) {
+            if (data.session_id) {
+                setSuccess(`Bulk validation complete. Session created: ${data.session_id}`)
+                // Clear React file state and reset the underlying input element so the user can select the same file again
+                setUploadFile(null)
+                try {
+                    const fileInput = document.getElementById('file-upload') as HTMLInputElement | null
+                    if (fileInput) fileInput.value = ''
+                } catch (err) {
+                    // ignore DOM reset errors
+                }
+                // Refresh session list and automatically open the newly created session for review
+                await fetchBulkSessions()
+                fetchSessionDetails(data.session_id)
+            } else if (data.success) {
                 setSuccess(`Successfully uploaded ${data.questionsAdded} questions!`)
                 setUploadFile(null)
+                fetchBulkSessions()
             } else {
                 setError(data.message || "Failed to upload questions")
             }
@@ -183,8 +281,92 @@ export default function AddQuestions() {
         }
     }
 
+    const fetchBulkSessions = async () => {
+        try {
+            const adminToken = localStorage.getItem("adminToken")
+            const res = await fetch('http://localhost:8000/api/admin/questions/bulk-sessions', {
+                headers: { Authorization: `Bearer ${adminToken}` }
+            })
+            if (!res.ok) return
+            const json = await res.json()
+            setBulkSessions(json.sessions || [])
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    const fetchSessionDetails = async (sessionId: string) => {
+        try {
+            const adminToken = localStorage.getItem("adminToken")
+            const res = await fetch(`http://localhost:8000/api/admin/questions/bulk-sessions/${sessionId}`, {
+                headers: { Authorization: `Bearer ${adminToken}` }
+            })
+            if (!res.ok) return
+            const json = await res.json()
+            setSelectedSession(json)
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    const [importing, setImporting] = useState(false)
+    const [importResult, setImportResult] = useState<{ imported_count?: number; failed_count?: number } | null>(null)
+
+    const handleConfirmImport = async (sessionId: string) => {
+        setImporting(true)
+        setImportResult(null)
+        setError("")
+        try {
+            const adminToken = localStorage.getItem("adminToken")
+            const res = await fetch(`http://localhost:8000/api/admin/questions/bulk-confirm?session_id=${sessionId}`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${adminToken}` }
+            })
+
+            if (!res.ok) {
+                let errBody: Record<string, unknown> = {}
+                try { errBody = await res.json() } catch { errBody = { detail: 'Server error' } }
+                const detailStr = typeof errBody['detail'] === 'string' ? String(errBody['detail']) : (typeof errBody['message'] === 'string' ? String(errBody['message']) : '')
+                const flaggedCount = typeof errBody['flagged_count'] === 'number' ? errBody['flagged_count'] as number : 0
+                if (res.status === 409) {
+                    setError(detailStr || 'This session is being imported by another admin')
+                } else if (res.status === 400 && flaggedCount > 0) {
+                    setError(`Cannot import: session has ${flaggedCount} flagged rows`)
+                } else {
+                    setError(detailStr || 'Import failed')
+                }
+                return
+            }
+
+            const data = await res.json()
+            setImportResult({ imported_count: data.imported_count || data.imported || 0, failed_count: data.failed_count || data.failed || 0 })
+            // Refresh sessions list and clear selected session UI after import
+            fetchBulkSessions()
+            setSelectedSession(null)
+            setSuccess(data.message || `Imported ${data.imported_count || data.imported || 0} questions`)
+        } catch (e) {
+            setError('Failed to contact server for import')
+        } finally {
+            setImporting(false)
+        }
+    }
+
+    useEffect(() => {
+        fetchBulkSessions()
+    }, [])
+
+
     return (
         <div className="min-h-screen bg-warm-background">
+            {/* Loading overlay */}
+            {loading && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+                    <div className="bg-white p-6 rounded-lg shadow-lg flex flex-col items-center">
+                        <div className="w-16 h-16 border-4 border-warm-brown/20 border-t-warm-brown rounded-full animate-spin mb-4"></div>
+                        <div className="text-warm-brown/80">Checking KnowledgeBase for similar questions...</div>
+                    </div>
+                </div>
+            )}
             <div className="max-w-6xl mx-auto px-6 pt-24 pb-8">{/* Increased top padding to account for floating nav */}
                 {/* Header */}
                 <AnimateOnScroll animation="fadeInUp" delay={200}>
@@ -429,6 +611,7 @@ export default function AddQuestions() {
                                 </div>
                             </form>
                         </div>
+                        {/* Session summary table moved to Bulk tab (so it's visible only when Bulk is active) */}
                     </AnimateOnScroll>
                 )}
 
@@ -505,6 +688,51 @@ export default function AddQuestions() {
                                     </Button>
                                 </div>
                             </form>
+
+                            {/* Selected session details (also show inside Bulk tab for review + confirm) */}
+                            {selectedSession && (
+                                <div className="mt-6">
+                                    <h4 className="text-sm font-medium text-warm-brown mb-2">Session {selectedSession.session_id}</h4>
+                                    <div className="max-h-64 overflow-auto border rounded p-2">
+                                        <table className="w-full text-left">
+                                            <thead>
+                                                <tr className="text-xs text-warm-brown/60">
+                                                    <th className="px-3 py-1">Text</th>
+                                                    <th className="px-3 py-1">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {selectedSession.validated.map((r: BulkSessionRow, i: number) => (
+                                                    <tr key={`v-bulk-${i}`} className="border-t border-warm-brown/5">
+                                                        <td className="px-3 py-1 text-sm">{r.text}</td>
+                                                        <td className="px-3 py-1 text-sm text-emerald-600">Validated</td>
+                                                    </tr>
+                                                ))}
+                                                {selectedSession.flagged.map((r: BulkSessionRow, i: number) => (
+                                                    <tr key={`f-bulk-${i}`} className="border-t border-warm-brown/5">
+                                                        <td className="px-3 py-1 text-sm">{r.text}</td>
+                                                        <td className="px-3 py-1 text-sm text-rose-600">Flagged{r.reason ? `: ${r.reason}` : ''}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="mt-4 flex items-center gap-3">
+                                        <Button size="sm" variant="destructive" onClick={() => handleConfirmImport(selectedSession.session_id)} disabled={importing}>
+                                            {importing ? 'Importing...' : 'Confirm Import'}
+                                        </Button>
+                                        <Button size="sm" variant="ghost" onClick={() => { setSelectedSession(null); setImportResult(null); }}>
+                                            Close
+                                        </Button>
+                                        {importResult && (
+                                            <div className="ml-4 text-sm text-warm-brown">
+                                                <div className="text-emerald-600">Imported: {importResult.imported_count}</div>
+                                                <div className="text-rose-600">Failed: {importResult.failed_count}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </AnimateOnScroll>
                 )}

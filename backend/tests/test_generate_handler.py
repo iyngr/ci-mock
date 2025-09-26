@@ -1,16 +1,16 @@
 import asyncio
 import sys
 import os
-from datetime import datetime
-# Ensure repo root is on path
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-sys.path.insert(0, ROOT)
 from importlib.machinery import SourceFileLoader
 from types import SimpleNamespace
+import types
+
+# Ensure repo root is on path early
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, ROOT)
 
 # Load admin router without importing package-level dependencies that may require optional packages
 admin_path = os.path.join(ROOT, 'backend', 'routers', 'admin.py')
-import types
 
 # Create a minimal fake 'fastapi' module to satisfy imports in admin.py when FastAPI is not installed
 fake_fastapi = types.ModuleType('fastapi')
@@ -42,19 +42,18 @@ fake_fastapi.BackgroundTasks = object
 fake_responses = types.ModuleType('fastapi.responses')
 fake_responses.JSONResponse = lambda *a, **k: None
 
-import sys as _sys
-_sys.modules['fastapi'] = fake_fastapi
-_sys.modules['fastapi.responses'] = fake_responses
+sys.modules['fastapi'] = fake_fastapi
+sys.modules['fastapi.responses'] = fake_responses
 
 # Also ensure 'models' import resolves to backend.models
 models_path = os.path.join(ROOT, 'backend', 'models.py')
 models_mod = SourceFileLoader('models', models_path).load_module()
-_sys.modules['models'] = models_mod
+sys.modules['models'] = models_mod
 
 # Load database module as 'database' to satisfy admin imports
 database_path = os.path.join(ROOT, 'backend', 'database.py')
 database_mod = SourceFileLoader('database', database_path).load_module()
-_sys.modules['database'] = database_mod
+sys.modules['database'] = database_mod
 
 admin_router = SourceFileLoader('admin_router', admin_path).load_module()
 

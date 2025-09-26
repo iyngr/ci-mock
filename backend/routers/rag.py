@@ -1,11 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Dict, Any, List
 import httpx
-import asyncio
 import os
 import uuid
 from datetime import datetime
-import json
 import traceback
 
 from models import (
@@ -73,7 +70,7 @@ async def ask_rag_question(
                 try:
                     error_data = response.json()
                     error_detail += f" - {error_data.get('detail', 'Unknown error')}"
-                except:
+                except Exception:
                     error_detail += f" - {response.text[:200]}"
                 
                 raise HTTPException(
@@ -296,9 +293,8 @@ async def search_knowledge_base(
         except Exception as vector_error:
             print(f"Vector search failed, falling back to text search: {vector_error}")
         
-        # Fallback: text-based search
-        # Access KnowledgeBase from whichever service is active (rag or primary)
-        knowledge_container = db.get_container(CONTAINER["KNOWLEDGE_BASE"])  # unified access
+    # Fallback: text-based search
+    # Access KnowledgeBase from whichever service is active (rag or primary)
         
         # Build query with optional skill filter
         if skill:
@@ -391,7 +387,7 @@ async def rag_health_check():
             async with httpx.AsyncClient(timeout=5) as client:
                 response = await client.get(f"{LLM_AGENT_URL}/health")
                 llm_agent_status = "healthy" if response.status_code == 200 else "unhealthy"
-        except:
+        except Exception:
             llm_agent_status = "unreachable"
         
         return {

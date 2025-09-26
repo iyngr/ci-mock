@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import logging
 from typing import Optional
-from azure.cosmos import CosmosClient, PartitionKey
+from azure.cosmos import CosmosClient
 from azure.cosmos.cosmos_client import ConnectionPolicy
 from azure.cosmos.documents import RetryOptions
 from azure.cosmos.exceptions import CosmosResourceNotFoundError, CosmosHttpResponseError

@@ -9,16 +9,15 @@ Includes performance optimizations and RU monitoring.
 import asyncio
 import time
 from typing import Any, Dict, List, Optional, Union
-from azure.cosmos import ContainerProxy, DatabaseProxy, PartitionKey
+from azure.cosmos import ContainerProxy, DatabaseProxy
 from azure.cosmos.exceptions import (
     CosmosResourceNotFoundError, 
     CosmosHttpResponseError,
-    CosmosResourceExistsError,
-    CosmosAccessConditionFailedError
+    CosmosResourceExistsError
 )
 import logging
 from datetime import datetime, date
-from constants import CONTAINER, COLLECTIONS, EMBEDDING_DIM  # updated import
+from constants import CONTAINER, COLLECTIONS  # updated import
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +249,7 @@ class CosmosDBService:
     
     async def create_item(self, container_name: str, item: Dict[str, Any], partition_key: Optional[str] = None) -> Dict[str, Any]:
         """Create a new item in the container"""
-        container = self.get_container(container_name)
+        _container = self.get_container(container_name)
         
         # If no partition key provided, use the id field
         if partition_key is None:
@@ -265,7 +264,7 @@ class CosmosDBService:
             # the partition field is present. Forwarding it here caused some
             # SDK/transport versions to pass the kwarg down to requests and
             # raise a TypeError.
-            return container.create_item(body=serializable_item)
+            return _container.create_item(body=serializable_item)
         
         try:
             response = await cosmos_retry_wrapper(_create_operation)
@@ -292,6 +291,37 @@ class CosmosDBService:
             return None
         except CosmosHttpResponseError as e:
             logger.error(f"Failed to read item '{item_id}' from '{container_name}': {e}")
+            raise
+
+    async def replace_item_with_etag(self, container_name: str, item: Dict[str, Any], etag: str, partition_key: Optional[str] = None) -> Dict[str, Any]:
+        """Replace an item using the provided ETag for optimistic concurrency.
+
+        If the ETag does not match (precondition failed) the SDK will raise
+        a CosmosHttpResponseError which callers can handle and retry.
+        """
+        container = self.get_container(container_name)
+        if partition_key is None:
+            partition_key = item.get("id") or item.get("_id")
+
+        serializable_item = self._serialize_for_cosmos(item)
+
+        def _replace_op():
+            # Avoid passing partition_key as a keyword to the SDK transport.
+            # Some azure-cosmos SDK / transport versions forward unexpected
+            # kwargs to the underlying requests layer which raises a
+            # TypeError: Session.request() got an unexpected keyword argument 'partition_key'.
+            # The SDK can infer the partition from the body when the partition
+            # field is present in the item. Other methods in this service avoid
+            # forwarding partition_key for compatibility.
+            return container.replace_item(item=serializable_item.get('id') or serializable_item.get('_id'), body=serializable_item, if_match=etag)
+
+        try:
+            # The replace call might be synchronous depending on SDK; run in wrapper
+            response = await cosmos_retry_wrapper(_replace_op, operation_type='replace')
+            logger.info(f"Replaced item in '{container_name}': {response.get('id')}")
+            return response
+        except CosmosHttpResponseError:
+            logger.warning(f"ETag precondition failed when replacing item in '{container_name}'")
             raise
     
     async def upsert_item(self, container_name: str, item: Dict[str, Any], partition_key: Optional[str] = None) -> Dict[str, Any]:
@@ -514,9 +544,8 @@ class CosmosDBService:
         """
         Bulk create items with batching for better performance
         """
-        container = self.get_container(container_name)
         results = []
-        
+
         # Process items in batches
         for i in range(0, len(items), batch_size):
             batch = items[i:i + batch_size]
@@ -545,6 +574,40 @@ class CosmosDBService:
                 
         logger.info(f"Bulk created {len(results)}/{len(items)} items in container '{container_name}'")
         return results
+
+    async def transactional_create_items(self, container_name: str, items: List[Dict[str, Any]], partition_key: str) -> List[Dict[str, Any]]:
+        """Attempt to create multiple items in a single transactional batch for the given partition_key.
+
+        If the SDK or account does not support transactional batches, or the batch fails,
+        the method will fall back to creating items individually and return the successful results.
+        """
+        container = self.get_container(container_name)
+        created = []
+
+        def _batch_op():
+            batch = container.create_transactional_batch(partition_key)
+            for item in items:
+                batch.create_item(self._serialize_for_cosmos(item))
+            return batch.execute()
+
+        try:
+            # transactional batch may be synchronous depending on SDK
+            response = await cosmos_retry_wrapper(_batch_op, operation_type='transactional_batch')
+            # The SDK's response may expose results; on success, treat all as created
+            # Construct simple success placeholders using item ids
+            for it in items:
+                created.append({"id": it.get("id")})
+            return created
+        except Exception as e:
+            logger.warning(f"Transactional batch failed for container {container_name} partition {partition_key}: {e}. Falling back to individual creates.")
+            # Fallback to per-item creates
+            for item in items:
+                try:
+                    res = await self.create_item(container_name, item, partition_key=partition_key)
+                    created.append(res)
+                except Exception as ie:
+                    logger.error(f"Failed to create item in fallback path: {ie}")
+            return created
     
     async def get_container_statistics(self, container_name: str) -> Dict[str, Any]:
         """Get container statistics and performance information"""

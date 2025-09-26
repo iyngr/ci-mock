@@ -10,7 +10,12 @@ class Prompty:
 
 
 def load_prompty(path: str) -> Optional[Prompty]:
-    """Load a .prompty YAML file and return a Prompty object.
+    """Load a YAML prompt file (historically `.prompty`) and return a Prompty object.
+
+    This loader is intentionally tolerant: it accepts either single-document YAML prompts
+    or legacy `.prompty` files. Callers should pass a full path to the prompt file (e.g.
+    `prompts/orchestrator.yaml`).
+
     Minimal parser: we only care about 'name', 'system', and 'model'.
     Environment variables in model.* are left as-is for now; agents already read envs.
     """

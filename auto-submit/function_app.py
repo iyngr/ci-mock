@@ -2,8 +2,7 @@ import azure.functions as func
 import datetime
 import logging
 import os
-import json
-from azure.cosmos import CosmosClient, exceptions
+from azure.cosmos import CosmosClient
 
 
 app = func.FunctionApp()

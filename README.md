@@ -171,7 +171,11 @@ python scripts/cosmos_vector_test.py
 
 Frontend: `NEXT_PUBLIC_API_URL` (points to backend base URL).
 
-LLM Agent adds: `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_MODEL`, trace logging toggles.
+LLM Agent adds: `AZURE_OPENAI_DEPLOYMENT_NAME` (deployment name is required). `AZURE_OPENAI_MODEL` has been removed from runtime configuration. Use the deployment name only (example: `gpt-5-mini`).
+
+Notes on typical deployment choices:
+- Smart Mock (batch/agent scoring and analysis) commonly uses GPT-5 family deployments (example: `gpt-5-mini`) configured via `AZURE_OPENAI_DEPLOYMENT_NAME`.
+- Live Interview (speech-to-speech realtime) uses realtime-enabled deployments (example: `gpt-4o-mini-realtime-preview`) configured via `AZURE_OPENAI_REALTIME_DEPLOYMENT`.
 
 Function adds: `COSMOS_DB_ENDPOINT` / `COSMOS_DB_KEY` or MI + `COSMOS_DB_NAME`, `AI_SCORING_ENDPOINT`.
 

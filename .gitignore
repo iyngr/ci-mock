@@ -244,3 +244,12 @@ backend/venv/
 talens/.next/
 frontend/.next/
 talens-suite-showcase/
+.idea/.gitignore
+.idea/ci-mock.iml
+.idea/copilot.data.migration.agent.xml
+.idea/copilot.data.migration.ask.xml
+.idea/copilot.data.migration.ask2agent.xml
+.idea/copilot.data.migration.edit.xml
+.idea/modules.xml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml

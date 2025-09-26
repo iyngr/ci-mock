@@ -14,7 +14,7 @@ Set these before running locally or in your container:
 
 - AZURE_OPENAI_ENDPOINT (e.g., https://your-aoai.openai.azure.com)
 - AZURE_OPENAI_API_KEY
-- AZURE_OPENAI_DEPLOYMENT_NAME (e.g., gpt-4o)
+- AZURE_OPENAI_DEPLOYMENT_NAME (e.g., gpt-5-mini)
 - AZURE_OPENAI_API_VERSION (default: 2024-09-01-preview)
 - AZURE_ENTRA_TENANT_ID
 - AZURE_ENTRA_API_AUDIENCE (Application ID URI, e.g., api://smartscreen)
@@ -23,7 +23,7 @@ Set these before running locally or in your container:
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-aoai.openai.azure.com";
 $env:AZURE_OPENAI_API_KEY="<key>";
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o";
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5-mini";
 $env:AZURE_OPENAI_API_VERSION="2024-09-01-preview";
 $env:AZURE_ENTRA_TENANT_ID="<tenant-guid>";
 $env:AZURE_ENTRA_API_AUDIENCE="api://smartscreen";
@@ -48,7 +48,7 @@ docker build -t smartscreen:local .
 # pass env vars; replace values accordingly
 $env:AZURE_OPENAI_ENDPOINT="https://your-aoai.openai.azure.com";
 $env:AZURE_OPENAI_API_KEY="<key>";
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o";
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5-mini";
 $env:AZURE_OPENAI_API_VERSION="2024-09-01-preview";
 $env:AZURE_ENTRA_TENANT_ID="<tenant-guid>";
 $env:AZURE_ENTRA_API_AUDIENCE="api://smartscreen";

@@ -27,7 +27,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 try:
     from azure.cosmos import CosmosClient
-    from azure.core.credentials import AzureKeyCredential
     import openai
 except ImportError as e:
     print(f"Missing required packages: {e}")
@@ -69,7 +68,13 @@ class EmbeddingGenerator:
             
             if not openai_endpoint or not openai_key:
                 raise ValueError("Azure OpenAI environment variables not set")
-            
+
+            # Warn if legacy AZURE_OPENAI_MODEL is present (do not use it at runtime)
+            if os.getenv("AZURE_OPENAI_MODEL"):
+                print("Warning: AZURE_OPENAI_MODEL is set but is no longer used at runtime. Please set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g., 'gpt-5-mini').")
+
+            # Create Azure OpenAI client. Embedding deployment is supplied at call time
+            # via the `model` argument to embeddings.create (the code sets self.embedding_model).
             self.openai_client = openai.AsyncAzureOpenAI(
                 azure_endpoint=openai_endpoint,
                 api_key=openai_key,

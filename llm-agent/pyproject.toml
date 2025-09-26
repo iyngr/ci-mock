@@ -19,6 +19,9 @@ dependencies = [
     "promptflow-tracing>=1.18.1",
     # autogenstudio intentionally omitted from runtime dependencies because it constrains autogen-ext
     # (see dev-dependencies below). Keep autogenstudio pinned in dev-dependencies for local tooling.
+    "ruff>=0.12.11",
+    "promptflow>=1.18.1",
+    "promptflow-tools>=1.6.1",
 ]
 
 [build-system]

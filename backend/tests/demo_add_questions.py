@@ -6,7 +6,6 @@ Shows the complete workflow with sample questions.
 
 import asyncio
 import httpx
-import json
 
 BACKEND_URL = "http://localhost:8000"
 ADMIN_EMAIL = "admin@example.com"
@@ -87,15 +86,15 @@ async def demo_add_questions():
                     print(f"   🎯 Suggested Role: {result.get('suggested_role', 'N/A')}")
                     print(f"   🏷️  Suggested Tags: {result.get('suggested_tags', [])}")
                 elif response.status_code == 409:
-                    print(f"   ⚠️  Duplicate detected - this is expected behavior")
+                    print("   ⚠️  Duplicate detected - this is expected behavior")
                 else:
                     print(f"   ❌ Failed: {response.status_code}")
                     
             except Exception as e:
                 print(f"   ❌ Error: {e}")
     
-    print(f"\n🎉 Demo completed!")
-    print(f"💡 To see the full interface, visit: http://localhost:3000/admin/add-questions")
+    print("\n🎉 Demo completed!")
+    print("💡 To see the full interface, visit: http://localhost:3000/admin/add-questions")
 
 if __name__ == "__main__":
     asyncio.run(demo_add_questions())

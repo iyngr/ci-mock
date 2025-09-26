@@ -3,13 +3,10 @@ Red Teaming Test Implementation for LLM Interview System
 Based on Microsoft Azure AI Content Safety and PyRIT frameworks
 """
 
-import pytest
 import time
-import hashlib
 import base64
 from typing import List, Dict, Any
 from dataclasses import dataclass
-from unittest.mock import Mock, patch
 
 # Import the interview system components
 import sys
@@ -17,11 +14,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from routers.live_interview import (
-    detect_meta_instructions,
-    validate_context_integrity,
-    detect_example_injection,
     sanitize_input,
-    log_security_event,
     guardrail_pre,
     guardrail_post
 )
@@ -619,7 +612,7 @@ def test_red_teaming_suite():
         for failed in report['failed_tests']:
             print(f"  - {failed['test_name']} ({failed['attack_type']})")
     
-    print(f"\n💡 RECOMMENDATIONS:")
+    print("\n💡 RECOMMENDATIONS:")
     for rec in report['recommendations']:
         print(f"  - {rec}")
     
@@ -640,10 +633,10 @@ if __name__ == "__main__":
     print(f"Average Response Time: {report['test_summary']['average_response_time']}s")
     
     if report['failed_tests']:
-        print(f"\n❌ FAILED TESTS:")
+        print("\n❌ FAILED TESTS:")
         for failed in report['failed_tests']:
             print(f"  - {failed['test_name']}")
     
-    print(f"\n💡 RECOMMENDATIONS:")
+    print("\n💡 RECOMMENDATIONS:")
     for rec in report['recommendations']:
         print(f"  - {rec}")

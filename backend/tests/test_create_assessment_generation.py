@@ -3,13 +3,13 @@ import sys
 import os
 from importlib.machinery import SourceFileLoader
 from types import SimpleNamespace
+import types as _types
 
-# Load repo root
+# Load repo root early
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, ROOT)
 
 # Load modules without installing FastAPI by injecting minimal fakes
-import types as _types
 fake_fastapi = _types.ModuleType('fastapi')
 fake_fastapi.APIRouter = lambda *a, **k: type('DummyRouter', (), {'options': lambda self, *a, **k: (lambda f: f), 'post': lambda self, *a, **k: (lambda f: f), 'get': lambda self, *a, **k: (lambda f: f)})()
 fake_fastapi.HTTPException = Exception

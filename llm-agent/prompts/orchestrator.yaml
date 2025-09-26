@@ -1,21 +1,23 @@
-# Prompty v1
 name: Orchestrator_Agent
 model:
-  provider: azure-openai
-  deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
-  model: ${AZURE_OPENAI_MODEL}
+  api: chat
+  configuration:
+    type: azure_openai
+    connection: azure_openai_connection
+    azure_deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+  # model placeholder removed; deployment (Azure) is configured via AZURE_OPENAI_DEPLOYMENT_NAME
   parameters:
-    temperature: 0.5
-    top_p: 0.7
-    max_output_tokens: 800
+    # temperature: 0.5  # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    # top_p: 0.7       # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    max_completion_tokens: 800
     response_format:
       type: json_object
 inputs:
-  - name: submission_id
+  submission_id:
     description: Submission id to process
     type: string
 outputs:
-  - name: plan
+  plan:
     type: object
     description: A JSON plan for next steps
 system: |
@@ -29,5 +31,6 @@ system: |
 
   You do not write code or analyze data yourself. You manage the workflow and ensure all steps are completed.
   End the conversation with "TERMINATE" once the final report is ready.
+
 user: |
   Begin processing for submission {{submission_id}}.

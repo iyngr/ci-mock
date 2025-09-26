@@ -159,8 +159,8 @@ export default function AddQuestions() {
 
             const adminToken = localStorage.getItem("adminToken")
 
-            // Mock API call - replace with actual endpoint
-            const response = await fetch("http://localhost:8000/api/admin/questions/bulk", {
+            // POST to backend bulk-validate endpoint
+            const response = await fetch("http://localhost:8000/api/admin/questions/bulk-validate", {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${adminToken}`

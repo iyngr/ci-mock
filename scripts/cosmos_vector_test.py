@@ -13,18 +13,15 @@ Usage:
 import os
 import sys
 import asyncio
-import json
 import uuid
 
-from azure.cosmos import CosmosClient, PartitionKey
+from azure.cosmos import CosmosClient
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, ROOT)
 
 # Try to import app helpers
 try:
-    from backend.rag_database import get_rag_service
-    from backend.constants import CONTAINER
     HAVE_APP_RAG = True
 except Exception:
     HAVE_APP_RAG = False
@@ -48,6 +45,10 @@ async def embed_text(text: str):
         openai.api_type = 'azure'
         openai.api_base = os.getenv('AZURE_OPENAI_ENDPOINT')
         openai.api_key = os.getenv('AZURE_OPENAI_API_KEY')
+        # Warn if legacy AZURE_OPENAI_MODEL is present (do not use it at runtime)
+        if os.getenv('AZURE_OPENAI_MODEL'):
+            print("Warning: AZURE_OPENAI_MODEL is set but ignored. Use AZURE_OPENAI_DEPLOYMENT_NAME or AZURE_OPENAI_EMBED_DEPLOYMENT for embeddings.")
+
         model = os.getenv('AZURE_OPENAI_EMBED_DEPLOYMENT', os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small'))
         resp = openai.Embeddings.create(model=model, input=text)
         return resp['data'][0]['embedding']

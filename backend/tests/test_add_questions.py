@@ -6,10 +6,6 @@ Tests both single question addition and bulk upload functionality.
 
 import asyncio
 import httpx
-import json
-import csv
-import io
-from typing import Dict, Any
 
 # Service URLs
 BACKEND_URL = "http://localhost:8000"
@@ -237,37 +233,7 @@ async def test_backend_health():
         return False
 
 
-async def test_assessment_creation_with_generation():
-    """Test creating an assessment with AI-generated questions"""
-    print("\n🔍 Testing Assessment Creation with AI Generation...")
-    token = await get_admin_token()
-
-    payload = {
-        "title": "Generated API Design Assessment",
-        "description": "Assessment containing AI-generated questions",
-        "duration": 45,
-        "generate": [
-            {"skill": "REST API Design", "question_type": "descriptive", "difficulty": "medium", "count": 1},
-            {"skill": "Algorithms", "question_type": "coding", "difficulty": "easy", "count": 1}
-        ]
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"{BACKEND_URL}/api/admin/assessments/create",
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload
-            )
-            response.raise_for_status()
-            result = response.json()
-            print(f"   Assessment ID: {result.get('assessment_id')}")
-            print(f"   Question Count: {result.get('question_count')}")
-        print("✅ Assessment Creation with Generation Passed")
-        return True
-    except Exception as e:
-        print(f"❌ Assessment Creation with Generation Failed: {e}")
-        return False
+# Duplicate test removed; earlier definition exists above
 
 async def main():
     """Run all tests"""

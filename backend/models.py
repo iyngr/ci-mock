@@ -244,7 +244,7 @@ class GeneratedQuestion(CosmosDocument):
                 "difficulty": "medium",
                 "generatedText": "What is the primary benefit of using React hooks?",
                 "originalPrompt": "Generate a medium MCQ question about React Hooks",
-                "generatedBy": "gpt-4o",
+                "generatedBy": "gpt-5-mini",
                 "generationTimestamp": "2025-09-09T10:00:00Z"
             }
         }
@@ -268,7 +268,7 @@ class GeneratedQuestion(CosmosDocument):
     generated_rubric: Optional[str] = Field(None, alias="generatedRubric", description="Generated evaluation rubric")
     
     # Metadata
-    generated_by: str = Field(..., alias="generatedBy", description="AI model used for generation (e.g., 'gpt-4o')")
+    generated_by: str = Field(..., alias="generatedBy", description="AI model used for generation (e.g., 'gpt-5-mini')")
     generation_timestamp: datetime = Field(default_factory=datetime.utcnow, alias="generationTimestamp")
     usage_count: int = Field(default=0, alias="usageCount", description="Number of times this cached question was used")
     quality_score: Optional[float] = Field(None, alias="qualityScore", description="AI-assessed quality score (0-1)")
@@ -335,6 +335,48 @@ class QuestionValidationResponse(BaseModel):
     existing_question: Optional[Dict[str, Any]] = Field(None, alias="existingQuestion", description="Existing question if exact duplicate")
     similar_questions: Optional[List[Dict[str, Any]]] = Field(None, alias="similarQuestions", description="Similar questions if duplicates found")
     validation_time: Optional[float] = Field(None, alias="validationTime", description="Time taken for validation in seconds")
+
+
+# ===========================
+# Bulk Upload Session Model
+# ===========================
+
+
+class BulkUploadRow(BaseModel):
+    text: str
+    type: Optional[str] = None
+    tags: Optional[List[str]] = None
+    options: Optional[str] = None
+    correct_answer: Optional[str] = None
+    starter_code: Optional[str] = None
+    test_cases: Optional[str] = None
+    programming_language: Optional[str] = None
+    rubric: Optional[str] = None
+    # Optional diagnostic fields
+    error: Optional[str] = None
+    similar_to: Optional[List[Dict[str, Any]]] = None
+
+
+class BulkUploadSession(CosmosDocument):
+    """Represents a pending bulk upload session created by an admin.
+
+    Stored in Cosmos DB so sessions survive process restarts. The `etag` field
+    from Cosmos DB is used for optimistic concurrency when revalidating or
+    confirming imports.
+    """
+    filename: Optional[str] = Field(None, description="Original uploaded filename")
+    created_by: Optional[str] = Field(..., description="Admin who uploaded this session (used as partition key)")
+    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    validated: List[BulkUploadRow] = Field(default_factory=list)
+    flagged: List[BulkUploadRow] = Field(default_factory=list)
+    # session state controls flow: pending -> importing -> done
+    state: str = Field(default="pending", description="Session state: pending, importing, done")
+
+    @computed_field
+    @property
+    def partition_key(self) -> str:
+        # Partition sessions by the admin who created them
+        return (self.created_by or self.id)
 
 
 # ===========================

@@ -18,7 +18,7 @@ Multi-agent orchestration using Microsoft AutoGen (AgentChat) for question gener
 - **Message Streaming**: Real-time conversation monitoring and debugging
 
 ### 🛠️ Technical Capabilities
-- **Azure OpenAI Integration**: Leverages GPT-4o for sophisticated reasoning
+- **Azure OpenAI Integration**: Leverages GPT-5 family models (example: gpt-5-mini) for sophisticated reasoning
 - **Tool Integration**: Seamless execution of assessment-specific functions
 - **Caching & Performance**: Question generation and selective scoring re-use
 - **Comprehensive Logging**: Detailed trace and event logging for debugging
@@ -27,7 +27,9 @@ Multi-agent orchestration using Microsoft AutoGen (AgentChat) for question gener
 
 ### Prerequisites
 - Python 3.12+
-- Azure OpenAI resource with GPT-4o deployment
+- Azure OpenAI resource with GPT-5 family deployment (example: gpt-5-mini)
+ 
+Note: In this repo "Smart Mock" / LLM-agent workflows typically reference GPT-5 family deployments (e.g., `gpt-5-mini`) for analysis and scoring. Live interview realtime features use separate realtime-enabled deployments (e.g., `gpt-4o-mini-realtime-preview`).
 - Azure Cosmos DB (for data persistence)
 - UV package manager (recommended) or pip
 
@@ -124,8 +126,8 @@ The service requires several key environment variables in your `.env` file:
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_MODEL=gpt-4o
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini
+## AZURE_OPENAI_MODEL removed; use AZURE_OPENAI_DEPLOYMENT_NAME to specify the Azure deployment (e.g. gpt-5-mini)
 AZURE_OPENAI_API_VERSION=2024-09-01-preview
 
 # AutoGen Logging
@@ -303,7 +305,7 @@ graph TD
 
 - **Framework**: Microsoft AutoGen AgentChat
 - **API**: FastAPI with async support
-- **AI Model**: Azure OpenAI GPT-4o
+- **AI Model**: Azure OpenAI GPT-5 family (example: gpt-5-mini)
 - **Database**: Azure Cosmos DB
 - **Authentication**: Azure AD / API Keys
 - **Logging**: Python logging with AutoGen integration

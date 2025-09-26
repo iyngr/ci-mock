@@ -20,8 +20,23 @@ RATE_LIMIT_PER_MIN = int(os.getenv("SMARTSCREEN_RATE_LIMIT_PER_MIN", "10"))
 # Azure OpenAI envs
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
-AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+AZURE_OPENAI_DEPLOYMENT = (
+    os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+)
+
+# Warn if legacy AZURE_OPENAI_MODEL is present but do not use it at runtime
+if os.getenv("AZURE_OPENAI_MODEL"):
+    print("Warning: AZURE_OPENAI_MODEL is set but ignored. Set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g. 'gpt-5-mini').")
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview")
+
+# Enforce deployment-name policy at import/startup when Azure OpenAI is configured.
+if AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY:
+    if not AZURE_OPENAI_DEPLOYMENT:
+        raise RuntimeError(
+            "AZURE_OPENAI_DEPLOYMENT_NAME (or AZURE_OPENAI_DEPLOYMENT) is required when AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set. "
+            "Please set it to your Azure deployment name (e.g. 'gpt-5-mini')."
+        )
 
 # Entra ID config (for API protection)
 TENANT_ID = os.getenv("AZURE_ENTRA_TENANT_ID", "")
@@ -144,18 +159,36 @@ async def call_azure_openai(resume_text: str, mode: str, role: Optional[str], do
         {"role": "user", "content": f"<RESUME_DATA>\n{resume_text}\n</RESUME_DATA>"},
     ]
 
+    if not AZURE_OPENAI_DEPLOYMENT:
+        raise HTTPException(status_code=500, detail="AZURE_OPENAI_DEPLOYMENT_NAME (or AZURE_OPENAI_DEPLOYMENT) not configured")
+
     url = f"{AZURE_OPENAI_ENDPOINT}/openai/deployments/{AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version={AZURE_OPENAI_API_VERSION}"
     headers = {
         "api-key": AZURE_OPENAI_API_KEY,
-        "Content-Type": "application/json",
+        "content-type": "application/json",
     }
-    body = {
-        "messages": messages,
-        "temperature": 0.3,
-        "top_p": 0.7,
-        "response_format": {"type": "json_object"},
-        "max_tokens": 600,
-    }
+    # Adjust parameters for GPT-5 family (no temperature/top_p; map max_tokens)
+    body = {"messages": messages, "response_format": {"type": "json_object"}}
+    is_gpt5 = False
+    try:
+        dep = (AZURE_OPENAI_DEPLOYMENT or "").lower()
+        if "gpt-5" in dep or dep.startswith("gpt5") or "gpt5" in dep:
+            is_gpt5 = True
+    except Exception:
+        is_gpt5 = False
+
+    if is_gpt5:
+        # GPT-5 family: do not send temperature/top_p; use max_completion_tokens only
+        body["max_completion_tokens"] = 600
+        # Ensure older model-only keys are not present
+        body.pop("temperature", None)
+        body.pop("top_p", None)
+        body.pop("max_tokens", None)
+    else:
+        # Older models expect temperature/top_p and max_tokens
+        body["temperature"] = 0.3
+        body["top_p"] = 0.7
+        body["max_tokens"] = 600
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(url, headers=headers, json=body)
         resp.raise_for_status()

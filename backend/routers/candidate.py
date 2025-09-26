@@ -14,8 +14,6 @@ from models import (
     MCQQuestion,
     DescriptiveQuestion,
     CodingQuestion,
-    QuestionType,
-    ProgrammingLanguage,
     MCQOption,
     TestCase
 )
@@ -23,7 +21,6 @@ from datetime import datetime, timedelta
 import secrets
 import string
 from database import CosmosDBService, get_cosmosdb_service
-import time
 from jose import JWTError, jwt
 
 router = APIRouter()

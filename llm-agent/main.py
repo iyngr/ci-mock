@@ -103,10 +103,237 @@ class Judge0ResultResponse(BaseModel):
     next_action: str  # "continue" | "retry" | "hint" | "move_on"
     encouragement: str | None = None
 
+AI_STATUS: dict[str, dict[str, any]] = {"chat": {"ok": False, "details": "not validated"}, "embedding": {"ok": False, "details": "not validated"}}
+
+
+async def call_llm(client, messages, **kwargs):
+    """Wrapper around model_client.create that handles GPT-5 family differences.
+
+    - Removes unsupported params like `temperature` and `top_p` for GPT-5 deployments
+    - Maps `max_tokens` -> `max_completion_tokens` for GPT-5 if present
+    - Falls back gracefully for older clients
+    """
+    # Normalize messages: AutoGen clients expect autogen_core LLMMessage types
+    # (SystemMessage / UserMessage / AssistantMessage). Allow callers to pass
+    # simple dicts (role/content) or plain strings and convert them here.
+    try:
+        from autogen_core.models import SystemMessage, UserMessage, AssistantMessage
+    except Exception:
+        SystemMessage = None
+        UserMessage = None
+        AssistantMessage = None
+
+    normalized_messages = []
+    if messages:
+        for m in messages:
+            # If already an object the client understands, pass through
+            if SystemMessage and isinstance(m, (SystemMessage, UserMessage, AssistantMessage)):
+                normalized_messages.append(m)
+                continue
+
+            # If it's a BaseChatMessage-like object with .to_model_message, use that
+            if hasattr(m, "to_model_message"):
+                try:
+                    normalized_messages.append(m.to_model_message())
+                    continue
+                except Exception:
+                    pass
+
+            # If dict with role/content, map to appropriate autogen_core model
+            if isinstance(m, dict):
+                role = (m.get("role") or m.get("type") or "user").lower()
+                content = m.get("content")
+                if role == "system" and SystemMessage:
+                    normalized_messages.append(SystemMessage(content=content))
+                    continue
+                if role == "assistant" and AssistantMessage:
+                    # assistant messages may include 'thought' or function_call
+                    try:
+                        normalized_messages.append(AssistantMessage(content=content, source=m.get("source", "assistant")))
+                        continue
+                    except Exception:
+                        pass
+                # default to UserMessage
+                if UserMessage:
+                    normalized_messages.append(UserMessage(content=content, source=m.get("source", "user")))
+                    continue
+
+            # If it's a string, wrap as UserMessage (source=user)
+            if isinstance(m, str) and UserMessage:
+                normalized_messages.append(UserMessage(content=m, source="user"))
+                continue
+
+            # Fallback: pass as-is
+            normalized_messages.append(m)
+
+    else:
+        normalized_messages = messages
+
+    # Use normalized_messages for the rest of the function
+    messages = normalized_messages
+
+    # Determine whether we're targeting GPT-5 family based on deployment or model env vars
+    # Require deployment name to be set. Prefer deployment env var over legacy model name.
+    dep = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    if not dep:
+        # Fail fast: deployment name is required to avoid accidentally targeting wrong model
+        raise RuntimeError(
+            "AZURE_OPENAI_DEPLOYMENT_NAME is required and not set. Set it to your Azure deployment (e.g. gpt-5-mini)."
+        )
+    # Do NOT use legacy AZURE_OPENAI_MODEL for runtime behavior. Require deployment name.
+    is_gpt5 = False
+    # Determine whether we're targeting GPT-5 family based on deployment name
+    try:
+        if "gpt-5" in dep or dep.startswith("gpt5") or "gpt5" in dep:
+            is_gpt5 = True
+    except Exception:
+        is_gpt5 = False
+
+    params = dict(kwargs) if kwargs else {}
+    if is_gpt5:
+        # GPT-5 family doesn't accept temperature/top_p in many configurations; remove them
+        params.pop("temperature", None)
+        params.pop("top_p", None)
+        # Map max_tokens to max_completion_tokens which newer models expect
+        if "max_tokens" in params:
+            params["max_completion_tokens"] = params.pop("max_tokens")
+
+    try:
+        return await client.create(messages=messages, **params)
+    except TypeError as te:
+        # Some client implementations (or newer model families) don't accept
+        # `max_tokens` while others expect `max_completion_tokens`. Attempt a
+        # sequence of fallbacks:
+        # 1) Map `max_tokens` -> `max_completion_tokens` and retry
+        # 2) If that fails, try mapping back (if needed)
+        # 3) Finally, strip token-related kwargs and retry
+        logger.debug(f"client.create TypeError: {te}; attempting fallback key mapping")
+        fallback = dict(params)
+        # If caller provided max_tokens, try the newer name first
+        if "max_tokens" in fallback and "max_completion_tokens" not in fallback:
+            fallback["max_completion_tokens"] = fallback.pop("max_tokens")
+
+        # Also be defensive: if only max_completion_tokens present but the
+        # underlying client expects max_tokens, ensure both paths are tried
+        if "max_completion_tokens" in fallback and "max_tokens" not in fallback:
+            # keep a copy for the next retry attempt
+            fallback2 = dict(fallback)
+            fallback2["max_tokens"] = fallback2.get("max_completion_tokens")
+        else:
+            fallback2 = None
+
+        # Try the first fallback
+        try:
+            return await client.create(messages=messages, **fallback)
+        except TypeError as te2:
+            logger.debug(f"Fallback client.create failed: {te2}")
+            # Try the alternate mapping if available
+            if fallback2:
+                try:
+                    return await client.create(messages=messages, **fallback2)
+                except TypeError as te3:
+                    logger.debug(f"Alternate fallback also failed: {te3}")
+
+            # Last resort: strip token/generation params that may be unsupported
+            stripped = dict(params)
+            for k in ("max_tokens", "max_completion_tokens", "temperature", "top_p"):
+                stripped.pop(k, None)
+
+            logger.debug("Retrying client.create with token/generation params removed as last resort")
+            return await client.create(messages=messages, **stripped)
+
+
+async def _validate_azure_openai() -> None:
+    """Proactively validate Azure OpenAI chat & embedding deployments so we fail fast with clear guidance.
+
+    Populates global AI_STATUS. We intentionally swallow exceptions after recording them so the
+    service can still start and fallback logic (rule-based rewriting, heuristics) continues to work.
+    """
+    global AI_STATUS
+    chat_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or "(unset)"
+    # Do not rely on AZURE_OPENAI_MODEL at runtime. If present, warn operators.
+    model_name = "(unset)"
+    if os.getenv("AZURE_OPENAI_MODEL"):
+        print("Warning: AZURE_OPENAI_MODEL is set but is ignored at runtime. Use AZURE_OPENAI_DEPLOYMENT_NAME instead.")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or "(unset)"
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview")
+
+    # Validate chat deployment by issuing a tiny test request (max_tokens=1) if possible.
+    try:
+        test_messages = [
+            {"role": "system", "content": "health-check"},
+            {"role": "user", "content": "Reply with OK"},
+        ]
+        _ = await call_llm(model_client, test_messages, temperature=0.0, max_tokens=1)
+        AI_STATUS["chat"] = {
+            "ok": True,
+            "deployment": chat_deployment,
+            "model": model_name,
+            "api_version": api_version,
+            "endpoint": endpoint,
+            "details": "validated",
+        }
+        logger.info(
+            "Azure OpenAI chat deployment validated: deployment=%s model=%s api_version=%s",
+            chat_deployment,
+            model_name,
+            api_version,
+        )
+    except Exception as e:
+        # Record first line of error for brevity
+        err_line = str(e).splitlines()[0]
+        AI_STATUS["chat"] = {
+            "ok": False,
+            "deployment": chat_deployment,
+            "model": model_name,
+            "api_version": api_version,
+            "endpoint": endpoint,
+            "error": err_line,
+            "action": "Verify deployment name exists in Azure OpenAI resource and matches AZURE_OPENAI_DEPLOYMENT_NAME; confirm model is deployed and API version is supported.",
+        }
+        logger.warning("Azure OpenAI chat deployment validation failed: %s", err_line)
+
+    # Validate embedding deployment (optional)
+    embed_dep = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT") or os.getenv("EMBEDDING_MODEL")
+    if embed_dep:
+        try:
+            try:
+                import openai  # type: ignore
+            except Exception as imp_err:
+                raise RuntimeError(f"openai SDK not importable: {imp_err}")
+            openai_client = openai.AsyncAzureOpenAI(
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
+            )
+            _ = await openai_client.embeddings.create(model=embed_dep, input="ping")
+            AI_STATUS["embedding"] = {
+                "ok": True,
+                "deployment": embed_dep,
+                "details": "validated",
+            }
+            logger.info("Azure OpenAI embedding deployment validated: deployment=%s", embed_dep)
+        except Exception as e:  # pragma: no cover - network path
+            err_line = str(e).splitlines()[0]
+            AI_STATUS["embedding"] = {
+                "ok": False,
+                "deployment": embed_dep,
+                "error": err_line,
+                "action": "Create embedding deployment or update AZURE_OPENAI_EMBED_DEPLOYMENT to an existing one.",
+            }
+            logger.warning("Azure OpenAI embedding deployment validation failed: %s", err_line)
+    else:
+        AI_STATUS["embedding"] = {"ok": False, "details": "no deployment specified (optional)"}
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize the service on startup"""
     logger.info("Starting Smart Mock AI Service with Microsoft AutoGen")
+    # Fire validation but don't block startup if it fails
+    try:
+        await _validate_azure_openai()
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning(f"AI validation encountered unexpected error: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -117,7 +344,19 @@ async def shutdown_event():
 @app.get("/health")
 async def health_check() -> Dict[str, Any]:
     """Health check endpoint"""
-    return {"status": "healthy", "service": "Smart Mock AI Service"}
+    return {
+        "status": "healthy",
+        "service": "Smart Mock AI Service",
+        "ai": {
+            "chat": AI_STATUS.get("chat", {}),
+            "embedding": AI_STATUS.get("embedding", {}),
+        },
+    }
+
+@app.get("/ai/status")
+async def ai_status() -> Dict[str, Any]:
+    """Detailed AI deployment validation status."""
+    return {"ai": AI_STATUS}
 
 
 @app.post("/live/analyze", response_model=LiveAnalyzeResponse)
@@ -167,10 +406,10 @@ Respond in this exact JSON format:
             {"role": "system", "content": "You are an expert technical interviewer. Analyze responses and provide intelligent guidance while never revealing solutions."},
             {"role": "user", "content": analysis_prompt}
         ]
-        
+
         # Get AI analysis using the configured model client
-        response = await model_client.create(messages=messages, temperature=0.3, max_tokens=300)
-        
+        response = await call_llm(model_client, messages, temperature=0.3, max_tokens=300)
+
         if response and response.content:
             import json
             try:
@@ -295,10 +534,10 @@ Respond in this exact JSON format:
             {"role": "system", "content": "You are an expert technical interviewer managing interview flow with intelligence and professionalism."},
             {"role": "user", "content": orchestration_prompt}
         ]
-        
+
         # Get AI orchestration decision
-        response = await model_client.create(messages=messages, temperature=0.2, max_tokens=200)
-        
+        response = await call_llm(model_client, messages, temperature=0.2, max_tokens=200)
+
         if response and response.content:
             import json
             try:
@@ -393,10 +632,10 @@ Respond in this exact JSON format:
             {"role": "system", "content": "You are an expert technical interviewer providing guidance on code execution results while never revealing solutions."},
             {"role": "user", "content": result_analysis_prompt}
         ]
-        
+
         # Get AI analysis of the execution results
-        response = await model_client.create(messages=messages, temperature=0.3, max_tokens=400)
-        
+        response = await call_llm(model_client, messages, temperature=0.3, max_tokens=400)
+
         if response and response.content:
             import json
             try:
@@ -659,22 +898,20 @@ async def validate_question(request: QuestionValidationRequest) -> Dict[str, Any
     try:
         logger.info(f"Starting question validation for: {request.question_text[:50]}...")
         
-        # Import the validation tools
-        from tools import validate_question_exact_match, validate_question_similarity
-        
-        # Phase 1: Exact match validation
-        exact_match_result = validate_question_exact_match(request.question_text)
-        
-        if exact_match_result["status"] == "exact_duplicate":
-            logger.info("Exact duplicate found")
-            return exact_match_result
-        
-        # Phase 2: Semantic similarity validation
-        similarity_result = validate_question_similarity(request.question_text)
-        
-        logger.info(f"Question validation completed with status: {similarity_result['status']}")
-        return similarity_result
-        
+        # Use the unified validation tool which performs exact + semantic checks
+        from tools import validate_question
+
+        result = validate_question(request.question_text)
+        # `validate_question` may call the async similarity path internally; it
+        # returns a dict indicating status and details. If it returns a dict
+        # synchronously, return it. If it returns a coroutine (unlikely here),
+        # await it.
+        if hasattr(result, '__await__'):
+            result = await result
+
+        logger.info(f"Question validation completed with status: {result.get('status')}")
+        return result
+
     except Exception as e:
         logger.error(f"Error in validate_question: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to validate question: {str(e)}")

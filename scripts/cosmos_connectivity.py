@@ -22,7 +22,6 @@ sys.path.insert(0, ROOT)
 try:
     # prefer internal helper if present
     from backend.database import CosmosDBService
-    from backend.constants import CONTAINER
     HAVE_INTERNAL = True
 except Exception:
     HAVE_INTERNAL = False

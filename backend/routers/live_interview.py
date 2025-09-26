@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
-import os, time, re, logging
+import os
+import time
+import re
+import logging
 import httpx
 
 router = APIRouter(prefix="/api/live-interview", tags=["live-interview"])

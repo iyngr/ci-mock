@@ -7,7 +7,6 @@ Quick demonstration of the implemented security testing framework
 import sys
 import os
 import time
-from typing import Dict, Any
 
 # Add backend to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
@@ -26,8 +25,12 @@ def run_security_demo():
     
     # Import the test suite
     try:
-        # Prefer absolute import via backend package
-        from backend.tests.test_red_teaming import RedTeamingTestSuite, SecurityTestValidator
+        # Prefer absolute import via backend package; import module to avoid unused-import lints
+        import backend.tests.test_red_teaming as test_red_teaming
+        RedTeamingTestSuite = getattr(test_red_teaming, 'RedTeamingTestSuite', None)
+        SecurityTestValidator = getattr(test_red_teaming, 'SecurityTestValidator', None)
+        if RedTeamingTestSuite is None or SecurityTestValidator is None:
+            raise ImportError("RedTeaming test suite classes not found")
         print("✅ Successfully imported Red Teaming test suite")
     except ImportError as e:
         print(f"❌ Failed to import test suite: {e}")

@@ -29,7 +29,16 @@ AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
 USE_AZURE_OPENAI = os.getenv("USE_AZURE_OPENAI", "false").lower() == "true"
 AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
-AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+AZURE_OPENAI_DEPLOYMENT = (
+    os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+)
+
+# NOTE: We intentionally do NOT fall back to AZURE_OPENAI_MODEL at runtime.
+# Use AZURE_OPENAI_DEPLOYMENT_NAME to specify the Azure deployment (e.g. "gpt-5-mini").
+# If a legacy AZURE_OPENAI_MODEL env var is present, warn the operator but do not use it.
+if os.getenv("AZURE_OPENAI_MODEL"):
+    print("Warning: AZURE_OPENAI_MODEL is set but is no longer used at runtime. Please set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g., 'gpt-5-mini').")
 
 LLM_AGENT_URL = os.getenv("LLM_AGENT_URL", "http://localhost:8080")
 LLM_HTTP_TIMEOUT = float(os.getenv("LLM_HTTP_TIMEOUT", "8.0"))
@@ -121,15 +130,22 @@ async def _call_azure_json(prompt: str) -> Dict[str, Any]:
         "api-key": AZURE_OPENAI_API_KEY,
         "content-type": "application/json",
     }
+    # Build payload and adapt parameters for GPT-5 deployments
     body = {
         "messages": [
             {"role": "system", "content": "You return STRICT JSON only."},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.0,
         "response_format": {"type": "json_object"},
-        "max_tokens": 400,
     }
+    dep = (AZURE_OPENAI_DEPLOYMENT or "").lower()
+    # For GPT-5 family deployments, prefer `max_completion_tokens` and do not send temperature/top_p
+    if dep and ("gpt-5" in dep or dep.startswith("gpt5") or "gpt5" in dep):
+        body["max_completion_tokens"] = 400
+    else:
+        # Older models expect temperature and max_tokens
+        body["temperature"] = 0.0
+        body["max_tokens"] = 400
     delay = 0.5
     for attempt in range(LLM_MAX_RETRIES + 1):
         try:
@@ -479,7 +495,7 @@ class ScoringTriageService:
                 question.text, answer.submitted_answer
             )
             # Create a simple breakdown aligned with descriptive criteria
-            rubric_json = await _get_default_rubric()
+            _rubric_json = await _get_default_rubric()
             criteria = ["communication", "problemSolving", "explanationQuality"]
             breakdown = {c: score for c in criteria}
         
@@ -509,7 +525,7 @@ class ScoringTriageService:
                 question.text, answer.submitted_answer
             )
             # Create a simple breakdown aligned with coding criteria
-            rubric_json = await _get_default_rubric()
+            _rubric_json = await _get_default_rubric()
             criteria = ["codingCorrectness", "codingEfficiency", "explanationQuality"]
             breakdown = {c: score for c in criteria}
         
@@ -960,7 +976,6 @@ async def dev_get_rag_queries(limit: int = 10, db: CosmosDBService = Depends(get
         raise HTTPException(status_code=403, detail="Not allowed in production")
     try:
         # Simple query to get recent entries (assuming created_at or _ts presence)
-        items = await db.query_items(f"SELECT TOP {limit} * FROM c ORDER BY c._ts DESC", return_request_charge=False, container_name=CONTAINER["RAG_QUERIES"]) if False else None
         # Fallback: use find_many for compatibility
         results = await db.find_many(CONTAINER["RAG_QUERIES"], {}, limit=limit)
         return {"count": len(results), "items": results}

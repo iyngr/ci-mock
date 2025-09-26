@@ -9,14 +9,23 @@ This document outlines all required environment variables for the Speech-to-Spee
 # Azure OpenAI Realtime API Configuration
 AZURE_OPENAI_ENDPOINT=https://your-openai-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-4o-mini-realtime-preview
+AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-4o-mini-realtime-preview  # example for live interview; your realtime deployment may differ
 AZURE_OPENAI_REALTIME_API_VERSION=2025-04-01-preview
 AZURE_OPENAI_REALTIME_REGION=eastus2
 AZURE_OPENAI_REALTIME_VOICE=verse
 
 # Standard Azure OpenAI Configuration (for non-realtime features)
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_MODEL=gpt-4o
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini  # example for Smart Mock (non-realtime LLM usage)
+## AZURE_OPENAI_MODEL removed from recommended config. Provide the Azure deployment name via AZURE_OPENAI_DEPLOYMENT_NAME (example: `gpt-5-mini`).
+## Note: GPT-5 family deployments do not accept `temperature`/`top_p` — use `max_completion_tokens` instead of `max_tokens` when configuring request parameters.
+
+### Realtime vs non-realtime deployments
+Realtime (speech-to-speech / low-latency interactive) deployments are often different Azure deployment resources than the non-realtime chat/completion models used elsewhere.
+
+- Example: Smart Mock (assessment agent / batch analysis) may use a GPT-5 deployment such as `gpt-5-mini` configured via `AZURE_OPENAI_DEPLOYMENT_NAME`.
+- Example: Live Interview (S2S realtime) commonly uses a realtime-enabled deployment such as `gpt-4o-mini-realtime-preview` configured via `AZURE_OPENAI_REALTIME_DEPLOYMENT`.
+
+Ensure you provision and reference the correct deployment name for the scenario you intend to run. The realtime deployment name, API version, and region must match the provisioned realtime model resource.
 AZURE_OPENAI_API_VERSION=2024-09-01-preview
 ```
 
@@ -53,8 +62,9 @@ LLM_AGENT_URL=http://localhost:8080
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-openai-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key-here
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_MODEL=gpt-4o
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini
+## AZURE_OPENAI_MODEL removed from recommended config. Provide the Azure deployment name via AZURE_OPENAI_DEPLOYMENT_NAME (example: `gpt-5-mini`).
+## Note: GPT-5 family deployments do not accept `temperature`/`top_p` — use `max_completion_tokens` instead of `max_tokens` when configuring request parameters.
 AZURE_OPENAI_API_VERSION=2024-09-01-preview
 ```
 
@@ -120,7 +130,7 @@ az containerapp update \
   --set-env-vars \
     "AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/" \
     "AZURE_OPENAI_API_KEY=secretref:azure-openai-key" \
-    "AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-4o-mini-realtime-preview" \
+  "AZURE_OPENAI_REALTIME_DEPLOYMENT=gpt-5-mini-realtime-preview" \
     "JUDGE0_API_URL=https://judge0-ce.p.rapidapi.com" \
     "JUDGE0_API_KEY=secretref:judge0-key" \
     "COSMOS_DB_CONNECTION_STRING=secretref:cosmos-connection" \
@@ -133,7 +143,7 @@ az containerapp update \
   --set-env-vars \
     "AZURE_OPENAI_ENDPOINT=https://your-openai.openai.azure.com/" \
     "AZURE_OPENAI_API_KEY=secretref:azure-openai-key" \
-    "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o"
+  "AZURE_OPENAI_DEPLOYMENT_NAME=gpt-5-mini"
 
 # Frontend Container App
 az containerapp update \

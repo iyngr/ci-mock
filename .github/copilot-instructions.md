@@ -123,7 +123,7 @@ docker run -p 8000:8000 assessment-api
 - `frontend/tsconfig.json`: TypeScript compiler configuration
 
 ### External Integrations
-- **Azure OpenAI**: GPT-4o for AI-powered evaluation
+- **Azure OpenAI**: GPT-5 family (e.g., gpt-5-mini) for AI-powered evaluation
 - **Judge0 API**: Code execution and testing
 - **Azure Cosmos DB**: NoSQL database for assessments and results
 

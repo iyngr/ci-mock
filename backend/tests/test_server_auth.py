@@ -5,7 +5,6 @@ Run this while the backend is running to validate the new functionality.
 """
 
 import requests
-import json
 import datetime
 from time import sleep
 

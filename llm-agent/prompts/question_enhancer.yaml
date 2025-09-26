@@ -1,19 +1,35 @@
-# Prompty v1
 name: Question_Enhancer
 model:
-  provider: azure-openai
-  deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
-  model: ${AZURE_OPENAI_MODEL}
+  api: chat
+  configuration:
+    type: azure_openai
+    connection: azure_openai_connection
+    azure_deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
   parameters:
-    temperature: 0.4
-    top_p: 0.7
-    max_output_tokens: 500
+    max_completion_tokens: 500
     response_format:
       type: json_object
+inputs:
+  original_question:
+    type: string
+    description: The original technical assessment question to enhance
+
 outputs:
-  - name: result
-    type: object
-    description: Rewritten question and tags
+  rewritten_text:
+    type: string
+    description: The improved question text
+  suggested_role:
+    type: string
+    description: The single most relevant job role
+  suggested_tags:
+    type: list
+    items:
+      type: string
+    description: List of up to three specific skill tags
+
+# Note: The '---' separator has been removed from here.
+# 'system' and 'user' are now top-level keys.
+
 system: |
   You are an expert technical writer and assessment specialist. Your task is to enhance technical assessment questions.
 
@@ -26,3 +42,6 @@ system: |
   {"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}
 
   Do not include any other text, explanation, or formatting. Only return the JSON object.
+
+user: |
+  {{original_question}}

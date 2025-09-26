@@ -1,17 +1,19 @@
-# Prompty v1
 name: Question_Generator_Agent
 model:
-  provider: azure-openai
-  deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
-  model: ${AZURE_OPENAI_MODEL}
+  api: chat
+  configuration:
+    type: azure_openai
+    connection: azure_openai_connection
+    azure_deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+  # model placeholder removed; deployment (Azure) is configured via AZURE_OPENAI_DEPLOYMENT_NAME
   parameters:
-    temperature: 0.6
-    top_p: 0.8
-    max_output_tokens: 800
+    # temperature: 0.6  # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    # top_p: 0.8       # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    max_completion_tokens: 800
     response_format:
       type: json_object
 outputs:
-  - name: question
+  question:
     type: object
     description: Generated question in platform JSON shape
 system: |

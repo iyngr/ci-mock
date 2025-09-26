@@ -6,19 +6,29 @@ from autogen_agentchat.conditions import MaxMessageTermination, TextMentionTermi
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
 from autogen_agentchat.teams import SelectorGroupChat
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
+from autogen_core.models import ModelFamily
 from azure.identity import DefaultAzureCredential
 from autogen_ext.auth.azure import AzureTokenProvider
 from tools import fetch_submission_data, score_mcqs, generate_question_from_ai, query_cosmosdb_for_rag, validate_question
 from prompt_loader import load_prompty
 from tracing import traced_run
-from structured import parse_analyst_output, parse_question_rewrite
+# structured parsing helpers are imported where/when needed to avoid unused-import lints
+
+
+def _infer_family_from_deployment(deployment_name: str | None) -> None:
+    """No-op: model family inference is disabled in source.
+
+    Deployment names must be respected verbatim. This helper returns None
+    to ensure callers do not embed inferred family labels into runtime
+    model_info values.
+    """
+    return None
 
 # --- Optional LangChain adapter support (guarded imports) ---
 _langchain_adapter_available = False
 _langchain_adapter_builder = None
 try:
     # LangChain & LangChain vectorstore imports (guarded)
-    from langchain_core.tools import Tool
     from langchain_core.tools.retriever import create_retriever_tool
     try:
         # Prefer the new package
@@ -130,28 +140,36 @@ def create_model_client():
     
     # Build a minimal model_info for autogen_ext when using Azure OpenAI.
     # autogen_ext expects model_info for non-standard OpenAI model names.
-    def _default_model_info(model_name: str) -> dict:
-        # conservative defaults; these can be overridden by providing a full model_info
-        return {
-            "vision": False,
-            "function_calling": True,
-            "json_output": True,
-            "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
-            "structured_output": True,
-            "multiple_system_messages": True,
-        }
+    # NOTE: We intentionally DO NOT infer a model family from deployment names here.
 
     # Option 1: Using API Key authentication
     if api_key:
-        model_name = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
-        print(f"Using Azure OpenAI API key auth; deployment={os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}, model={model_name}")
+        deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        # Strict startup enforcement: if Azure endpoint + API key are configured,
+        # require the explicit Azure deployment name (deployment resource) to be set.
+        if azure_endpoint and api_key and not deployment_name:
+            raise RuntimeError(
+                "AZURE_OPENAI_DEPLOYMENT_NAME is required when AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set. "
+                "Please set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g. 'gpt-5-mini')."
+            )
+
+        if deployment_name:
+            print(f"Using Azure OpenAI API key auth; deployment={deployment_name}")
+
         return AzureOpenAIChatCompletionClient(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-            model=model_name,
+            azure_deployment=deployment_name,
+            model=deployment_name,
             api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
             azure_endpoint=azure_endpoint,
             api_key=api_key,
-            model_info=_default_model_info(model_name),
+            model_info={
+                "vision": False,
+                "function_calling": True,
+                "json_output": True,
+                "family": ModelFamily.UNKNOWN,
+                "structured_output": True,
+                "multiple_system_messages": True,
+            },
         )
     
     # Option 2: Using Azure AD authentication (recommended for production)
@@ -161,23 +179,38 @@ def create_model_client():
                 DefaultAzureCredential(),
                 "https://cognitiveservices.azure.com/.default",
             )
-            
-            model_name = os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
-            print(f"Using Azure AD auth for Azure OpenAI; deployment={os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')}, model={model_name}")
+
+            deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+            if azure_endpoint and not deployment_name:
+                # If Azure endpoint is present but deployment is missing, fail fast.
+                raise RuntimeError(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME is required when AZURE_OPENAI_ENDPOINT is set. "
+                    "Please set AZURE_OPENAI_DEPLOYMENT_NAME to your Azure deployment (e.g. 'gpt-5-mini')."
+                )
+            else:
+                print(f"Using Azure AD auth for Azure OpenAI; deployment={deployment_name}")
+
             return AzureOpenAIChatCompletionClient(
-                azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                model=model_name,
+                azure_deployment=deployment_name,
+                model=deployment_name,
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
                 azure_endpoint=azure_endpoint,
                 azure_ad_token_provider=token_provider,
-                model_info=_default_model_info(model_name),
+                model_info={
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "family": ModelFamily.UNKNOWN,
+                    "structured_output": True,
+                    "multiple_system_messages": True,
+                },
             )
         except Exception as e:
             print(f"Warning: Could not create Azure AD token provider: {e}")
             print("Using API key authentication with mock credentials")
             return AzureOpenAIChatCompletionClient(
-                azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-                model=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o"),
+                azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview"),
                 azure_endpoint=azure_endpoint,
                 api_key="mock-api-key",
@@ -215,17 +248,25 @@ def _client_from_prompty(prompty):
     if provider != "azure-openai":
         return None
 
-    deployment = prompty.model.get("deployment") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
-    model_name = prompty.model.get("model") or os.getenv("AZURE_OPENAI_MODEL", "gpt-4o")
+    # Prefer explicit deployment set in prompty; fall back to env deployment if provided
+    deployment = prompty.model.get("deployment") or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
     api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-09-01-preview")
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT") or "https://mock-openai.openai.azure.com/"
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
 
     # API key auth preferred if present; otherwise try AAD
     if api_key:
+        # If global Azure endpoint+key are set and this client creation didn't provide
+        # a deployment name, enforce that a deployment be specified to avoid silent fallbacks.
+        if os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY") and not deployment:
+            raise RuntimeError(
+                "AZURE_OPENAI_DEPLOYMENT_NAME is required when AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set. "
+                "Please provide a deployment in prompty.model.deployment or set AZURE_OPENAI_DEPLOYMENT_NAME."
+            )
+
         return AzureOpenAIChatCompletionClient(
             azure_deployment=deployment,
-            model=model_name,
+            model=deployment,
             api_version=api_version,
             azure_endpoint=azure_endpoint,
             api_key=api_key,
@@ -233,7 +274,7 @@ def _client_from_prompty(prompty):
                 "vision": False,
                 "function_calling": True,
                 "json_output": True,
-                "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
+                    "family": ModelFamily.UNKNOWN,
                 "structured_output": True,
             },
         )
@@ -245,7 +286,7 @@ def _client_from_prompty(prompty):
             )
             return AzureOpenAIChatCompletionClient(
                 azure_deployment=deployment,
-                model=model_name,
+                model=deployment,
                 api_version=api_version,
                 azure_endpoint=azure_endpoint,
                 azure_ad_token_provider=token_provider,
@@ -253,7 +294,7 @@ def _client_from_prompty(prompty):
                     "vision": False,
                     "function_calling": True,
                     "json_output": True,
-                    "family": "gpt-4o" if "gpt-4" in model_name or "gpt-4o" in model_name else "gpt-3.5",
+                    "family": ModelFamily.UNKNOWN,
                     "structured_output": True,
                 },
             )
@@ -261,7 +302,7 @@ def _client_from_prompty(prompty):
             # Fallback to mock key if AAD fails in dev contexts
             return AzureOpenAIChatCompletionClient(
                 azure_deployment=deployment,
-                model=model_name,
+                model=deployment,
                 api_version=api_version,
                 azure_endpoint=azure_endpoint,
                 api_key="mock-api-key",
@@ -270,7 +311,7 @@ def _client_from_prompty(prompty):
 # --- AGENT DEFINITIONS ---
 
 # 1. Orchestrator Agent - Plans and coordinates the assessment workflow
-_orch_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "orchestrator.prompty"))
+_orch_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "orchestrator.yaml"))
 orchestrator_agent = AssistantAgent(
     name="Orchestrator_Agent",
     description="A project manager agent that orchestrates the entire scoring and report generation process.",
@@ -293,7 +334,7 @@ End the conversation with "TERMINATE" once the final report is ready."""
 )
 
 # 2. Code Analysis Agent - Evaluates coding submissions
-_code_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "code_analyst.prompty"))
+_code_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "code_analyst.yaml"))
 code_analyst_agent = AssistantAgent(
     name="Code_Analyst_Agent", 
     description="A senior software engineer specialized in analyzing coding submissions.",
@@ -323,7 +364,7 @@ Provide your analysis in a structured JSON format with:
 )
 
 # 3. Text Analysis Agent - Evaluates descriptive answers  
-_text_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "text_analyst.prompty"))
+_text_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "text_analyst.yaml"))
 text_analyst_agent = AssistantAgent(
     name="Text_Analyst_Agent",
     description="An expert in technical communication and descriptive answer evaluation.",
@@ -353,7 +394,7 @@ Provide your analysis in a structured JSON format with:
 )
 
 # 4. Report Synthesizer Agent - Compiles final assessment reports
-_report_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "report_synthesizer.prompty"))
+_report_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "report_synthesizer.yaml"))
 report_synthesizer_agent = AssistantAgent(
     name="Report_Synthesizer_Agent",
     description="A report writer that synthesizes all scoring data into comprehensive assessment reports.",
@@ -533,7 +574,7 @@ def create_question_rewriting_team() -> SelectorGroupChat:
     """
     
     # Question Enhancement Agent - specialized in improving question quality
-    _qe_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_enhancer.prompty"))
+    _qe_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_enhancer.yaml"))
     question_enhancer = AssistantAgent(
         name="Question_Enhancer",
         description="An expert technical writer specializing in question enhancement and skill tagging.",
@@ -577,7 +618,7 @@ def create_question_generation_team() -> SelectorGroupChat:
     Creates a simplified team for question generation tasks.
     """
     
-    _qgen_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_generator.prompty"))
+    _qgen_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_generator.yaml"))
     question_generator_agent = AssistantAgent(
         name="Question_Generator_Agent",
         description="An expert in creating technical assessment questions.",
@@ -615,7 +656,7 @@ def create_rag_question_team() -> SelectorGroupChat:
     """
     
     # Enhanced Question Validator with RAG capabilities
-    _rag_val_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_validator.prompty"))
+    _rag_val_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_validator.yaml"))
     rag_validator_agent = AssistantAgent(
         name="RAG_Question_Validator",
         description="An expert question validator powered by RAG knowledge retrieval.",
@@ -643,7 +684,7 @@ Always provide clear, actionable feedback with specific examples from the knowle
     )
     
     # Question Answering Agent with RAG
-    _rag_qa_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_qa.prompty"))
+    _rag_qa_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "rag_qa.yaml"))
     rag_qa_agent = AssistantAgent(
         name="RAG_QA_Agent", 
         description="A question-answering agent powered by RAG knowledge retrieval.",

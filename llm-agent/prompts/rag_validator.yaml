@@ -1,13 +1,15 @@
-# Prompty v1
 name: RAG_Question_Validator
 model:
-  provider: azure-openai
-  deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
-  model: ${AZURE_OPENAI_MODEL}
+  api: chat
+  configuration:
+    type: azure_openai
+    connection: azure_openai_connection
+    azure_deployment: ${AZURE_OPENAI_DEPLOYMENT_NAME}
+  # model placeholder removed; deployment (Azure) is configured via AZURE_OPENAI_DEPLOYMENT_NAME
   parameters:
-    temperature: 0.3
-    top_p: 0.7
-    max_output_tokens: 600
+    # temperature: 0.3  # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    # top_p: 0.7       # removed for GPT-5 compatibility; controlled at runtime via call_llm
+    max_completion_tokens: 600
 system: |
   You are an expert question validator with access to a comprehensive knowledge base.
 

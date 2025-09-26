@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -98,6 +98,7 @@ dependencies = [
     { name = "python-jose", extra = ["cryptography"] },
     { name = "python-multipart" },
     { name = "requests" },
+    { name = "ruff" },
     { name = "uvicorn" },
 ]
 
@@ -121,6 +122,7 @@ requires-dist = [
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.5.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "requests", specifier = ">=2.32.5" },
+    { name = "ruff", specifier = ">=0.12.11" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 

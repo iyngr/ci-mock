@@ -153,3 +153,39 @@ MIT (root `LICENSE`).
 - Cross-partition queries enabled for flexibility
 - Batch processing of expired submissions
 - Minimal memory footprint for cost efficiency
+
+## 13. Daily cleanup job (new)
+
+We added a new daily Timer-triggered function that complements the 5‑minute auto-submit function.
+
+Purpose
+- Marks `submissions` with `status = 'reserved'` and `expires_at < now` as `status = 'expired'` (adds `expired_at`).
+- For `assessments` created via compatibility fallback (`auto_created = true`) older than a configurable threshold, if there are no remaining non-expired submissions, the function marks the assessment `status = 'archived'` and sets `archived_at`.
+
+Schedule
+- Default: 02:00 UTC daily (CRON `0 0 2 * * *`). Configured in `function_app.py`.
+
+Configuration
+- `CLEANUP_ASSESSMENT_AGE_DAYS` (optional): how many days old an `auto_created` assessment must be before being considered for archival. Default: `7`.
+
+Isolation and safety
+- The daily cleanup runs independently from the 5‑minute auto-submit function and includes targeted try/except handling so failures do not affect other timers.
+- The job uses SDK-based queries and updates (no stored procedures), so no DB-side deploys are required.
+
+How to test locally
+1. Ensure `local.settings.json` has the Cosmos DB connection (or use a local emulator).
+2. Temporarily set `CLEANUP_ASSESSMENT_AGE_DAYS` to `0` to make newly created auto-created assessments eligible for archival.
+3. Create a small test assessment with `auto_created=true` and a few `submissions` with `status='reserved'` and `expires_at` in the past.
+4. Run the Functions host:
+
+```powershell
+func start
+```
+
+5. Trigger the timer (or wait until scheduled time). After run, verify:
+- reserved submissions have `status='expired'` and `expired_at` set
+- auto-created assessment has `status='archived'` and `archived_at` set (if no non-expired submissions remain)
+
+Operational notes
+- For large datasets, prefer targeted partitioned queries and monitor RU consumption. The function is intentionally conservative (uses cross-partition queries but filters by `auto_created` and creation age).
+- Consider setting `CLEANUP_ASSESSMENT_AGE_DAYS` to a higher value (7–30) in production to avoid premature archival.

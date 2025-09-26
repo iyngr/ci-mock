@@ -336,3 +336,116 @@ async def trigger_s2s_report_generation(transcript: dict):
         
     except Exception as e:
         logging.error(f"Failed to trigger S2S report generation: {str(e)}")
+
+
+# New: daily cleanup function (no stored-proc) to mark reserved submissions expired and optionally archive auto-created assessments
+@app.timer_trigger(schedule="0 0 2 * * *", arg_name="cleanupTimer", run_on_startup=False, use_monitor=False)
+async def daily_cleanup_reserved_submissions(cleanupTimer: func.TimerRequest) -> None:
+    """
+    Daily timer (02:00 UTC) that:
+      - finds `submissions` with status 'reserved' and expires_at < now, marks them 'expired'
+      - for auto-created assessments older than CLEANUP_ASSESSMENT_AGE_DAYS, if they have no non-expired submissions, mark the assessment 'archived'
+
+    This function is independent from auto_submit_expired_assessments and uses safe SDK calls.
+    """
+    now = datetime.datetime.utcnow()
+    now_iso = now.isoformat()
+
+    if cleanupTimer.past_due:
+        logging.info('daily_cleanup_reserved_submissions: Timer is past due')
+
+    try:
+        cosmos_client = get_cosmos_client()
+        database = cosmos_client.get_database_client(os.environ["COSMOS_DB_NAME"])
+        submissions_container = database.get_container_client("submissions")
+        assessments_container = database.get_container_client("assessments")
+
+        # 1) Mark reserved submissions expired
+        # Query only reserved submissions that are past their expires_at
+        query_reserved = "SELECT * FROM c WHERE c.status = 'reserved' AND c.expires_at < @now"
+        params = [{"name": "@now", "value": now_iso}]
+
+        logging.info('daily_cleanup_reserved_submissions: querying expired reserved submissions')
+        expired_reserved = submissions_container.query_items(
+            query=query_reserved,
+            parameters=params,
+            enable_cross_partition_query=True
+        )
+
+        updated = 0
+        async for doc in async_iterable(expired_reserved):
+            try:
+                doc['status'] = 'expired'
+                doc['expired_at'] = now_iso
+                # preserve previous fields; upsert to avoid partition resolution issues
+                submissions_container.upsert_item(doc)
+                updated += 1
+            except Exception as e:
+                logging.exception('Failed to mark submission expired: %s', e)
+
+        logging.info('daily_cleanup_reserved_submissions: marked %s reserved submissions expired', updated)
+
+        # 2) Archive auto-created assessments older than threshold if they have no non-expired submissions
+        days_threshold = int(os.environ.get('CLEANUP_ASSESSMENT_AGE_DAYS', '7'))
+        threshold_dt = now - datetime.timedelta(days=days_threshold)
+        threshold_iso = threshold_dt.isoformat()
+
+        query_assess = "SELECT c.id FROM c WHERE c.auto_created = true AND c.created_at < @threshold"
+        assess_params = [{"name": "@threshold", "value": threshold_iso}]
+
+        logging.info('daily_cleanup_reserved_submissions: querying candidate auto-created assessments')
+        candidates = assessments_container.query_items(
+            query=query_assess,
+            parameters=assess_params,
+            enable_cross_partition_query=True
+        )
+
+        archived = 0
+        for a in candidates:
+            aid = a.get('id')
+            if not aid:
+                continue
+            try:
+                # Count non-expired submissions for this assessment
+                count_query = "SELECT VALUE COUNT(1) FROM c WHERE c.assessment_id = @aid AND c.status != @expired"
+                count_params = [
+                    {"name": "@aid", "value": aid},
+                    {"name": "@expired", "value": "expired"}
+                ]
+                res = list(submissions_container.query_items(
+                    query=count_query,
+                    parameters=count_params,
+                    enable_cross_partition_query=True
+                ))
+                remaining = res[0] if res else 0
+                logging.info('Assessment %s remaining non-expired submissions: %s', aid, remaining)
+                if remaining == 0:
+                    try:
+                        # Read and update assessment status
+                        assessment = assessments_container.read_item(item=aid, partition_key=aid)
+                        assessment['status'] = 'archived'
+                        assessment['archived_at'] = now_iso
+                        assessments_container.replace_item(item=aid, body=assessment)
+                        archived += 1
+                        logging.info('Archived assessment %s', aid)
+                    except Exception as e:
+                        logging.exception('Failed to archive assessment %s: %s', aid, e)
+            except Exception as e:
+                logging.exception('Error checking submissions for assessment %s: %s', aid, e)
+
+        logging.info('daily_cleanup_reserved_submissions done. archived=%s', archived)
+
+    except Exception as e:
+        logging.exception('Error in daily_cleanup_reserved_submissions: %s', e)
+        # Do not raise; we want isolation from other timers
+        return
+
+
+def async_iterable(sync_iterable):
+    """Small helper to adapt SDK sync iterable to async for loops in this file.
+
+    The azure-cosmos SDK returns a generator; to keep this function simple and
+    avoid adding an async SDK dependency, we adapt by yielding synchronously.
+    """
+    for it in sync_iterable:
+        yield it

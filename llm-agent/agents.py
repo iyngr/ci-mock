@@ -425,6 +425,9 @@ Present the final output clearly, starting with the phrase 'FINAL REPORT:' and f
 user_proxy_agent = UserProxyAgent(
     name="Admin_User_Proxy",
     description="A proxy agent that executes tools and handles administrative tasks.",
+    human_input_mode="NEVER",  # Autonomous: No human input prompts; executes tools directly
+    code_execution_config=False,  # Disable code execution if not needed (avoids extra prompts)
+    max_consecutive_auto_reply=None  # Allow unlimited autonomous responses
 )
 
 # 6. RAG-Enabled Agent - Handles knowledge base queries and context retrieval
@@ -567,51 +570,28 @@ Select the most appropriate agent to continue this workflow."""
     return assessment_team
 
 # --- QUESTION GENERATION TEAM ---
-def create_question_rewriting_team() -> SelectorGroupChat:
+def create_question_rewriting_team() -> AssistantAgent:  # Return the single enhancer agent
     """
-    Create a specialized team for question rewriting and enhancement.
-    Uses a single expert agent focused on grammar, clarity, and tagging.
+    Returns the specialized Question_Enhancer agent for question rewriting and enhancement.
+    Single-agent approach: Relies on the agent's system message (from YAML) for all instructions.
+    Input the original question directly as a message; outputs structured JSON.
     """
     
-    # Question Enhancement Agent - specialized in improving question quality
     _qe_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_enhancer.yaml"))
+    
+    # Validate load succeeded (fail fast if YAML missing)
+    if not _qe_prompty or not hasattr(_qe_prompty, 'system') or not _qe_prompty.system:
+        raise RuntimeError("Failed to load question_enhancer.yaml - check file path and format.")
+    
     question_enhancer = AssistantAgent(
         name="Question_Enhancer",
         description="An expert technical writer specializing in question enhancement and skill tagging.",
         model_client=_client_from_prompty(_qe_prompty) or model_client,
-        system_message=(
-            _qe_prompty.system
-            if _qe_prompty and _qe_prompty.system
-            else """You are an expert technical writer and assessment specialist. Your task is to enhance technical assessment questions.
-
-When given a question, you must:
-1. Correct any grammatical errors and improve clarity to avoid ambiguity
-2. Determine the most appropriate job role (e.g., 'Frontend Developer', 'Backend Developer', 'Data Scientist', 'Full Stack Developer', 'DevOps Engineer', 'Mobile Developer')
-3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins', 'Docker', 'REST APIs')
-
-CRITICAL: Your response MUST be a single, minified JSON object with this exact schema:
-{"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}
-
-Do not include any other text, explanation, or formatting. Only return the JSON object."""
-        )
+        system_message=_qe_prompty.system  # Pure YAML load; no fallback
     )
     
-    # User proxy for managing the conversation
-    user_proxy = UserProxyAgent(
-        name="Question_Rewrite_Coordinator",
-        description="Coordinates the question rewriting process."
-    )
+    return question_enhancer  # Single agent; system prompt handles everything
     
-    # Create the rewriting team
-    participants = [question_enhancer, user_proxy]
-    
-    return SelectorGroupChat(
-        participants=participants,
-        model_client=model_client,
-        selector_prompt="Select the Question_Enhancer to improve the question quality and provide skill tags.",
-        termination_condition=MaxMessageTermination(max_messages=3)
-    )
-
 
 def create_question_generation_team() -> SelectorGroupChat:
     """

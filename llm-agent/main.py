@@ -919,112 +919,94 @@ async def validate_question(request: QuestionValidationRequest) -> Dict[str, Any
 @app.post("/questions/rewrite")
 async def rewrite_question(request: QuestionRewriteRequest) -> Dict[str, Any]:
     """
-    AI-powered question enhancement and auto-tagging.
-    Uses LLM to improve grammar, clarity, and suggest role/skill tags.
-    Falls back to rule-based enhancement if AI service is unavailable.
+    AI-powered question enhancement and auto-tagging using a single specialized agent.
+    Relies on the agent's system message for instructions; inputs the question directly.
+    Falls back to rule-based if AI fails.
     """
     try:
         logger.info(f"Starting question rewriting for: {request.question_text[:50]}...")
         
-        # Try AI-based rewriting first
-        try:
-            # Create a specialized question rewriting team
-            rewrite_team = create_question_rewriting_team()
-            
-            # Define the rewriting task with specific instructions
-            task = f"""
-            Please analyze and enhance the following assessment question:
-            
-            QUESTION: "{request.question_text}"
-            
-            Your task is to:
-            1. Correct any grammatical errors and improve clarity to avoid ambiguity
-            2. Determine the most appropriate job role (e.g., 'Frontend Developer', 'Backend Developer', 'Data Scientist')
-            3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins')
-            
-            IMPORTANT: Your response MUST be a single, minified JSON object with this exact schema:
-            {{"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}}
-            
-            Do not include any other text or explanation in your response.
-            """
-            
-            # Run the rewriting workflow
-            result_stream = rewrite_team.run_stream(task=task)
-            
-            # Collect the response and extract the JSON
-            final_response = ""
-            async for message in result_stream:
-                if hasattr(message, 'content') and isinstance(message.content, str):
-                    final_response = message.content
-            
-            # Parse the JSON response
-            import json
-            rewrite_result = json.loads(final_response.strip())
-            
-            # Validate the response structure
-            required_keys = ["rewritten_text", "suggested_role", "suggested_tags"]
-            if all(key in rewrite_result for key in required_keys):
-                logger.info("Question rewriting completed successfully with AI")
-                return rewrite_result
-            else:
-                raise ValueError("Invalid AI response structure")
-                
-        except Exception as ai_error:
-            logger.warning(f"AI-based rewriting failed: {ai_error}, falling back to rule-based enhancement")
-            
-            # Fallback to rule-based enhancement for development
-            enhanced_text = request.question_text.strip()
-            
-            # Basic text cleanup
-            if enhanced_text and not enhanced_text[0].isupper():
-                enhanced_text = enhanced_text[0].upper() + enhanced_text[1:]
-            if enhanced_text and not enhanced_text.endswith(('?', '.', '!')):
-                enhanced_text += "?"
-            
-            # Rule-based role and tag suggestions
-            text_lower = request.question_text.lower()
-            suggested_role = "General Developer"
-            suggested_tags = ["general", "assessment"]
-            
-            # Frontend keywords
-            if any(keyword in text_lower for keyword in ["react", "javascript", "html", "css", "frontend", "ui", "component"]):
-                suggested_role = "Frontend Developer"
-                suggested_tags = ["frontend", "javascript"]
-                if "react" in text_lower:
-                    suggested_tags.append("react")
-            
-            # Backend keywords  
-            elif any(keyword in text_lower for keyword in ["python", "java", "backend", "api", "server", "database", "sql"]):
-                suggested_role = "Backend Developer"
-                suggested_tags = ["backend", "api"]
-                if "python" in text_lower:
-                    suggested_tags.append("python")
-                elif "java" in text_lower:
-                    suggested_tags.append("java")
-            
-            # Algorithm/Data Structure keywords
-            elif any(keyword in text_lower for keyword in ["algorithm", "complexity", "sorting", "search", "tree", "array"]):
-                suggested_role = "Software Engineer"
-                suggested_tags = ["algorithms", "programming"]
-                if "complexity" in text_lower:
-                    suggested_tags.append("complexity")
-            
-            # DevOps keywords
-            elif any(keyword in text_lower for keyword in ["docker", "kubernetes", "aws", "deployment", "ci/cd"]):
-                suggested_role = "DevOps Engineer"
-                suggested_tags = ["devops", "infrastructure"]
-            
-            logger.info("Question rewriting completed with rule-based fallback")
-            return {
-                "rewritten_text": enhanced_text,
-                "suggested_role": suggested_role,
-                "suggested_tags": suggested_tags[:3]  # Limit to 3 tags
-            }
+        # Create the rewriting agent (single agent)
+        rewrite_agent = create_question_rewriting_team()  # Returns AssistantAgent
         
-    except Exception as e:
-        logger.error(f"Error in rewrite_question: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to rewrite question: {str(e)}")
-
+        # Send the original question directly as the user message
+        # (Agent's system prompt + YAML user template handle enhancement/tagging)
+        from autogen_agentchat.messages import TextMessage
+        from autogen_core import CancellationToken
+        
+        cancellation_token = CancellationToken()
+        response = await rewrite_agent.on_messages(
+            [TextMessage(content=request.question_text, source="user")],  # Raw input; no extra instructions
+            cancellation_token
+        )
+        
+        # Extract the JSON response (agent outputs minified JSON per system prompt)
+        final_response = response.chat_message.content if hasattr(response.chat_message, 'content') else str(response)
+        
+        # Parse the JSON
+        import json
+        rewrite_result = json.loads(final_response.strip())
+        
+        # Validate structure (matches YAML outputs)
+        required_keys = ["rewritten_text", "suggested_role", "suggested_tags"]
+        if all(key in rewrite_result for key in required_keys):
+            logger.info("Question rewriting completed successfully with single agent")
+            return rewrite_result
+        else:
+            raise ValueError("Invalid AI response structure")
+            
+    except Exception as ai_error:
+        logger.warning(f"AI-based rewriting failed: {ai_error}, falling back to rule-based enhancement")
+        
+        # Fallback to rule-based enhancement for development
+        enhanced_text = request.question_text.strip()
+        
+        # Basic text cleanup
+        if enhanced_text and not enhanced_text[0].isupper():
+            enhanced_text = enhanced_text[0].upper() + enhanced_text[1:]
+        if enhanced_text and not enhanced_text.endswith(('?', '.', '!')):
+            enhanced_text += "?"
+        
+        # Rule-based role and tag suggestions
+        text_lower = request.question_text.lower()
+        suggested_role = "General Developer"
+        suggested_tags = ["general", "assessment"]
+        
+        # Frontend keywords
+        if any(keyword in text_lower for keyword in ["react", "javascript", "html", "css", "frontend", "ui", "component"]):
+            suggested_role = "Frontend Developer"
+            suggested_tags = ["frontend", "javascript"]
+            if "react" in text_lower:
+                suggested_tags.append("react")
+        
+        # Backend keywords  
+        elif any(keyword in text_lower for keyword in ["python", "java", "backend", "api", "server", "database", "sql"]):
+            suggested_role = "Backend Developer"
+            suggested_tags = ["backend", "api"]
+            if "python" in text_lower:
+                suggested_tags.append("python")
+            elif "java" in text_lower:
+                suggested_tags.append("java")
+        
+        # Algorithm/Data Structure keywords
+        elif any(keyword in text_lower for keyword in ["algorithm", "complexity", "sorting", "search", "tree", "array"]):
+            suggested_role = "Software Engineer"
+            suggested_tags = ["algorithms", "programming"]
+            if "complexity" in text_lower:
+                suggested_tags.append("complexity")
+        
+        # DevOps keywords
+        elif any(keyword in text_lower for keyword in ["docker", "kubernetes", "aws", "deployment", "ci/cd"]):
+            suggested_role = "DevOps Engineer"
+            suggested_tags = ["devops", "infrastructure"]
+        
+        logger.info("Question rewriting completed with rule-based fallback")
+        return {
+            "rewritten_text": enhanced_text,
+            "suggested_role": suggested_role,
+            "suggested_tags": suggested_tags[:3]  # Limit to 3 tags
+        }
+    
 
 @app.post("/debug/console-interaction")
 async def debug_console_interaction(request: DebugInteractionRequest) -> Dict[str, Any]:

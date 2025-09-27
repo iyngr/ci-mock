@@ -15,8 +15,8 @@ function generateSecureRandomString(length: number): string {
         // Encode as base36 for similarity to original, filter out any leading zeros
         return Array.from(bytes).map(b => b.toString(36)).join('').substr(0, length);
     } else {
-        // Fallback if crypto is not available (should rarely happen)
-        return Array(length).fill(0).map(() => Math.floor(Math.random() * 36).toString(36)).join('');
+        // If crypto is not available, throw an error instead of falling back to insecure randomness
+        throw new Error("Secure random number generator is not available.");
     }
 }
 

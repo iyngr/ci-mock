@@ -491,28 +491,30 @@ async def moderate_text(body: ModerateRequest):
     """Lightweight moderation using Azure AI Content Safety if configured.
     Falls back to 'safe' when not configured.
     """
-    endpoint = os.getenv("AZURE_CONTENT_SAFETY_ENDPOINT")
+    # Select endpoint only from a fixed known-good set, not configurable by arbitrary values
     api_key = os.getenv("AZURE_CONTENT_SAFETY_API_KEY")
 
     # Default response
     default_resp = {"label": "safe", "categories": [], "scores": {}}
 
-    # Only allow known-good domains to prevent SSRF
-    allowed_hosts = {
-        "contoso.cognitiveservices.azure.com",
-        # Add other allowed hosts as necessary
+    # Strict mapping: allow only known Azure endpoints
+    AZURE_CONTENT_SAFETY_ENDPOINTS = {
+        "contoso": "https://contoso.cognitiveservices.azure.com",
+        # Add any additional allowed aliases/endpoints here,
+        # e.g. "prod": "https://prodcompany.cognitiveservices.azure.com",
     }
-    # Also allow subdomains/endings, e.g. *.cognitiveservices.azure.com
-    allowed_suffix = ".cognitiveservices.azure.com"
-
+    region = os.getenv("AZURE_CONTENT_SAFETY_INSTANCE", "contoso")
+    endpoint = AZURE_CONTENT_SAFETY_ENDPOINTS.get(region)
     if not (endpoint and api_key):
         return default_resp
-    # Validate that endpoint points to an allowed host
+    # Validate that endpoint points to an allowed host (should always pass, but leave as defense-in-depth)
     try:
         parsed_url = urllib.parse.urlparse(endpoint)
         hostname = parsed_url.hostname or ""
+        allowed_hosts = set(urlparse["hostname"] for urlparse in map(lambda u: urllib.parse.urlparse(u), AZURE_CONTENT_SAFETY_ENDPOINTS.values()))
+        allowed_suffix = ".cognitiveservices.azure.com"
         if hostname not in allowed_hosts and not hostname.endswith(allowed_suffix):
-            security_logger.error(f"Rejected SSRF endpoint in live-interview moderate: {hostname!r}")
+            security_logger.error(f"Rejected SSRF endpoint in live-interview moderate (internal check): {hostname!r}")
             return default_resp
     except Exception as ex:
         security_logger.error(f"Invalid endpoint format in live-interview moderate: {endpoint!r} ({ex})")

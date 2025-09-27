@@ -31,6 +31,11 @@ const products = [
     }
 ];
 
+const navItems = [
+    ...products.map(p => ({ id: p.id, label: p.title })),
+    { id: 'privacy', label: 'Privacy' }
+];
+
 export default function Landing() {
     const sectionsRef = useRef<Record<string, HTMLElement | null>>({});
 
@@ -42,14 +47,14 @@ export default function Landing() {
     return (
         <main id="main" className="min-h-screen flex flex-col snap-container">
             {/* Navigation Bar */}
-            <nav className="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-black/5 flex items-center justify-center gap-12 py-4 px-6">
-                {products.map(p => (
+            <nav className="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-black/5 flex items-center justify-center gap-6 py-4 px-6">
+                {navItems.map(item => (
                     <button
-                        key={p.id}
-                        onClick={() => scrollTo(p.id)}
+                        key={item.id}
+                        onClick={() => item.id === 'privacy' ? window.location.assign('/privacy') : scrollTo(item.id)}
                         className="text-sm font-medium tracking-wide text-ink/70 hover:text-ink transition relative after:absolute after:left-0 after:-bottom-1 after:h-0.5 after:w-0 after:bg-ink after:transition-all hover:after:w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/30 rounded"
                     >
-                        {p.title}
+                        {item.label}
                     </button>
                 ))}
             </nav>
@@ -141,7 +146,7 @@ export default function Landing() {
                     <p className="text-ink/60 max-w-3xl mx-auto text-sm md:text-base leading-relaxed">
                         Talens Suite unifies streaming interview intelligence, adaptive assessment scoring, and evidence-grounded screening into a single internal platform. Every agentic decision path, rubric verdict, and screening inference is auditable, exportable, and aligned with responsible AI principles.
                     </p>
-                    <p className="text-xs text-ink/40">Design inspired by Google Store layout (internal use only).</p>
+                    <p className="text-xs text-ink/40">Design inspired by Google Store layout (internal use only). <a href="/privacy" className="underline text-ink/70 hover:text-ink">Privacy</a></p>
                 </div>
             </footer>
         </main>

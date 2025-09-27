@@ -109,6 +109,34 @@ def get_cosmos_client():
         logging.error(f"Failed to initialize Cosmos DB client: {e}")
         raise
 
+import urllib.parse
+
+# Allowlist for AI scoring endpoints (full URLs or hostnames)
+ALLOWED_SCORING_ENDPOINTS = [
+    # Add allowed full URLs here, e.g. "https://ai.yourcompany.com/score"
+    # Or just allowed hostnames, e.g. "ai.yourcompany.com"
+    # Examples (replace or extend as appropriate for your environment):
+    "https://ai.yourcompany.com/score",
+    "https://prod.scoring.service/score",
+]
+ALLOWED_SCORING_HOSTNAMES = [
+    "ai.yourcompany.com",
+    "prod.scoring.service",
+]
+
+def is_allowed_endpoint(url):
+    try:
+        parsed = urllib.parse.urlparse(url)
+        # Check exact allowed endpoints (including full URL)
+        if url in ALLOWED_SCORING_ENDPOINTS:
+            return True
+        # Otherwise, only allow HTTPS URLs to approved hostnames
+        if parsed.scheme == "https" and parsed.hostname in ALLOWED_SCORING_HOSTNAMES:
+            return True
+        return False
+    except Exception:
+        return False
+
 
 async def trigger_ai_scoring(submission: dict):
     """
@@ -122,6 +150,11 @@ async def trigger_ai_scoring(submission: dict):
         if not scoring_endpoint:
             logging.warning("AI_SCORING_ENDPOINT not configured, skipping AI scoring")
             return
+        # Validate the scoring endpoint against allowlist
+        if not is_allowed_endpoint(scoring_endpoint):
+            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not in the allowed list. Skipping AI scoring trigger.")
+            return
+        
         
         payload = {
             "submission_id": submission["id"],

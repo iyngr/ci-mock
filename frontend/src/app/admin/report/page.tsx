@@ -77,9 +77,8 @@ export default function ReportsPage() {
             let baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
             if (!ALLOWED_API_BASE_URLS.includes(baseUrl)) {
-                console.error('Attempted to use a disallowed API base URL:', baseUrl)
-                // fallback to default safe value or throw error
-                baseUrl = 'http://localhost:8000'
+                // Instead of silently falling back, *fail loud* for SSRF safety
+                throw new Error(`Disallowed API base URL detected in configuration: "${baseUrl}". Allowed URLs: ${ALLOWED_API_BASE_URLS.join(", ")}. Refusing to make backend requests. Please fix the environment configuration.`)
             }
 
             // Fetch submissions (tests) and assessments in parallel

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import logging
 import time
 from models import (
@@ -22,6 +22,7 @@ import secrets
 import string
 from database import CosmosDBService, get_cosmosdb_service
 from jose import JWTError, jwt
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -243,6 +244,26 @@ mock_questions = [
     )
 ]
 
+# --- Pagination Helper (development mode) ---
+def paginate_questions(questions: List[Any], limit: int, cursor: Optional[str]) -> Dict[str, Any]:
+    """Simple in-memory pagination for mock questions.
+
+    cursor: base64 or plain index string representing start offset (0-based).
+    Returns slice [start:start+limit]. next_cursor is None when end reached.
+    """
+    try:
+        start = int(cursor) if cursor is not None else 0
+    except ValueError:
+        start = 0
+    total = len(questions)
+    if start < 0:
+        start = 0
+    if start >= total:
+        return {"items": [], "next_cursor": None, "total": total}
+    end = min(start + limit, total)
+    next_cursor = str(end) if end < total else None
+    return {"items": questions[start:end], "next_cursor": next_cursor, "total": total}
+
 
 @router.post("/assessment/start")
 async def start_assessment(
@@ -257,7 +278,7 @@ async def start_assessment(
         if db is None:
             submission_id = candidate_info["submission_id"]
             expiration_time = datetime.utcnow() + timedelta(minutes=60)
-            
+            submission_token = secrets.token_urlsafe(24)
             # Create submission in mock storage for development
             mock_submissions[submission_id] = {
                 "id": submission_id,
@@ -267,13 +288,15 @@ async def start_assessment(
                 "started_at": datetime.utcnow(),
                 "expiration_time": expiration_time,
                 "answers": [],
-                "proctoring_events": []
+                "proctoring_events": [],
+                "submission_token": submission_token,
+                "finalized": False
             }
-            
             return {
                 "submission_id": submission_id,
                 "expirationTime": expiration_time.isoformat() + "Z",
-                "durationMinutes": 60
+                "durationMinutes": 60,
+                "submissionToken": submission_token
             }
         
         # Get assessment details from Cosmos DB
@@ -428,11 +451,222 @@ async def get_assessment(test_id: str):
     }
 
 
+@router.get("/assessment/{submission_id}/questions/page")
+async def get_assessment_questions_paginated(
+    submission_id: str,
+    limit: int = 10,
+    cursor: Optional[str] = None,
+    candidate_info: dict = Depends(verify_candidate_token),
+    db: Optional[CosmosDBService] = Depends(get_cosmosdb)
+):
+    """Paginated question retrieval.
+
+    Behavior:
+      * If Cosmos DB available: fetch assessment document, deterministically order questions
+        (by existing index order or by embedded 'order' field if present), then slice.
+      * If no DB (dev mock): fallback to in-memory mock_questions.
+
+    Cursor semantics: numeric string offset (0-based). Next cursor omitted when end reached.
+    """
+    if not submission_id.startswith("submission_"):
+        raise HTTPException(status_code=400, detail="Invalid submission id")
+
+    limit = max(1, min(limit, 50))
+
+    # If DB not available, use mock fallback
+    if db is None:
+        transformed: List[Dict[str, Any]] = []
+        for q in mock_questions:
+            qd = q.model_dump(by_alias=True)
+            if q.type == "mcq" and "options" in qd:
+                qd["options"] = [opt["text"] for opt in qd["options"]]
+                qd.pop("correctAnswer", None)
+            transformed.append(qd)
+        page = paginate_questions(transformed, limit, cursor)
+        return {
+            "success": True,
+            "questions": page["items"],
+            "nextCursor": page["next_cursor"],
+            "total": page["total"],
+            "pageSize": limit,
+            "returned": len(page["items"])    
+        }
+
+    # With DB: we need to locate submission to find assessment id
+    # Attempt to retrieve submission doc (partitioned by assessment_id). We don't yet know assessment_id, so:
+    # 1. Query submissions container by id (cross partition) to fetch the submission.
+    submission_query = "SELECT * FROM c WHERE c.id = @sid"
+    submission_params = [{"name": "@sid", "value": submission_id}]
+    submissions = await db.query_items("submissions", submission_query, submission_params, cross_partition=True)
+    if not submissions:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    submission_doc = submissions[0]
+
+    # Authorization: ensure candidate matches token (defense-in-depth; verify_candidate_token already ran)
+    token_candidate_id = candidate_info.get("candidate_id")
+    sub_candidate_id = submission_doc.get("candidate_id")
+    if sub_candidate_id and token_candidate_id and sub_candidate_id != token_candidate_id:
+        raise HTTPException(status_code=403, detail="Submission ownership mismatch")
+
+    assessment_id = submission_doc.get("assessment_id")
+    if not assessment_id:
+        raise HTTPException(status_code=500, detail="Submission missing assessment mapping")
+
+    # Fetch assessment document by id
+    assessment_query = "SELECT * FROM c WHERE c.id = @aid"
+    assessment_params = [{"name": "@aid", "value": assessment_id}]
+    assessments = await db.query_items("assessments", assessment_query, assessment_params, cross_partition=False)
+    if not assessments:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    assessment_doc = assessments[0]
+
+    raw_questions = assessment_doc.get("questions", [])
+
+    # Deterministic ordering: prefer explicit 'order' field ascending else preserve array order.
+    # Also foresee future immutability cursor using question id; for now keep numeric offset support.
+    def sort_key(q: Dict[str, Any]):
+        # If 'order' is missing, fall back to original index preserved by enumerate pairing
+        return q[1].get("order", q[0])
+    indexed_questions = list(enumerate(raw_questions))
+    ordered = [q for _, q in sorted(indexed_questions, key=sort_key)]
+
+    # Cursor handling: support numeric offset; optionally if cursor starts with 'id:' treat rest as question id.
+    start_index = 0
+    if cursor:
+        if cursor.startswith("id:"):
+            target_id = cursor[3:]
+            for idx, q in enumerate(ordered):
+                qid = q.get("_id") or q.get("id") or q.get("question_id")
+                if qid == target_id:
+                    start_index = idx
+                    break
+            else:
+                # If id cursor not found, treat as end (empty page)
+                return {
+                    "success": True,
+                    "questions": [],
+                    "nextCursor": None,
+                    "total": len(ordered),
+                    "pageSize": limit,
+                    "returned": 0
+                }
+        else:
+            try:
+                start_index = int(cursor)
+            except ValueError:
+                start_index = 0
+    if start_index < 0:
+        start_index = 0
+    total_q = len(ordered)
+    if start_index >= total_q:
+        return {
+            "success": True,
+            "questions": [],
+            "nextCursor": None,
+            "total": total_q,
+            "pageSize": limit,
+            "returned": 0
+        }
+
+    end_index = min(start_index + limit, total_q)
+    slice_questions = ordered[start_index:end_index]
+
+    # Transform & sanitize MCQ questions (remove correct answers, map options to text list) similar to mock path
+    sanitized: List[Dict[str, Any]] = []
+    for q in slice_questions:
+        # Work on a shallow copy to avoid mutating stored doc
+        qc = dict(q)
+        qtype = qc.get("type") or qc.get("question_type")
+        # Normalize MCQ fields
+        if qtype == "mcq":
+            # Options might be objects with id/text or already strings
+            opts = qc.get("options")
+            if isinstance(opts, list):
+                normalized_opts = []
+                for opt in opts:
+                    if isinstance(opt, dict):
+                        normalized_opts.append(opt.get("text") or opt.get("label") or opt.get("value"))
+                    else:
+                        normalized_opts.append(str(opt))
+                qc["options"] = normalized_opts
+            # Strip answer keys
+            qc.pop("correct_answer", None)
+            qc.pop("correctAnswer", None)
+        sanitized.append(qc)
+
+    next_cursor_val: Optional[str] = None
+    if end_index < total_q:
+        # Provide numeric next cursor (offset). For immutable ordering alternative cursor id:<question_id> could be added later.
+        next_cursor_val = str(end_index)
+
+    return {
+        "success": True,
+        "questions": sanitized,
+        "nextCursor": next_cursor_val,
+        "total": total_q,
+        "pageSize": limit,
+        "returned": len(sanitized)
+    }
+
+
+# ===== Autosave Support (Development Mode) =====
+class AutosaveAnswer(BaseModel):
+    question_id: str = Field(..., alias="questionId")
+    question_type: Optional[str] = Field(None, alias="questionType")
+    submitted_answer: Optional[str] = Field(None, alias="submittedAnswer")
+    time_spent: Optional[int] = Field(0, alias="timeSpent")
+
+class AutosaveEvent(BaseModel):
+    timestamp: str
+    eventType: str
+    details: dict
+
+class AutosaveRequest(BaseModel):
+    answers: List[AutosaveAnswer]
+    proctoring_events: List[AutosaveEvent] = Field(default_factory=list, alias="proctoringEvents")
+    saved_at: Optional[str] = Field(None, alias="savedAt")
+
+@router.post("/assessment/{submission_id}/autosave")
+async def autosave_assessment(
+    submission_id: str,
+    request: AutosaveRequest,
+    candidate_info: dict = Depends(verify_candidate_token)
+):
+    """Persist in-progress answers (mock, in-memory). In production: Upsert partial state under submission doc."""
+    if submission_id not in mock_submissions:
+        # Initialize if missing (development convenience)
+        mock_submissions[submission_id] = {
+            "id": submission_id,
+            "candidate_id": candidate_info["candidate_id"],
+            "status": "in-progress",
+            "started_at": datetime.utcnow(),
+            "expiration_time": datetime.utcnow() + timedelta(hours=1),
+            "answers": [],
+            "proctoring_events": []
+        }
+
+    sub = mock_submissions[submission_id]
+    if sub.get("candidate_id") != candidate_info["candidate_id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if sub.get("status") != "in-progress":
+        return {"success": False, "message": "Submission already finalized"}
+
+    # Replace answers snapshot (only lightweight fields in dev mode)
+    sub["answers"] = [a.model_dump(by_alias=True) for a in request.answers]
+    # Append new proctoring events
+    if request.proctoring_events:
+        sub.setdefault("proctoring_events", []).extend([e.model_dump() for e in request.proctoring_events])
+    sub["last_autosave"] = datetime.utcnow().isoformat() + "Z"
+
+    return {"success": True, "savedAt": sub["last_autosave"], "answerCount": len(sub["answers"]) }
+
+
 @router.post("/assessment/{submission_id}/submit")
 async def submit_assessment(
     submission_id: str,
     request: UpdateSubmissionRequest,
-    candidate_info: dict = Depends(verify_candidate_token)
+    candidate_info: dict = Depends(verify_candidate_token),
+    x_submission_token: Optional[str] = Header(None, convert_underscores=False)
 ):
     """Update submission with final answers and mark as completed"""
     
@@ -464,18 +698,29 @@ async def submit_assessment(
     if submission["status"] != "in-progress":
         raise HTTPException(status_code=400, detail="Assessment already completed")
     
-    # Update submission
+    # Enforce submission token idempotency (development mode)
+    expected_token = submission.get("submission_token")
+    if expected_token and expected_token != x_submission_token:
+        raise HTTPException(status_code=400, detail="Invalid or missing submission token")
+
+    # Protect against duplicate finalize
+    if submission.get("finalized"):
+        return {"success": True, "resultId": submission.get("result_id"), "submissionId": submission_id, "message": "Already submitted"}
+
+    # Update submission core fields
     submission["answers"] = [answer.dict() for answer in request.answers]
     if request.proctoring_events:
         submission["proctoring_events"].extend([event.dict() for event in request.proctoring_events])
     submission["status"] = "completed"
     submission["submitted_at"] = datetime.utcnow()
+    submission["finalized"] = True
     
     # Save updated submission (in production, update database)
     mock_submissions[submission_id] = submission
     
     # Generate result ID for response
-    result_id = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
+    result_id = submission.get("result_id") or ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
+    submission["result_id"] = result_id
     
     return {
         "success": True,

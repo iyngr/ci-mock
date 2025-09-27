@@ -11,6 +11,8 @@ import { Question, QuestionType, Answer, ProctoringEvent, DeveloperRole, CodeSub
 import { getRoleConfig, getAllRoles, getLanguagesForRole, RoleConfig } from "@/lib/roleConfig"
 import Editor from "@monaco-editor/react"
 import LiveReactEditor from "@/components/LiveReactEditor"
+import { apiFetch, withQuery } from "@/lib/apiClient"
+import { questionsResponseSchema } from "@/lib/dto"
 
 // Warning Modal Component - designed to work in fullscreen
 const WarningModal = ({ onContinue, violationCount }: { onContinue: () => void, violationCount: number }) => (
@@ -108,6 +110,10 @@ export default function Assessment() {
   const [answers, setAnswers] = useState<Answer[]>([])
   const [timeLeft, setTimeLeft] = useState(0) // Will be calculated from server expiration time
   const [loading, setLoading] = useState(true)
+  // Pagination state
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [totalQuestions, setTotalQuestions] = useState<number | null>(null)
+  const PAGE_SIZE = 10
   const [proctoringEvents, setProctoringEvents] = useState<ProctoringEvent[]>([])
   const [codeOutput, setCodeOutput] = useState("")
   const [runningCode, setRunningCode] = useState(false)
@@ -336,7 +342,7 @@ export default function Assessment() {
     const mappedAnswers = answers.map(a => ({
       questionId: a.questionId,
       questionType: a.questionType,
-      submittedAnswer: a.submittedAnswer,
+      submittedAnswer: a.submittedAnswer === undefined ? null : a.submittedAnswer,
       timeSpent: a.timeSpent,
       codeSubmissions: a.codeSubmissions?.map((cs: CodeSubmission) => ({
         code: cs.code,
@@ -369,7 +375,8 @@ export default function Assessment() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${candidateToken}`
+          "Authorization": `Bearer ${candidateToken}`,
+          "X-Submission-Token": localStorage.getItem("submissionToken") || ''
         },
         body: JSON.stringify({
           answers: mappedAnswers,
@@ -391,6 +398,7 @@ export default function Assessment() {
         localStorage.removeItem("durationMinutes")
         localStorage.removeItem("assessment_autosave")
         localStorage.removeItem("assessmentState") // Remove the session-resume state
+        localStorage.removeItem("submissionToken")
         router.push("/candidate/success")
       } else {
         console.error('Submit failed', data)
@@ -401,6 +409,7 @@ export default function Assessment() {
         localStorage.removeItem("durationMinutes")
         localStorage.removeItem("assessment_autosave")
         localStorage.removeItem("assessmentState")
+        localStorage.removeItem("submissionToken")
         router.push("/candidate/success")
       }
     } catch (error) {
@@ -412,6 +421,7 @@ export default function Assessment() {
       localStorage.removeItem("durationMinutes")
       localStorage.removeItem("assessment_autosave")
       localStorage.removeItem("assessmentState")
+      localStorage.removeItem("submissionToken")
       router.push("/candidate/success")
     }
   }, [answers, proctoringEvents, router]);
@@ -424,7 +434,7 @@ export default function Assessment() {
       const q = questions[idx]
       if (!q) return
       if (q.type === QuestionType.MCQ) {
-        if (ans.submittedAnswer === "-1" || ans.submittedAnswer === undefined || ans.submittedAnswer === null) incomplete.push(idx)
+        if (ans.submittedAnswer === null || ans.submittedAnswer === undefined) incomplete.push(idx)
       } else if (q.type === QuestionType.CODING || q.type === QuestionType.DESCRIPTIVE) {
         const content = (ans.submittedAnswer || '').trim()
         if (content.replace(/\s+/g, ' ').trim().length < 5) incomplete.push(idx)
@@ -459,74 +469,75 @@ export default function Assessment() {
 
     const fetchAssessmentData = async () => {
       try {
-        console.log("Fetching assessment data for testId:", testId)
-        const response = await fetch(`http://localhost:8000/api/candidate/assessment/${testId}`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+        console.log("Fetching paginated assessment data")
+        const submissionId = localStorage.getItem("submissionId")
+        if (!submissionId) throw new Error("Missing submissionId")
+        // First page
+        const path = withQuery(`/api/candidate/assessment/${submissionId}/questions/page`, { limit: PAGE_SIZE })
+        const data = await apiFetch<any>(path)
+        try {
+          questionsResponseSchema.parse(data)
+        } catch (zerr) {
+          console.error('Question payload validation failed', zerr)
+          throw zerr
         }
-
-        const data = await response.json()
-        console.log("Assessment data received:", data)
-
-        if (data.success && isMounted) {
+        if (data.success) {
           setQuestions(data.questions)
-
-          // Check if role is pre-assigned or needs selection
-          if (data.role) {
-            setSelectedRole(data.role)
-            setRoleConfig(getRoleConfig(data.role))
-          } else {
-            // Show role selection if not pre-assigned
-            setShowRoleSelection(true)
-          }
-
-          // Initialize answers array
+          setNextCursor(data.nextCursor || null)
+          setTotalQuestions(data.total || data.questions.length)
+          // Role handling remains as before (mock does not supply role)
+          // Initialize answers
           const initialAnswers: Answer[] = data.questions.map((q: Question) => ({
-            questionId: q._id!,
+            questionId: (q as any)._id || q._id!,
             questionType: q.type,
-            submittedAnswer: q.type === QuestionType.MCQ ? "-1" : (q.starter_code || ""),
+            submittedAnswer: q.type === QuestionType.MCQ ? null : (q as any).starter_code || "",
             timeSpent: 0,
             codeSubmissions: q.type === QuestionType.CODING ? [] : undefined
           }))
           setAnswers(initialAnswers)
-
-          // Part 2: Hydrate state from localStorage after questions are loaded
-          const savedAssessmentState = localStorage.getItem("assessmentState");
+          // Hydrate persisted state if matches
+          const savedAssessmentState = localStorage.getItem("assessmentState")
           if (savedAssessmentState) {
             try {
-              const parsedState = JSON.parse(savedAssessmentState);
-
-              // Critical validation: check if submissionId matches current session
-              if (parsedState.submissionId && parsedState.submissionId === storedSubmissionId) {
-                // Validation passed - restore the user's session
-                if (parsedState.answers && Array.isArray(parsedState.answers)) {
-                  setAnswers(parsedState.answers);
+              const parsed = JSON.parse(savedAssessmentState)
+              if (parsed.submissionId === submissionId) {
+                if (Array.isArray(parsed.answers) && parsed.answers.length === initialAnswers.length) {
+                  setAnswers(parsed.answers)
                 }
-                if (typeof parsedState.currentQuestionIndex === 'number') {
-                  setCurrentQuestionIndex(parsedState.currentQuestionIndex);
+                if (typeof parsed.currentQuestionIndex === 'number') {
+                  setCurrentQuestionIndex(parsed.currentQuestionIndex)
                 }
-                if (parsedState.savedAt) {
-                  setLastSavedAt(parsedState.savedAt);
-                }
+                if (parsed.savedAt) setLastSavedAt(parsed.savedAt)
               }
-            } catch (error) {
-              console.error("Failed to parse saved assessment state:", error);
-            }
+            } catch {/* ignore */ }
           }
         }
-      } catch (error) {
-        console.error("Failed to fetch assessment:", error)
-      } finally {
-        if (isMounted) {
-          setLoading(false)
+      } catch (err) {
+        console.error("Failed paginated fetch, falling back to legacy endpoint", err)
+        // Legacy fallback
+        try {
+          const testId = localStorage.getItem("testId")
+          if (!testId) throw new Error("Missing testId for fallback")
+          const legacy = await apiFetch<any>(`/api/candidate/assessment/${testId}`)
+          try { questionsResponseSchema.parse(legacy) } catch (zerr) { console.error('Legacy payload invalid', zerr) }
+          if (legacy.success) {
+            setQuestions(legacy.questions)
+            setNextCursor(null)
+            setTotalQuestions(legacy.questions.length)
+            const initialAnswers: Answer[] = legacy.questions.map((q: Question) => ({
+              questionId: (q as any)._id || q._id!,
+              questionType: q.type,
+              submittedAnswer: q.type === QuestionType.MCQ ? null : (q as any).starter_code || "",
+              timeSpent: 0,
+              codeSubmissions: q.type === QuestionType.CODING ? [] : undefined
+            }))
+            setAnswers(initialAnswers)
+          }
+        } catch (e2) {
+          console.error("Legacy fetch also failed", e2)
         }
+      } finally {
+        if (isMounted) setLoading(false)
       }
     }
 
@@ -666,6 +677,40 @@ export default function Assessment() {
 
     return () => clearTimeout(timeout);
   }, [answers, currentQuestionIndex])
+
+  // 5-minute autosave to backend
+  useEffect(() => {
+    if (answers.length === 0) return;
+    const FIVE_MIN = 5 * 60 * 1000;
+    const submissionId = typeof window !== 'undefined' ? localStorage.getItem('submissionId') : null;
+    if (!submissionId) return;
+
+    const save = async () => {
+      try {
+        const payload = {
+          answers: answers.map(a => ({
+            questionId: a.questionId,
+            questionType: a.questionType,
+            submittedAnswer: a.submittedAnswer === undefined ? null : a.submittedAnswer,
+            timeSpent: a.timeSpent
+          })),
+          proctoringEvents: proctoringEvents.slice(-50), // send last 50 only to limit payload
+          savedAt: new Date().toISOString()
+        };
+        const res = await apiFetch(`/api/candidate/assessment/${submissionId}/autosave`, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        if ((res as any)?.savedAt) setLastSavedAt((res as any).savedAt);
+      } catch (e) {
+        console.warn('Autosave failed', e);
+      }
+    };
+
+    // initial delayed autosave after first minute if wanted? Keep only 5-min cadence
+    const interval = setInterval(save, FIVE_MIN);
+    return () => clearInterval(interval);
+  }, [answers, proctoringEvents]);
 
   const setupProctoring = () => {
     // Monitor fullscreen changes
@@ -933,7 +978,7 @@ export default function Assessment() {
     if (!ans) return false
     const q = questions[idx]
     if (!q) return false
-    if (q.type === QuestionType.MCQ) return ans.submittedAnswer !== "-1" && ans.submittedAnswer !== undefined && ans.submittedAnswer !== null
+    if (q.type === QuestionType.MCQ) return ans.submittedAnswer !== null && ans.submittedAnswer !== undefined
     if (q.type === QuestionType.CODING || q.type === QuestionType.DESCRIPTIVE) {
       const content = (ans.submittedAnswer || '').trim()
       return content.replace(/\s+/g, ' ').trim().length >= 5

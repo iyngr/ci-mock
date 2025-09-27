@@ -853,6 +853,7 @@ class StartAssessmentResponse(BaseModel):
     submission_id: str
     expiration_time: datetime = Field(..., alias="expirationTime")
     duration_minutes: int = Field(..., alias="durationMinutes")
+    submission_token: Optional[str] = Field(None, alias="submissionToken", description="Idempotency token required for final submit")
 
 
 class SubmissionRequest(BaseModel):

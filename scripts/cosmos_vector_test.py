@@ -14,6 +14,19 @@ import os
 import sys
 import asyncio
 import uuid
+from urllib.parse import urlparse
+import socket
+import ipaddress
+
+try:
+    import requests
+except Exception:
+    requests = None
+
+try:
+    import openai
+except Exception:
+    openai = None
 
 from azure.cosmos import CosmosClient
 
@@ -31,17 +44,51 @@ async def embed_text(text: str):
     # Prefer llm-agent if configured
     agent = os.getenv('LLM_AGENT_URL')
     if agent:
-        url = agent.rstrip('/') + '/embed'
-        try:
-            import requests
-            r = requests.post(url, json={'text': text}, timeout=15)
-            r.raise_for_status()
-            return r.json().get('embedding')
-        except Exception as e:
-            print(f"llm-agent embedding failed: {e}")
+        # SSRF protections: validate agent URL before making a request.
+        parsed = urlparse(agent)
+        if parsed.scheme not in ("http", "https"):
+            print(f"Refusing to use agent with unsupported scheme: {parsed.scheme}")
+        else:
+            # Build target URL safely
+            url = agent.rstrip('/') + '/embed'
+            try:
+                # Resolve host and ensure it is not private/reserved unless explicitly allowed
+                hostname = parsed.hostname
+                try:
+                    infos = socket.getaddrinfo(hostname, None)
+                    ips = {info[4][0] for info in infos}
+                except Exception:
+                    ips = set()
+
+                blocked = False
+                for ip in ips:
+                    try:
+                        addr = ipaddress.ip_address(ip)
+                        if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
+                            blocked = True
+                            break
+                    except Exception:
+                        # If parsing fails, be conservative
+                        blocked = True
+                        break
+
+                allow_local = os.getenv('ALLOW_LOCAL_AGENT', 'false').lower() in ('1', 'true', 'yes')
+                if blocked and not allow_local:
+                    print(f"Refusing to call agent at {hostname} ({', '.join(ips)}) - private/reserved address")
+                else:
+                    if requests is None:
+                        print("requests package not available; cannot call LLM agent")
+                    else:
+                        # disable redirects to avoid following attacker-controlled redirects
+                        r = requests.post(url, json={'text': text}, timeout=15, allow_redirects=False)
+                        r.raise_for_status()
+                        return r.json().get('embedding')
+            except Exception as e:
+                print(f"llm-agent embedding failed: {e}")
     # Fallback to Azure OpenAI via openai package
     try:
-        import openai
+        if openai is None:
+            raise RuntimeError('openai package not available')
         openai.api_type = 'azure'
         openai.api_base = os.getenv('AZURE_OPENAI_ENDPOINT')
         openai.api_key = os.getenv('AZURE_OPENAI_API_KEY')

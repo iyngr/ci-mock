@@ -67,7 +67,20 @@ export default function ReportsPage() {
                 return
             }
 
-            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            // Allow-list of permitted API base URLs
+            const ALLOWED_API_BASE_URLS = [
+                'http://localhost:8000',
+                // Add any other known, safe URLs here, e.g.:
+                // 'https://api.example.com',
+            ]
+
+            let baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+            if (!ALLOWED_API_BASE_URLS.includes(baseUrl)) {
+                console.error('Attempted to use a disallowed API base URL:', baseUrl)
+                // fallback to default safe value or throw error
+                baseUrl = 'http://localhost:8000'
+            }
 
             // Fetch submissions (tests) and assessments in parallel
             const [subRes, assessRes] = await Promise.all([

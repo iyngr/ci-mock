@@ -462,12 +462,22 @@ RUBRICS_DIR = Path(__file__).parent / "rubrics"
 @lru_cache(maxsize=8)
 def _load_rubric(name: str = "default") -> Dict[str, Any]:
     # Extra defense: forbid path separators or traversal in name BEFORE path use
-    if "/" in name or "\\" in name or ".." in name:
+    import re
+    if "/" in name or "\\" in name or ".." in name or not re.fullmatch(r"[a-zA-Z0-9_\-]+", name):
         raise FileNotFoundError(f"Rubric '{name}' not found (invalid name)")
-    # Validate that the rubric file is contained within RUBRICS_DIR
-    path = (RUBRICS_DIR / f"{name}.json").resolve()
-    # Use robust ancestry/path check (Python >= 3.9)
-    if not path.is_relative_to(RUBRICS_DIR.resolve()):
+    # Construct and normalize the rubric file path
+    path = (RUBRICS_DIR / f"{name}.json")
+    try:
+        # Python 3.9+ robust ancestry/path check
+        resolved_root = RUBRICS_DIR.resolve()
+        resolved_path = path.resolve()
+        is_contained = resolved_path.is_relative_to(resolved_root)
+    except AttributeError:
+        # Compatibility: fallback for Python < 3.9
+        resolved_root = str(RUBRICS_DIR.resolve())
+        resolved_path = str(path.resolve())
+        is_contained = os.path.commonprefix([resolved_path, resolved_root]) == resolved_root
+    if not is_contained:
         raise FileNotFoundError(f"Rubric '{name}' not found (invalid path)")
     if not path.exists():
         raise FileNotFoundError(f"Rubric '{name}' not found")

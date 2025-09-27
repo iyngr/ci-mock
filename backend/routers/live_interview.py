@@ -6,7 +6,7 @@ import time
 import re
 import logging
 import httpx
-
+import urllib.parse
 router = APIRouter(prefix="/api/live-interview", tags=["live-interview"])
 
 # Configure security logging
@@ -495,7 +495,25 @@ async def moderate_text(body: ModerateRequest):
     # Default response
     default_resp = {"label": "safe", "categories": [], "scores": {}}
 
+    # Only allow known-good domains to prevent SSRF
+    allowed_hosts = {
+        "contoso.cognitiveservices.azure.com",
+        # Add other allowed hosts as necessary
+    }
+    # Also allow subdomains/endings, e.g. *.cognitiveservices.azure.com
+    allowed_suffix = ".cognitiveservices.azure.com"
+
     if not (endpoint and api_key):
+        return default_resp
+    # Validate that endpoint points to an allowed host
+    try:
+        parsed_url = urllib.parse.urlparse(endpoint)
+        hostname = parsed_url.hostname or ""
+        if hostname not in allowed_hosts and not hostname.endswith(allowed_suffix):
+            security_logger.error(f"Rejected SSRF endpoint in live-interview moderate: {hostname!r}")
+            return default_resp
+    except Exception as ex:
+        security_logger.error(f"Invalid endpoint format in live-interview moderate: {endpoint!r} ({ex})")
         return default_resp
 
     try:

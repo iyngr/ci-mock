@@ -488,6 +488,7 @@ async def _background_enrich_and_index(db: CosmosDBService, question_doc: Dict[s
                     "question_id": question_doc.get("id"),
                     "question_type": question_doc.get("type"),
                     "tags": question_doc.get("tags"),
+                    "difficulty": question_doc.get("difficulty"),
                     "created_by": question_doc.get("created_by"),
                     "created_at": question_doc.get("created_at"),
                     "import_source": "bulk_upload_async"
@@ -1000,6 +1001,8 @@ class SingleQuestionRequest(BaseModel):
     type: str  # "mcq", "coding", "descriptive"
     tags: List[str]
     role: Optional[str] = None
+    # Optional difficulty (easy|medium|hard) - default to medium when not provided
+    difficulty: Optional[str] = "medium"
     # MCQ specific
     options: Optional[List[Dict[str, str]]] = None
     correctAnswer: Optional[str] = None
@@ -1092,7 +1095,10 @@ async def add_single_question(
             "text": rewrite_result.get("rewritten_text", request.text),
             "type": request.type,
             "tags": request.tags + rewrite_result.get("suggested_tags", []),
+            "difficulty": (request.difficulty or "medium"),
             "suggested_role": rewrite_result.get("suggested_role"),
+            # Accept optional suggested difficulty from the AI (`suggested_difficulty` or `suggestedDifficulty`)
+            "suggested_difficulty": rewrite_result.get("suggested_difficulty") or rewrite_result.get("suggestedDifficulty"),
             "created_by": admin["admin_id"],
             "created_at": datetime.utcnow().isoformat(),
             "question_hash": hashlib.sha256(request.text.strip().lower().encode()).hexdigest()
@@ -1167,6 +1173,7 @@ async def add_single_question(
             "enhanced_text": enhanced_question_data["text"],
             "suggested_role": enhanced_question_data["suggested_role"],
             "suggested_tags": rewrite_result.get("suggested_tags", []),
+            "suggested_difficulty": enhanced_question_data.get("suggested_difficulty"),
             "knowledge_base_updated": enhanced_question_data.get("knowledge_base_entry_id") is not None
         }
         
@@ -1479,6 +1486,8 @@ async def bulk_confirm_import(
                         "text": question_data.get("text", ""),
                         "type": (question_data.get("type") or "mcq").lower(),
                         "tags": question_data.get("tags", "").split(",") if isinstance(question_data.get("tags"), str) and question_data.get("tags") else (question_data.get("tags") or []),
+                        # Preserve difficulty if present in the CSV row; default to medium
+                        "difficulty": question_data.get("difficulty") or question_data.get("difficulty_level") or "medium",
                         "created_by": admin["admin_id"],
                         "created_at": datetime.utcnow().isoformat(),
                         "question_hash": hashlib.sha256((question_data.get("text", "") or "").strip().lower().encode()).hexdigest()
@@ -1575,6 +1584,9 @@ async def bulk_confirm_import(
                                     d["tags"] = list(dict.fromkeys(existing_tags + suggested_tags))
                                 if rewrite.get("suggested_role"):
                                     d["suggested_role"] = rewrite.get("suggested_role")
+                                # Accept optional suggested difficulty from the AI and normalize earlier in the agent
+                                if rewrite.get("suggested_difficulty") or rewrite.get("suggestedDifficulty"):
+                                    d["suggested_difficulty"] = rewrite.get("suggested_difficulty") or rewrite.get("suggestedDifficulty")
                             try:
                                 await db.upsert_item(CONTAINER["QUESTIONS"], d, partition_key=skill)
                             except Exception as up_err:

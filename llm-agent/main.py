@@ -974,14 +974,28 @@ async def rewrite_question(request: QuestionRewriteRequest) -> Dict[str, Any]:
         # Parse the JSON
         import json
         rewrite_result = json.loads(final_response.strip())
-        
+
         # Validate structure (matches YAML outputs)
         required_keys = ["rewritten_text", "suggested_role", "suggested_tags"]
-        if all(key in rewrite_result for key in required_keys):
-            logger.info("Question rewriting completed successfully with single agent")
-            return rewrite_result
-        else:
+        if not all(key in rewrite_result for key in required_keys):
             raise ValueError("Invalid AI response structure")
+
+        # Normalize optional suggested difficulty if provided by the agent.
+        # Agent may return snake_case `suggested_difficulty` or camelCase `suggestedDifficulty`.
+        suggested = rewrite_result.get("suggested_difficulty") or rewrite_result.get("suggestedDifficulty")
+        if suggested:
+            try:
+                s = str(suggested).strip().lower()
+                if s in ("easy", "medium", "hard"):
+                    rewrite_result["suggested_difficulty"] = s
+                else:
+                    # If the agent returned something unexpected, default to None (don't fail the flow)
+                    logger.debug(f"Agent returned nonstandard suggested_difficulty: {suggested}")
+            except Exception:
+                logger.debug(f"Failed to normalize suggested_difficulty: {suggested}")
+
+        logger.info("Question rewriting completed successfully with single agent")
+        return rewrite_result
             
     except Exception as ai_error:
         logger.warning(f"AI-based rewriting failed: {ai_error}, falling back to rule-based enhancement")

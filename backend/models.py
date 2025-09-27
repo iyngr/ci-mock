@@ -318,6 +318,7 @@ class QuestionEnhancementResponse(BaseModel):
     rewritten_text: str = Field(..., alias="rewrittenText", description="Enhanced question text")
     suggested_role: str = Field(..., alias="suggestedRole", description="AI-suggested developer role")
     suggested_tags: List[str] = Field(..., alias="suggestedTags", description="AI-suggested skill tags")
+    suggested_difficulty: Optional[str] = Field(None, alias="suggestedDifficulty", description="Optional AI-suggested difficulty (easy|medium|hard)")
     enhancement_notes: Optional[str] = Field(None, alias="enhancementNotes", description="Notes about what was enhanced")
 
 

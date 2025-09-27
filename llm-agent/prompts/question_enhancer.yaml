@@ -26,6 +26,9 @@ outputs:
     items:
       type: string
     description: List of up to three specific skill tags
+  suggested_difficulty:
+    type: string
+    description: Optional suggested difficulty for the improved question (easy, medium, hard)
 
 # Note: The '---' separator has been removed from here.
 # 'system' and 'user' are now top-level keys.
@@ -39,7 +42,7 @@ system: |
   3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins', 'Docker', 'REST APIs')
 
   CRITICAL: Your response MUST be a single, minified JSON object with this exact schema:
-  {"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"]}
+  {"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"], "suggested_difficulty": "medium"}
 
   Do not include any other text, explanation, or formatting. Only return the JSON object.
 

@@ -21,6 +21,7 @@ interface SingleQuestionData {
     type: QuestionType
     tags: string[]
     role?: DeveloperRole
+    difficulty?: "easy" | "medium" | "hard"
     options?: MCQOption[]
     correctAnswer?: string
     starterCode?: string
@@ -43,6 +44,7 @@ export default function AddQuestions() {
         text: "",
         type: "mcq",
         tags: [],
+        difficulty: "medium",
         options: [
             { id: "a", text: "" },
             { id: "b", text: "" },
@@ -303,6 +305,20 @@ export default function AddQuestions() {
                                             <option value="data-scientist">Data Scientist</option>
                                         </select>
                                     </div>
+                                    <div>
+                                        <label className="block text-sm font-light text-warm-brown/70 mb-3">
+                                            Difficulty
+                                        </label>
+                                        <select
+                                            value={questionData.difficulty || "medium"}
+                                            onChange={(e) => setQuestionData(prev => ({ ...prev, difficulty: e.target.value as any }))}
+                                            className="w-full h-12 px-3 border border-warm-brown/20 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-warm-brown/20 focus:border-warm-brown/40 text-warm-brown"
+                                        >
+                                            <option value="easy">Easy</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="hard">Hard</option>
+                                        </select>
+                                    </div>
                                 </div>
 
                                 <div>
@@ -501,6 +517,7 @@ export default function AddQuestions() {
                                     <h3 className="text-sm font-medium text-warm-brown mb-3">File Format Guidelines</h3>
                                     <ul className="text-xs text-warm-brown/70 space-y-1 font-light">
                                         <li>• CSV: Include headers for question_text, type, tags, options (for MCQ)</li>
+                                        <li>• Include optional 'difficulty' column (easy|medium|hard) to set a question's difficulty</li>
                                         <li>• JSON: Array of question objects with required fields</li>
                                         <li>• Excel: First row should contain column headers</li>
                                     </ul>

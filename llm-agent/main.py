@@ -466,20 +466,20 @@ def _load_rubric(name: str = "default") -> Dict[str, Any]:
     import re
     sanitized = secure_filename(name)
     if name != sanitized:
-        raise FileNotFoundError(f"Rubric '{name}' not found (invalid name or unsafe characters)")
-    if "/" in name or "\\" in name or ".." in name or not re.fullmatch(r"[a-zA-Z0-9_\-]+", name):
-        raise FileNotFoundError(f"Rubric '{name}' not found (invalid name)")
-    # Construct and normalize the rubric file path
-    path = (RUBRICS_DIR / f"{name}.json")
+        raise FileNotFoundError(f"Rubric '{sanitized}' not found (invalid name or unsafe characters)")
+    if "/" in name or "\\" in name or ".." in name or not re.fullmatch(r"[a-zA-Z0-9_\-]+", sanitized):
+        raise FileNotFoundError(f"Rubric '{sanitized}' not found (invalid name)")
+    # Construct and normalize the rubric file path, always use sanitized name
+    rubric_path = RUBRICS_DIR / f"{sanitized}.json"
     try:
         # Python 3.9+ robust ancestry/path check
         resolved_root = RUBRICS_DIR.resolve()
-        resolved_path = path.resolve()
+        resolved_path = rubric_path.resolve()
         is_contained = resolved_path.is_relative_to(resolved_root)
     except AttributeError:
         # Compatibility: fallback for Python < 3.9. Check ancestry without using string prefix.
         resolved_root = RUBRICS_DIR.resolve()
-        resolved_path = path.resolve()
+        resolved_path = rubric_path.resolve()
         def _is_relative_to(path, root):
             # Returns True if `root` is a parent of `path` or same as path
             try:
@@ -489,10 +489,10 @@ def _load_rubric(name: str = "default") -> Dict[str, Any]:
                 return False
         is_contained = _is_relative_to(resolved_path, resolved_root)
     if not is_contained:
-        raise FileNotFoundError(f"Rubric '{name}' not found (invalid path)")
-    if not path.exists():
-        raise FileNotFoundError(f"Rubric '{name}' not found")
-    with path.open("r", encoding="utf-8") as f:
+        raise FileNotFoundError(f"Rubric '{sanitized}' not found (invalid path)")
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"Rubric '{sanitized}' not found")
+    with resolved_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 

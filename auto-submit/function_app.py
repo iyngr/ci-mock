@@ -121,10 +121,26 @@ ALLOWED_SCORING_ENDPOINTS = [
 ]
 # ALLOWED_SCORING_HOSTNAMES removed for SSRF hardening
 
+def normalize_url(url):
+    try:
+        # Normalize URLs for safer allowlisting: strip trailing slashes, lower-case scheme/host
+        if url:
+            parts = urllib.parse.urlsplit(url.strip())
+            scheme = parts.scheme.lower()
+            netloc = parts.netloc.lower()
+            path = parts.path.rstrip("/")
+            reconstructed = urllib.parse.urlunsplit((scheme, netloc, path, parts.query, parts.fragment))
+            return reconstructed
+        return url
+    except Exception:
+        return url
+
 def is_allowed_endpoint(url):
     try:
-        # Only allow exact full URLs. No host-based allowlisting.
-        return url in ALLOWED_SCORING_ENDPOINTS
+        norm_url = normalize_url(url)
+        normalized_allowlist = [normalize_url(e) for e in ALLOWED_SCORING_ENDPOINTS]
+        # Only allow exact normalized full URLs. No host-based allowlisting.
+        return norm_url in normalized_allowlist
     except Exception:
         return False
 
@@ -141,9 +157,9 @@ async def trigger_ai_scoring(submission: dict):
         if not scoring_endpoint:
             logging.warning("AI_SCORING_ENDPOINT not configured, skipping AI scoring")
             return
-        # Ensure only exact full URLs from allowlist are allowed.
+        # Ensure only exact normalized full URLs from allowlist are allowed.
         if not is_allowed_endpoint(scoring_endpoint):
-            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not an exact match in the allowed endpoint list. Skipping AI scoring trigger.")
+            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not allowlisted. Allowed endpoints: {ALLOWED_SCORING_ENDPOINTS}. Skipping AI scoring trigger.")
             return
         
         

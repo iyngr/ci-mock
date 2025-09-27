@@ -473,10 +473,17 @@ def _load_rubric(name: str = "default") -> Dict[str, Any]:
         resolved_path = path.resolve()
         is_contained = resolved_path.is_relative_to(resolved_root)
     except AttributeError:
-        # Compatibility: fallback for Python < 3.9
-        resolved_root = str(RUBRICS_DIR.resolve())
-        resolved_path = str(path.resolve())
-        is_contained = os.path.commonprefix([resolved_path, resolved_root]) == resolved_root
+        # Compatibility: fallback for Python < 3.9. Check ancestry without using string prefix.
+        resolved_root = RUBRICS_DIR.resolve()
+        resolved_path = path.resolve()
+        def _is_relative_to(path, root):
+            # Returns True if `root` is a parent of `path` or same as path
+            try:
+                path.relative_to(root)
+                return True
+            except ValueError:
+                return False
+        is_contained = _is_relative_to(resolved_path, resolved_root)
     if not is_contained:
         raise FileNotFoundError(f"Rubric '{name}' not found (invalid path)")
     if not path.exists():

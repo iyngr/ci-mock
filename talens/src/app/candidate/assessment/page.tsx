@@ -29,7 +29,17 @@ type Plan = {
 
 type AIState = 'idle' | 'speaking' | 'listening' | 'thinking'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// SSRF mitigation: Only allow trusted API base URLs.
+const ALLOWED_API_BASES = [
+  "http://localhost:8000",
+  "https://api.example.com", // Replace with your real production API endpoint(s)
+  // Add other trusted endpoints here.
+];
+const ENV_API_BASE = process.env.NEXT_PUBLIC_API_URL;
+const API_BASE = 
+  typeof ENV_API_BASE === "string" && ALLOWED_API_BASES.includes(ENV_API_BASE)
+    ? ENV_API_BASE
+    : "http://localhost:8000";
 const MAX_WARNINGS = 3
 
 // AI Avatar Component

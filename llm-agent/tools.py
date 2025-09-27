@@ -762,5 +762,12 @@ def validate_question(question_text: str) -> dict:
         return {"status": "unique", "question_hash": question_hash}
 
     except Exception as e:
-        print(f"Error in validation: {e}")
-        return {"status": "validation_error", "error": str(e)}
+        # Log the detailed error for server-side debugging
+        try:
+            from logging_config import get_logger
+            logger = get_logger("tools.validate_question")
+            logger.error(f"Error in validation: {e}", exc_info=True)
+        except Exception:
+            print(f"Error in validation: {e}")
+        # Do not expose internal error details to the client
+        return {"status": "validation_error", "error": "A validation error occurred during question processing."}

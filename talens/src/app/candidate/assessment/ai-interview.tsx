@@ -7,6 +7,19 @@ import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { ProctoringEvent } from "@/lib/schema"
 import Editor from "@monaco-editor/react"
 
+// Cryptographically secure random string generator
+function generateSecureRandomString(length: number): string {
+    if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+        const bytes = new Uint8Array(length);
+        window.crypto.getRandomValues(bytes);
+        // Encode as base36 for similarity to original, filter out any leading zeros
+        return Array.from(bytes).map(b => b.toString(36)).join('').substr(0, length);
+    } else {
+        // If crypto is not available, throw an error instead of falling back to insecure randomness
+        throw new Error("Secure random number generator is not available.");
+    }
+}
+
 // Types for speech-to-speech
 type EphemeralKey = {
     sessionId: string
@@ -115,7 +128,7 @@ export default function AIInterviewPage() {
     const dcRef = useRef<RTCDataChannel | null>(null)
     const [plan, setPlan] = useState<Plan | null>(null)
     const [consentTimestamp, setConsentTimestamp] = useState<number | null>(null)
-    const [sessionId, setSessionId] = useState<string>(`session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
+    const [sessionId, setSessionId] = useState<string>(() => `session_${Date.now()}_${generateSecureRandomString(16)}`)
     const [conversationTurns, setConversationTurns] = useState<Array<{ role: string, text: string, started_at: number, ended_at: number }>>([])
 
     // Error handling state

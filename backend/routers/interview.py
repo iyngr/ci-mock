@@ -71,10 +71,45 @@ async def get_cosmosdb() -> CosmosDBService:
 def _redact_pii(text: str) -> str:
     if not text:
         return text
-    # Basic redactions: emails and phone numbers
-    text = re.sub(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[redacted-email]", text)
-    text = re.sub(r"\b\+?\d[\d\s().-]{7,}\b", "[redacted-phone]", text)
-    return text
+
+    # Safer redaction approach to avoid catastrophic backtracking on attacker-controlled input.
+    # 1) Use bounded quantifiers for email/local-part and domain sections.
+    # 2) For very large inputs, redact token-by-token (split on whitespace) and skip extremely long tokens.
+
+    # Bounded regexes (limits chosen to follow typical email/phone length constraints)
+    email_re = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}", flags=re.IGNORECASE)
+    phone_re = re.compile(r"\b\+?\d[\d\s().-]{7,20}\b")
+
+    # Thresholds
+    MAX_TEXT_LEN = 20000  # if input longer than this, use safe tokenized processing
+    MAX_TOKEN_LEN = 1000  # skip processing tokens longer than this to avoid regex work on pathological tokens
+
+    if len(text) <= MAX_TEXT_LEN:
+        text = email_re.sub("[redacted-email]", text)
+        text = phone_re.sub("[redacted-phone]", text)
+        return text
+
+    # For very long text, process in whitespace-separated chunks, preserving whitespace
+    parts = re.split(r"(\s+)", text)
+    out_parts = []
+    for part in parts:
+        if not part:
+            continue
+        # Preserve whitespace separators
+        if part.isspace():
+            out_parts.append(part)
+            continue
+
+        # Skip expensive processing for extremely long tokens
+        if len(part) > MAX_TOKEN_LEN:
+            out_parts.append("[redacted-long]")
+            continue
+
+        p = email_re.sub("[redacted-email]", part)
+        p = phone_re.sub("[redacted-phone]", p)
+        out_parts.append(p)
+
+    return "".join(out_parts)
 
 
 def _redact_transcript(obj: Any) -> Any:

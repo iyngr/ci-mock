@@ -461,7 +461,10 @@ RUBRICS_DIR = Path(__file__).parent / "rubrics"
 
 @lru_cache(maxsize=8)
 def _load_rubric(name: str = "default") -> Dict[str, Any]:
-    path = RUBRICS_DIR / f"{name}.json"
+    # Validate that the rubric file is contained within RUBRICS_DIR
+    path = (RUBRICS_DIR / f"{name}.json").resolve()
+    if not str(path).startswith(str(RUBRICS_DIR.resolve())):
+        raise FileNotFoundError(f"Rubric '{name}' not found (invalid path)")
     if not path.exists():
         raise FileNotFoundError(f"Rubric '{name}' not found")
     with path.open("r", encoding="utf-8") as f:

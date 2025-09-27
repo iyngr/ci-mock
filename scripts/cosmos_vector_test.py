@@ -50,8 +50,11 @@ async def embed_text(text: str):
         # 'llm-agent.yourcompany.com',
         # 'trusted-agent.example.com',
     ]
-    # Alternatively: allow only HTTPS on specific domains
+    # SSRF protection: refuse to call agent unless allowed hosts are specified
     if agent:
+        if not ALLOWED_AGENT_HOSTNAMES:
+            print("SSRF protection: Refusing to call agent because ALLOWED_AGENT_HOSTNAMES is empty. Please configure trusted agent endpoints.")
+            return None
         parsed = urlparse(agent)
         # Only allow agent endpoints explicitly whitelisted
         if not parsed.hostname or parsed.hostname not in ALLOWED_AGENT_HOSTNAMES:

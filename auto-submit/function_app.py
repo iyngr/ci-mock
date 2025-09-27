@@ -119,21 +119,12 @@ ALLOWED_SCORING_ENDPOINTS = [
     "https://ai.yourcompany.com/score",
     "https://prod.scoring.service/score",
 ]
-ALLOWED_SCORING_HOSTNAMES = [
-    "ai.yourcompany.com",
-    "prod.scoring.service",
-]
+# ALLOWED_SCORING_HOSTNAMES removed for SSRF hardening
 
 def is_allowed_endpoint(url):
     try:
-        parsed = urllib.parse.urlparse(url)
-        # Check exact allowed endpoints (including full URL)
-        if url in ALLOWED_SCORING_ENDPOINTS:
-            return True
-        # Otherwise, only allow HTTPS URLs to approved hostnames
-        if parsed.scheme == "https" and parsed.hostname in ALLOWED_SCORING_HOSTNAMES:
-            return True
-        return False
+        # Only allow exact full URLs. No host-based allowlisting.
+        return url in ALLOWED_SCORING_ENDPOINTS
     except Exception:
         return False
 
@@ -150,9 +141,9 @@ async def trigger_ai_scoring(submission: dict):
         if not scoring_endpoint:
             logging.warning("AI_SCORING_ENDPOINT not configured, skipping AI scoring")
             return
-        # Validate the scoring endpoint against allowlist
+        # Ensure only exact full URLs from allowlist are allowed.
         if not is_allowed_endpoint(scoring_endpoint):
-            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not in the allowed list. Skipping AI scoring trigger.")
+            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not an exact match in the allowed endpoint list. Skipping AI scoring trigger.")
             return
         
         

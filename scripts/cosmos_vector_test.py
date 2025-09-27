@@ -41,18 +41,26 @@ except Exception:
 
 
 async def embed_text(text: str):
-    # Prefer llm-agent if configured
+    # Prefer llm-agent if configured, but only if in allowed list
     agent = os.getenv('LLM_AGENT_URL')
+    # Whitelist of allowed agent endpoints for SSRF protection.
+    # You may adjust these to match your deployment!
+    ALLOWED_AGENT_HOSTNAMES = [
+        # e.g. allow only these endpoints:
+        # 'llm-agent.yourcompany.com',
+        # 'trusted-agent.example.com',
+    ]
+    # Alternatively: allow only HTTPS on specific domains
     if agent:
-        # SSRF protections: validate agent URL before making a request.
         parsed = urlparse(agent)
-        if parsed.scheme not in ("http", "https"):
+        # Only allow agent endpoints explicitly whitelisted
+        if not parsed.hostname or parsed.hostname not in ALLOWED_AGENT_HOSTNAMES:
+            print(f"Refusing to call agent at unapproved endpoint: {parsed.hostname!r}")
+        elif parsed.scheme not in ("http", "https"):
             print(f"Refusing to use agent with unsupported scheme: {parsed.scheme}")
         else:
-            # Build target URL safely
             url = agent.rstrip('/') + '/embed'
             try:
-                # Resolve host and ensure it is not private/reserved unless explicitly allowed
                 hostname = parsed.hostname
                 try:
                     infos = socket.getaddrinfo(hostname, None)
@@ -68,7 +76,6 @@ async def embed_text(text: str):
                             blocked = True
                             break
                     except Exception:
-                        # If parsing fails, be conservative
                         blocked = True
                         break
 

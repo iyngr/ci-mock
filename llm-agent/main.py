@@ -463,7 +463,11 @@ RUBRICS_DIR = Path(__file__).parent / "rubrics"
 def _load_rubric(name: str = "default") -> Dict[str, Any]:
     # Validate that the rubric file is contained within RUBRICS_DIR
     path = (RUBRICS_DIR / f"{name}.json").resolve()
-    if not str(path).startswith(str(RUBRICS_DIR.resolve())):
+    # Extra defense: forbid path separators in name (rudimentary rule)
+    if "/" in name or "\\" in name or ".." in name:
+        raise FileNotFoundError(f"Rubric '{name}' not found (invalid name)")
+    # Use robust ancestry/path check (Python >= 3.9)
+    if not path.is_relative_to(RUBRICS_DIR.resolve()):
         raise FileNotFoundError(f"Rubric '{name}' not found (invalid path)")
     if not path.exists():
         raise FileNotFoundError(f"Rubric '{name}' not found")

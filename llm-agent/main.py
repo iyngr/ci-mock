@@ -1,6 +1,7 @@
 import asyncio
 import os
 from fastapi import FastAPI, HTTPException
+from werkzeug.utils import secure_filename
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any
@@ -461,8 +462,11 @@ RUBRICS_DIR = Path(__file__).parent / "rubrics"
 
 @lru_cache(maxsize=8)
 def _load_rubric(name: str = "default") -> Dict[str, Any]:
-    # Extra defense: forbid path separators or traversal in name BEFORE path use
+    # Extra defense: sanitize and forbid path separators/traversal in name BEFORE path use
     import re
+    sanitized = secure_filename(name)
+    if name != sanitized:
+        raise FileNotFoundError(f"Rubric '{name}' not found (invalid name or unsafe characters)")
     if "/" in name or "\\" in name or ".." in name or not re.fullmatch(r"[a-zA-Z0-9_\-]+", name):
         raise FileNotFoundError(f"Rubric '{name}' not found (invalid name)")
     # Construct and normalize the rubric file path

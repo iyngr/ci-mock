@@ -1,7 +1,24 @@
 // Centralized API client wrapper
 // Uses NEXT_PUBLIC_API_URL and automatically attaches Authorization header if candidateToken present.
 
-export const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+// List of trusted API base URLs. Adjust as required for your deployment environments.
+const allowedApiBases = [
+    'http://localhost:8000',
+    'https://api.myapp.com',
+    'https://staging-api.myapp.com'
+];
+
+// Validate that the configured API URL is allowed
+function getSafeApiBase(): string {
+    const envBase = process.env.NEXT_PUBLIC_API_URL || '';
+    if (allowedApiBases.includes(envBase)) {
+        return envBase;
+    }
+    return 'http://localhost:8000';
+}
+
+export const apiBase = getSafeApiBase();
 
 export interface ApiError extends Error {
     status?: number;

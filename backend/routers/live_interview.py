@@ -7,6 +7,8 @@ import re
 import logging
 import httpx
 import urllib.parse
+import ipaddress
+import socket
 router = APIRouter(prefix="/api/live-interview", tags=["live-interview"])
 
 # Configure security logging
@@ -514,6 +516,32 @@ async def moderate_text(body: ModerateRequest):
             return default_resp
     except Exception as ex:
         security_logger.error(f"Invalid endpoint format in live-interview moderate: {endpoint!r} ({ex})")
+        return default_resp
+
+    # Resolve hostname to IP(s) and verify none are private, loopback, reserved, or link-local
+    def is_public_ip(ip_str):
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            return not (
+                ip_obj.is_private or
+                ip_obj.is_loopback or
+                ip_obj.is_link_local or
+                ip_obj.is_reserved or
+                ip_obj.is_multicast
+            )
+        except Exception:
+            return False
+
+    try:
+        resolved_ips = []
+        for info in socket.getaddrinfo(hostname, None):
+            ip = info[4][0]
+            resolved_ips.append(ip)
+        if not resolved_ips or not all(is_public_ip(ip) for ip in resolved_ips):
+            security_logger.error(f"Endpoint resolves to private/non-public IPs in live-interview moderate: {hostname!r} ({resolved_ips!r})")
+            return default_resp
+    except Exception as ex:
+        security_logger.error(f"Error resolving endpoint '{hostname}': {ex}")
         return default_resp
 
     try:

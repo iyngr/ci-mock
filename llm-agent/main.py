@@ -1198,7 +1198,7 @@ async def rag_query(request: RAGQueryRequest) -> Dict[str, Any]:
             "answer": None,
             "context_documents": [],
             "confidence_score": None,
-            "error": str(e)
+            "error": "An internal error has occurred during the query."
         }
 
 

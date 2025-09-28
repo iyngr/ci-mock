@@ -7,6 +7,19 @@
 - Whenever you intend to run commands such as running a PNPM server or a UV Server, ensure after starting the server, subsequent commands should be run in a new terminal session to prevent stopping the server.
 - Avoid documentation unnecessarily. Only provide documentation if explicitly asked for.
 
+# Security Best Practices
+- Always validate and sanitize user inputs to prevent injection attacks.
+- Avoid user input in the hostname of the URL. Pick the hostname from an allow-list instead of constructing it directly from user input.
+- Take care when user input is part of the pathname of the URL. Restrict the input so that path traversal ("../") cannot be used to redirect the request to an unintended endpoint.
+- To guard against SSRF attacks you should avoid putting user-provided input directly into a request URL. On the application level, maintain a list of authorized URLs on the server and choose from that list based on the input provided. If that is not possible, one should verify the IP address for all user-controlled requests to ensure they are not private. 
+- When making requests to third-party services, ensure that sensitive information such as API keys and tokens are stored securely using environment variables or secret management tools, and are not hard-coded in the source code.
+- Regularly update dependencies to patch known vulnerabilities.
+- Implement proper error handling to avoid leaking sensitive information in error messages.
+- When using a regular expression, remove the ambiguity, or ensure that the strings matched with the regular expression are short enough that the time-complexity does not matter.
+- Use a cryptographically secure pseudo-random number generator if the output is to be used in a security-sensitive context. As a rule of thumb, a value should be considered "security-sensitive" if predicting it would allow the attacker to perform an action that they would otherwise be unable to perform. For example, if an attacker could predict the random password generated for a new user, they would be able to log in as that new user. Methods such as random() in Python or Math.random() in JavaScript are not suitable for this purpose.
+- Validate user input before using it to construct a file path, either using an off-the-shelf library function like werkzeug.utils.secure_filename, or by performing custom validation. Ideally, follow these rules: Do not allow more than a single "." character. Do not allow directory separators such as "/" or "\" (depending on the file system). Do not rely on simply replacing problematic sequences such as "../". For example, after applying this filter to ".../...//", the resulting string would still be "../". Use an allowlist of known good patterns.
+- Send the user a more generic error message that reveals less information. Either suppress the stack trace entirely, or log it only on the server. Use  log(traceback.format_exc()) to log strace and then return "An internal error has occurred!" instead of return traceback.format_exc(). Another example is to avoid using str(e).
+
 # AI-Powered Technical Assessment Platform
 
 This repository contains a comprehensive technical assessment platform built with Next.js 14 and FastAPI, featuring AI-powered evaluation and real-time proctoring capabilities.

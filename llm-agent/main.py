@@ -774,8 +774,8 @@ async def generate_report(request: GenerateReportRequest) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error generating report for submission_id {request.submission_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+        logger.exception("Error generating report for submission_id %s", request.submission_id)
+        raise HTTPException(status_code=500, detail="Report generation failed")
 
 @app.post("/generate-question")
 async def generate_question(request: GenerateQuestionRequest) -> Dict[str, Any]:
@@ -824,8 +824,8 @@ async def generate_question(request: GenerateQuestionRequest) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error generating question for skill {request.skill}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
+        logger.exception("Error generating question for skill %s", request.skill)
+        raise HTTPException(status_code=500, detail="Question generation failed")
 
 @app.post("/assess-submission")
 async def assess_submission(request: GenerateReportRequest):
@@ -869,8 +869,8 @@ async def assess_submission(request: GenerateReportRequest):
         }
         
     except Exception as e:
-        logger.error(f"Error assessing submission {request.submission_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Assessment failed: {str(e)}")
+        logger.exception("Error assessing submission %s", request.submission_id)
+        raise HTTPException(status_code=500, detail="Assessment failed")
 
 @app.get("/agents/status")
 async def get_agents_status() -> Dict[str, Any]:
@@ -914,7 +914,8 @@ async def get_agents_status() -> Dict[str, Any]:
             "version": "0.4.0"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+        logger.exception("Status check failed")
+        raise HTTPException(status_code=500, detail="Status check failed")
 
 
 @app.post("/questions/validate")
@@ -942,8 +943,8 @@ async def validate_question(request: QuestionValidationRequest) -> Dict[str, Any
         return result
 
     except Exception as e:
-        logger.error(f"Error in validate_question: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to validate question: {str(e)}")
+        logger.exception("Error in validate_question")
+        raise HTTPException(status_code=500, detail="Failed to validate question")
 
 @app.post("/questions/rewrite")
 async def rewrite_question(request: QuestionRewriteRequest) -> Dict[str, Any]:
@@ -1112,8 +1113,8 @@ async def debug_console_interaction(request: DebugInteractionRequest) -> Dict[st
         }
         
     except Exception as e:
-        logger.error(f"Debug console interaction failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Debug interaction failed: {str(e)}")
+        logger.exception("Debug console interaction failed")
+        raise HTTPException(status_code=500, detail="Debug interaction failed")
 
 
 @app.get("/debug/status")
@@ -1192,7 +1193,7 @@ async def rag_query(request: RAGQueryRequest) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"RAG query processing failed: {str(e)}")
+        logger.exception("RAG query processing failed")
         return {
             "success": False,
             "answer": None,

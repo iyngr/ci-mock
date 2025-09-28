@@ -159,42 +159,143 @@ async def trigger_ai_scoring(submission: dict):
     """
     try:
         import aiohttp
-        
+
         scoring_endpoint = os.environ.get("AI_SCORING_ENDPOINT")
         if not scoring_endpoint:
             logging.warning("AI_SCORING_ENDPOINT not configured, skipping AI scoring")
             return
-        # Ensure only exact normalized full URLs from allowlist are allowed.
-        if not is_allowed_endpoint(scoring_endpoint):
-            logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not allowlisted. Allowed endpoints: {ALLOWED_SCORING_ENDPOINTS}. Skipping AI scoring trigger.")
+
+        # Parse and validate the configured endpoint
+        try:
+            parts = urllib.parse.urlsplit(scoring_endpoint)
+            # Disallow embedded credentials, queries, fragments
+            if parts.username or parts.password:
+                logging.error("AI_SCORING_ENDPOINT must not contain credentials; refusing to use it")
+                return
+            if parts.query or parts.fragment:
+                logging.error("AI_SCORING_ENDPOINT must not contain query or fragment; refusing to use it")
+                return
+
+            # Enforce scheme rules (https by default)
+            allow_insecure = os.environ.get('ALLOW_INSECURE_AGENT', 'false').lower() in ('1', 'true', 'yes')
+            if parts.scheme not in ('http', 'https'):
+                logging.error(f"AI_SCORING_ENDPOINT uses unsupported scheme {parts.scheme}; refusing to use it")
+                return
+            if parts.scheme != 'https' and not allow_insecure:
+                logging.error('AI_SCORING_ENDPOINT must use https by default. Set ALLOW_INSECURE_AGENT=true to allow http for testing')
+                return
+
+            hostname = (parts.hostname or '').lower().rstrip('.')
+
+            # Build allowlist checks. ALLOWED_SCORING_ENDPOINTS may contain full URLs or hostnames (leading-dot suffix allowed)
+            norm_allow = [normalize_url(x) for x in ALLOWED_SCORING_ENDPOINTS if x]
+            norm_target = normalize_url(scoring_endpoint)
+
+            allowed_via_full_url = norm_target in norm_allow
+
+            # Derive host-based allowlist entries (entries without scheme/netloc)
+            host_allow_entries = []
+            for e in ALLOWED_SCORING_ENDPOINTS:
+                if not e:
+                    continue
+                try:
+                    p = urllib.parse.urlsplit(e)
+                    if p.scheme and p.netloc:
+                        # full url, skip for host-only list
+                        continue
+                    # treat whole entry as hostname or leading-dot suffix
+                    host_allow_entries.append(e.lower().rstrip('.'))
+                except Exception:
+                    host_allow_entries.append(e.lower().rstrip('.'))
+
+            def _host_allowed(h: str) -> bool:
+                if not host_allow_entries:
+                    return False
+                for ae in host_allow_entries:
+                    if not ae:
+                        continue
+                    if ae.startswith('.'):
+                        # suffix match (allow subdomains)
+                        if h == ae.lstrip('.') or h.endswith(ae):
+                            return True
+                    else:
+                        if h == ae:
+                            return True
+                return False
+
+            if not allowed_via_full_url and not _host_allowed(hostname):
+                logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not allowlisted. Allowed endpoints: {ALLOWED_SCORING_ENDPOINTS}. Skipping AI scoring trigger.")
+                return
+
+            # If we matched an exact full-url allowlist entry, use it as-is (normalized)
+            if allowed_via_full_url:
+                target_url = norm_target
+            else:
+                # For host-allowed entries, avoid using user-supplied path; use a fixed safe path (/score) unless the configured path is empty or '/'
+                netloc = hostname
+                if parts.port:
+                    netloc = f"{hostname}:{parts.port}"
+                safe_path = '/score'
+                if parts.path and parts.path not in ('', '/'):
+                    logging.warning('AI_SCORING_ENDPOINT path ignored; using fixed path %s for safety', safe_path)
+                target_url = f"{parts.scheme}://{netloc}{safe_path}"
+
+            # DNS resolve and block private/reserved IPs unless explicitly allowed
+            ips = set()
+            try:
+                try:
+                    ipaddress.ip_address(hostname)
+                    ips.add(hostname)
+                except Exception:
+                    infos = socket.getaddrinfo(hostname, None)
+                    ips = {info[4][0] for info in infos}
+            except Exception:
+                ips = set()
+
+            blocked = False
+            for ip in ips:
+                try:
+                    addr = ipaddress.ip_address(ip)
+                    if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
+                        blocked = True
+                        break
+                except Exception:
+                    blocked = True
+                    break
+
+            allow_local = os.environ.get('ALLOW_LOCAL_AGENT', 'false').lower() in ('1', 'true', 'yes')
+            if blocked and not allow_local:
+                logging.error(f"Refusing to call scoring endpoint at {hostname} ({', '.join(sorted(ips) if ips else ['<unresolved>'])}) - private/reserved address")
+                return
+
+        except Exception as ve:
+            logging.exception('Error validating AI_SCORING_ENDPOINT')
             return
 
-        # Use normalized allowlisted URL and force safe client options
-        scoring_endpoint = normalize_url(scoring_endpoint)
-
+        # Build payload and perform request with strict timeouts and no redirects
         payload = {
-            "submission_id": submission["id"],
-            "test_id": submission["test_id"],
-            "candidate_email": submission["candidate_email"],
+            "submission_id": submission.get("id"),
+            "test_id": submission.get("test_id"),
+            "candidate_email": submission.get("candidate_email"),
             "auto_submitted": True
         }
-        
+
         timeout = aiohttp.ClientTimeout(total=int(os.environ.get('AI_SCORING_TIMEOUT_SECONDS', '60')))
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                scoring_endpoint,
+                target_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=timeout,
                 allow_redirects=False,
             ) as response:
                 if response.status == 200:
-                    logging.info(f"Successfully triggered AI scoring for submission {submission['id']}")
+                    logging.info(f"Successfully triggered AI scoring for submission {submission.get('id')}")
                 else:
                     logging.warning(f"AI scoring trigger failed with status {response.status}")
-                    
+
     except Exception as e:
-        logging.error(f"Failed to trigger AI scoring for submission {submission.get('id', 'unknown')}: {str(e)}")
+        logging.exception(f"Failed to trigger AI scoring for submission {submission.get('id', 'unknown')}")
 
 
 async def process_expired_s2s_interviews(database):

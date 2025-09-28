@@ -631,8 +631,8 @@ class CosmosDBService:
             }
             
         except Exception as e:
-            logger.error(f"Failed to get statistics for container '{container_name}': {e}")
-            return {"error": str(e)}
+            logger.exception("Failed to get statistics for container '%s'", container_name)
+            return {"error": "Failed to retrieve container statistics"}
 
 
 # Utility functions for compatibility

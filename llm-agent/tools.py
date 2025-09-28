@@ -448,7 +448,9 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
                         except Exception:
                             header_sources['page._response.headers'] = None
                 except Exception as e:
-                    header_sources['headers_error'] = str(e)
+                    import logging
+                    logging.getLogger(__name__).exception('Failed to read page headers')
+                    header_sources['headers_error'] = None
 
                 # Container-level last response headers (SDK exposes this in client_connection)
                 try:
@@ -456,7 +458,9 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
                     if client_last_headers is not None and hasattr(knowledge_base_container.client_connection, 'last_response_headers'):
                         header_sources['container.client_connection.last_response_headers'] = knowledge_base_container.client_connection.last_response_headers
                 except Exception as e:
-                    header_sources['client_connection_error'] = str(e)
+                    import logging
+                    logging.getLogger(__name__).exception('Failed to read container client_connection headers')
+                    header_sources['client_connection_error'] = None
 
                 # Sum any request charge values we find
                 found_charge = 0.0
@@ -474,7 +478,8 @@ async def query_cosmosdb_for_rag(query_text: str, skill: str | None = None, limi
             results = items
 
         except Exception as e:
-            print(f"Vector search not available, using fallback: {e}")
+            import logging
+            logging.getLogger(__name__).exception('Vector search not available, using fallback')
             # Fallback: regular text-based search, capture RU similarly
             total_request_charge = 0.0
             fallback_query = "SELECT TOP 5 c.content, c.skill FROM c WHERE CONTAINS(LOWER(c.content), LOWER(@query))"

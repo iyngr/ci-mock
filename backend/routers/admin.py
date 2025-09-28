@@ -567,7 +567,7 @@ async def get_dashboard(
             "admin": {"name": admin.get("name"), "email": admin.get("email")},
         }
     except Exception as e:
-        logger.warning(f"Dashboard fallback to mocks due to exception: {e}")
+        logger.exception("Dashboard fallback to mocks due to exception")
         return {
             "stats": mock_dashboard_stats,
             "tests": mock_test_summaries,
@@ -586,6 +586,7 @@ async def get_tests(
         submissions = await db.find_many("submissions", {}, limit=100)
         return submissions or []
     except Exception:
+        logger.exception("get_tests failed, returning mock test summaries")
         # On failure only, return mock data
         return mock_test_summaries
 
@@ -600,7 +601,8 @@ async def get_all_submissions(
         submissions_data = await db.find_many("submissions", {}, limit=1000)
         return [Submission(**sub) for sub in submissions_data]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch submissions: {str(e)}")
+        logger.exception("Failed to fetch submissions")
+        raise HTTPException(status_code=500, detail="Failed to fetch submissions")
 
 
 @router.get("/candidates") 
@@ -625,10 +627,8 @@ async def get_all_candidates(
         candidates = await db.query_items("submissions", query)
         return candidates
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch candidates: {str(e)}")
-        return candidates
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch candidates: {str(e)}")
+        logger.exception("Failed to fetch candidates")
+        raise HTTPException(status_code=500, detail="Failed to fetch candidates")
 
 
 @router.get("/assessments")
@@ -648,7 +648,8 @@ async def get_all_assessments(
     try:
         raw_items = await db.find_many("assessments", {}, limit=200) or []
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch assessments: {e}")
+        logger.exception("Failed to fetch assessments")
+        raise HTTPException(status_code=500, detail="Failed to fetch assessments")
 
     normalized: List[dict] = []
     for item in raw_items:

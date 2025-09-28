@@ -72,11 +72,12 @@ async def ask_rag_question(
                     error_detail += f" - {error_data.get('detail', 'Unknown error')}"
                 except Exception:
                     error_detail += f" - {response.text[:200]}"
-                
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"RAG processing failed: {error_detail}"
-                )
+
+                # Log the detailed agent error server-side and return a generic message
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error("LLM Agent returned non-200 response: %s", error_detail)
+                raise HTTPException(status_code=500, detail="RAG processing failed")
             
             rag_result = response.json()
         
@@ -144,21 +145,20 @@ async def ask_rag_question(
         )
         
     except httpx.RequestError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"LLM Agent service unavailable: {str(e)}"
-        )
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("LLM Agent request error")
+        raise HTTPException(status_code=503, detail="LLM Agent service unavailable")
     except httpx.TimeoutException:
         raise HTTPException(
             status_code=504,
             detail="RAG processing timed out"
         )
     except Exception as e:
-        print(f"Error in RAG query: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal error during RAG processing: {str(e)}"
-        )
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Internal error during RAG processing")
+        raise HTTPException(status_code=500, detail="Internal error during RAG processing")
 
 
 @router.post("/knowledge-base/update", response_model=KnowledgeBaseUpdateResponse)
@@ -183,7 +183,9 @@ async def update_knowledge_base(
             )
             
             if response.status_code != 200:
-                print(f"Warning: Could not generate embedding: {response.status_code}")
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning("Could not generate embedding, status: %s", response.status_code)
                 embedding = None
             else:
                 embedding_result = response.json()
@@ -225,35 +227,29 @@ async def update_knowledge_base(
 
             await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
 
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("Embedding generation failed during knowledge base update")
+
             return KnowledgeBaseUpdateResponse(
                 success=True,
                 knowledge_entry_id=knowledge_entry.id,
                 embedding_generated=False,
-                message=f"Knowledge base updated (embedding generation failed: {str(e)})"
+                message="Knowledge base updated (embedding generation failed)"
             )
 
         except Exception as fallback_error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to update knowledge base: {str(fallback_error)}"
-            )
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to update knowledge base after embedding failure")
+            raise HTTPException(status_code=500, detail="Failed to update knowledge base")
             
     except Exception as e:
-        # Provide richer traceback in development to help debugging
-        tb = traceback.format_exc()
-        print(f"Error updating knowledge base: {e}\n{tb}")
-        env = os.getenv("ENVIRONMENT", "development")
-        if env != "production":
-            # include traceback in detail for local debugging
-            raise HTTPException(
-                status_code=500,
-                detail={"error": str(e), "traceback": tb}
-            )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Internal error updating knowledge base: {str(e)}"
-            )
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Error updating knowledge base")
+        # Always return a generic error to clients to avoid leaking internals
+        raise HTTPException(status_code=500, detail="Internal error updating knowledge base")
 
 
 @router.get("/knowledge-base/search")
@@ -370,11 +366,10 @@ async def search_knowledge_base(
         }
         
     except Exception as e:
-        print(f"Error searching knowledge base: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Knowledge base search failed: {str(e)}"
-        )
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Error searching knowledge base")
+        raise HTTPException(status_code=500, detail="Knowledge base search failed")
 
 
 @router.get("/health")
@@ -405,9 +400,12 @@ async def rag_health_check():
         }
         
     except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("RAG health check failed")
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "message": "RAG health check failed",
             "timestamp": datetime.utcnow().isoformat()
         }
 
@@ -448,4 +446,7 @@ async def read_rag_telemetry(limit: int = 10):
 
         return {"success": True, "entries": entries}
     except Exception as e:
-        return {"success": False, "message": f"Failed to read telemetry: {e}", "entries": []}
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to read RAG telemetry")
+        return {"success": False, "message": "Failed to read telemetry", "entries": []}

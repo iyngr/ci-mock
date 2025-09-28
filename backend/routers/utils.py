@@ -90,7 +90,9 @@ async def run_code(
         await db.auto_create_item(CONTAINER["CODE_EXECUTIONS"], execution_record)
     except Exception as e:
         # Don't fail the execution if storage fails, just log it
-        print(f"Failed to store execution result: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to store execution result")
     
     return result
 
@@ -122,7 +124,9 @@ async def create_code_run(request: CodeRunRequest, db: CosmosDBService = Depends
     try:
         await db.auto_create_item(CONTAINER["CODE_EXECUTIONS"], record)
     except Exception as e:
-        print(f"Failed to persist code run {run_id}: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to persist code run %s", run_id)
 
     return CodeRunResponse(
         runId=run_id,
@@ -146,7 +150,9 @@ async def finalize_code_run(request: FinalizeRunRequest, db: CosmosDBService = D
     try:
         await db.update_item(CONTAINER["CODE_EXECUTIONS"], request.run_id, run_doc, partition_key=request.submission_id)
     except Exception as e:
-        print(f"Failed to mark run final: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to mark run final")
 
     # 3) Write execution summary into Submission.answers[].evaluation for the question
     submission_doc = await db.find_one(CONTAINER["SUBMISSIONS"], {"id": request.submission_id})
@@ -189,7 +195,9 @@ async def finalize_code_run(request: FinalizeRunRequest, db: CosmosDBService = D
     try:
         await db.update_item(CONTAINER["SUBMISSIONS"], request.submission_id, submission_doc, partition_key=submission_doc.get("assessment_id"))
     except Exception as e:
-        print(f"Failed to update submission with final run: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to update submission with final run")
 
     return {"success": True, "message": "Run finalized and persisted."}
 
@@ -317,7 +325,10 @@ async def execute_with_judge0(request: CodeExecutionRequest):
     except httpx.TimeoutException:
         raise HTTPException(status_code=408, detail="Code execution timeout")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Judge0 execution failed: {str(e)}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Judge0 execution failed")
+        raise HTTPException(status_code=500, detail="Judge0 execution failed")
 
 
 @router.post("/evaluate")
@@ -355,7 +366,9 @@ async def evaluate_result(
         
     except Exception as e:
         # Fallback to mock evaluation if hybrid scoring fails
-        print(f"Hybrid scoring failed, falling back to mock: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Hybrid scoring failed, falling back to mock")
         return await _legacy_mock_evaluation(request, db)
 
 
@@ -428,7 +441,9 @@ async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBServic
                 partition_key=assessment_id
             )
     except Exception as e:
-        print(f"Failed to store mock evaluation: {e}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to store mock evaluation")
 
     return {
         "success": True,

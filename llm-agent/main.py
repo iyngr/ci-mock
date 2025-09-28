@@ -281,7 +281,7 @@ async def _validate_azure_openai() -> None:
             api_version,
         )
     except Exception as e:
-        # Record first line of error for brevity
+        # Record short error hint for status and log full exception
         err_line = str(e).splitlines()[0]
         AI_STATUS["chat"] = {
             "ok": False,
@@ -289,10 +289,10 @@ async def _validate_azure_openai() -> None:
             "model": model_name,
             "api_version": api_version,
             "endpoint": endpoint,
-            "error": err_line,
+            "error": "chat validation failed",
             "action": "Verify deployment name exists in Azure OpenAI resource and matches AZURE_OPENAI_DEPLOYMENT_NAME; confirm model is deployed and API version is supported.",
         }
-        logger.warning("Azure OpenAI chat deployment validation failed: %s", err_line)
+        logger.exception("Azure OpenAI chat deployment validation failed: %s", err_line)
 
     # Validate embedding deployment (optional)
     embed_dep = os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT") or os.getenv("EMBEDDING_MODEL")
@@ -319,10 +319,10 @@ async def _validate_azure_openai() -> None:
             AI_STATUS["embedding"] = {
                 "ok": False,
                 "deployment": embed_dep,
-                "error": err_line,
+                "error": "embedding validation failed",
                 "action": "Create embedding deployment or update AZURE_OPENAI_EMBED_DEPLOYMENT to an existing one.",
             }
-            logger.warning("Azure OpenAI embedding deployment validation failed: %s", err_line)
+            logger.exception("Azure OpenAI embedding deployment validation failed: %s", err_line)
     else:
         AI_STATUS["embedding"] = {"ok": False, "details": "no deployment specified (optional)"}
 
@@ -334,7 +334,7 @@ async def startup_event():
     try:
         await _validate_azure_openai()
     except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"AI validation encountered unexpected error: {e}")
+        logger.exception("AI validation encountered unexpected error")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -504,7 +504,8 @@ async def get_rubric(name: str) -> Dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Rubric not found")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load rubric: {e}")
+        logger.exception("Failed to load rubric %s", name)
+        raise HTTPException(status_code=500, detail="Failed to load rubric")
 
 
 @app.post("/live/orchestrate", response_model=LiveOrchestrateResponse)

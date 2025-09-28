@@ -401,7 +401,10 @@ class ScoringTriageService:
             return submission, assessment
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to fetch data: {str(e)}")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.exception("Failed to fetch submission or assessment data")
+            raise HTTPException(status_code=500, detail="Failed to fetch submission or assessment data")
     
     async def _categorize_answers(
         self, submission: Submission, assessment: Assessment
@@ -824,7 +827,10 @@ async def process_submission_scoring(
         return result
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Submission scoring failed: {str(e)}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Submission scoring failed")
+        raise HTTPException(status_code=500, detail="Submission scoring failed")
 
 
 # Backwards-compatible endpoint: some clients call /triage
@@ -946,11 +952,11 @@ async def create_mock_submission(db: CosmosDBService = Depends(get_cosmosdb)):
         await db.upsert_item(CONTAINER["SUBMISSIONS"], submission_payload, partition_key=submission_obj.assessment_id)
         return {"success": True, "submission_id": submission_id, "assessment_id": assessment_id}
     except Exception as e:
-        # DEV-only: return exception details to help debug failures during local runs
-        import traceback as _tb
-        tb = _tb.format_exc()
-        print("create_mock_submission error:\n", tb)
-        return {"success": False, "error": str(e), "traceback": tb}
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to create mock submission")
+        # Return a generic failure message; avoid returning tracebacks to clients
+        return {"success": False, "message": "Failed to create mock submission"}
 
 
 @router.get("/dev/evaluations/{submission_id}")
@@ -966,7 +972,10 @@ async def dev_get_evaluations(submission_id: str, db: CosmosDBService = Depends(
         submission = await db.find_one(CONTAINER["SUBMISSIONS"], {"id": submission_id})
         return {"evaluations": results, "submission": submission}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to read evaluations for dev endpoint")
+        raise HTTPException(status_code=500, detail="Failed to read evaluations")
 
 
 @router.get("/dev/rag-queries")
@@ -980,7 +989,10 @@ async def dev_get_rag_queries(limit: int = 10, db: CosmosDBService = Depends(get
         results = await db.find_many(CONTAINER["RAG_QUERIES"], {}, limit=limit)
         return {"count": len(results), "items": results}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception("Failed to read rag queries for dev endpoint")
+        raise HTTPException(status_code=500, detail="Failed to read rag queries")
 
 
 # ===========================

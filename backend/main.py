@@ -243,7 +243,9 @@ async def get_metrics():
                 stats = await db_service.get_container_statistics(container_name)
                 container_stats[container_name] = stats
             except Exception as e:
-                container_stats[container_name] = {"error": str(e)}
+                # Log the error server-side and return a generic failure for that container
+                logger.exception("Failed to get container statistics for %s", container_name)
+                container_stats[container_name] = {"message": "failed to collect stats"}
         
         return {
             "service_metrics": service_metrics,
@@ -252,7 +254,8 @@ async def get_metrics():
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+        logger.exception("Failed to assemble metrics payload")
+        raise HTTPException(status_code=500, detail="Failed to get metrics")
 
 
 @app.get("/metrics/reset")
@@ -270,7 +273,8 @@ async def reset_metrics():
         return {"message": "Metrics reset successfully"}
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to reset metrics: {str(e)}")
+        logger.exception("Failed to reset metrics")
+        raise HTTPException(status_code=500, detail="Failed to reset metrics")
 
 
 # Include routers

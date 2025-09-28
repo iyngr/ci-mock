@@ -1300,7 +1300,7 @@ async def rag_search(request: RAGQueryRequest) -> Dict[str, Any]:
             "success": False,
             "results": [],
             "total_found": 0,
-            "error": str(e)
+            "error": "An internal error has occurred during the search."
         }
 
 

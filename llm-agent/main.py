@@ -1356,7 +1356,7 @@ async def generate_embedding(request: EmbeddingGenerationRequest) -> Dict[str, A
         return {
             "success": False,
             "embedding": None,
-            "error": str(e)
+            "error": "An internal error occurred while generating embeddings."
         }
 
 

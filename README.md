@@ -16,10 +16,10 @@ Unified, extensible assessment platform for coding & conceptual evaluation with:
 
 ```mermaid
 flowchart LR
-  FE[Next.js Frontend] -->|HTTPS /api/*| BE[FastAPI Backend]
-  FE -->|LLM assist (optional)| AGENT[LLM Agent Service]
+  FE[NextJS Frontend] -->|HTTPS API| BE[FastAPI Backend]
+  FE -->|LLM assist| AGENT[LLM Agent Service]
   BE --> COSMOS[(Cosmos DB Transactional)]
-  BE -->|Vector/RAG| COSMOS_RAG[(Cosmos DB RAG / Vector)]
+  BE -->|Vector RAG| COSMOS_RAG[(Cosmos DB RAG / Vector)]
   BE --> JUDGE0[Judge0 API]
   AGENT --> AOAI[Azure OpenAI]
   AGENT --> COSMOS

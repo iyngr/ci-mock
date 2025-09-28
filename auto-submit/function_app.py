@@ -227,15 +227,35 @@ async def trigger_ai_scoring(submission: dict):
                 logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not allowlisted. Allowed endpoints: {ALLOWED_SCORING_ENDPOINTS}. Skipping AI scoring trigger.")
                 return
 
-            # If we matched an exact full-url allowlist entry, use it as-is (normalized)
+            # Always rebuild the target URL to a known-safe path to avoid SSRF via path/query/fragment manipulation.
+            # We will use the scheme and netloc from the allowlist-matching value (or the configured endpoint)
+            # but ignore any path, query or fragment; the outbound path is fixed to '/score'.
+            safe_path = '/score'
             if allowed_via_full_url:
-                target_url = norm_target
+                # Use the allowlist-matching entry's scheme and netloc but ignore any path/query/fragment.
+                try:
+                    allowed_parts = urllib.parse.urlsplit(norm_target)
+                    scheme = allowed_parts.scheme or parts.scheme
+                    netloc = allowed_parts.netloc
+                    # If the allowlist entry somehow lacks netloc, fall back to the configured hostname[:port]
+                    if not netloc:
+                        netloc = hostname
+                        if parts.port:
+                            netloc = f"{hostname}:{parts.port}"
+                    if allowed_parts.path and allowed_parts.path not in ('', '/'):
+                        logging.warning('Allowed full-URL allowlist entry includes a path; the path will be ignored for safety')
+                except Exception:
+                    # Fallback conservative behavior
+                    scheme = parts.scheme
+                    netloc = hostname
+                    if parts.port:
+                        netloc = f"{hostname}:{parts.port}"
+                target_url = f"{scheme}://{netloc}{safe_path}"
             else:
-                # For host-allowed entries, avoid using user-supplied path; use a fixed safe path (/score) unless the configured path is empty or '/'
+                # For host-allowed entries, avoid using user-supplied path; use fixed safe path (/score)
                 netloc = hostname
                 if parts.port:
                     netloc = f"{hostname}:{parts.port}"
-                safe_path = '/score'
                 if parts.path and parts.path not in ('', '/'):
                     logging.warning('AI_SCORING_ENDPOINT path ignored; using fixed path %s for safety', safe_path)
                 target_url = f"{parts.scheme}://{netloc}{safe_path}"

@@ -52,49 +52,111 @@ async def embed_text(text: str):
     ]
     # SSRF protection: refuse to call agent unless allowed hosts are specified
     if agent:
+        # Basic config/whitelist checks
         if not ALLOWED_AGENT_HOSTNAMES:
             print("SSRF protection: Refusing to call agent because ALLOWED_AGENT_HOSTNAMES is empty. Please configure trusted agent endpoints.")
             return None
+
         parsed = urlparse(agent)
-        # Only allow agent endpoints explicitly whitelisted
-        if not parsed.hostname or parsed.hostname not in ALLOWED_AGENT_HOSTNAMES:
-            print(f"Refusing to call agent at unapproved endpoint: {parsed.hostname!r}")
-        elif parsed.scheme not in ("http", "https"):
+
+        # Reject URLs that include username/password or non-empty path/query/fragment
+        if parsed.username or parsed.password:
+            print("Refusing to call agent: URL must not contain username/password credentials")
+            return None
+        if parsed.path and parsed.path not in ('', '/'):
+            print(f"Refusing to call agent: URL must not include a path (got: {parsed.path})")
+            return None
+        if parsed.query or parsed.fragment:
+            print("Refusing to call agent: URL must not include query or fragment")
+            return None
+
+        # Only allow http/https; prefer https unless explicitly allowed
+        if parsed.scheme not in ("http", "https"):
             print(f"Refusing to use agent with unsupported scheme: {parsed.scheme}")
-        else:
-            url = agent.rstrip('/') + '/embed'
+            return None
+        allow_insecure = os.getenv('ALLOW_INSECURE_AGENT', 'false').lower() in ('1', 'true', 'yes')
+        if parsed.scheme != 'https' and not allow_insecure:
+            print("Refusing to call agent over insecure scheme (http). Set ALLOW_INSECURE_AGENT=true to override.)")
+            return None
+
+        # Normalize hostname for comparisons
+        def _norm_host(h: str) -> str:
+            if not h:
+                return ''
+            h = h.lower().rstrip('.')
+            return h
+
+        hostname = parsed.hostname
+        norm_hostname = _norm_host(hostname)
+
+        # Allowlist supports exact matches and leading-dot suffix matches (e.g. .example.com allows subdomains)
+        def _is_allowed(h: str) -> bool:
+            for entry in ALLOWED_AGENT_HOSTNAMES:
+                e = entry.lower().rstrip('.')
+                if not e:
+                    continue
+                if e.startswith('.'):
+                    # suffix match (subdomains)
+                    if h == e.lstrip('.') or h.endswith(e):
+                        return True
+                else:
+                    if h == e:
+                        return True
+            return False
+
+        if not norm_hostname or not _is_allowed(norm_hostname):
+            print(f"Refusing to call agent at unapproved endpoint: {hostname!r}")
+            return None
+
+        # Rebuild the target URL from parsed components to avoid injected paths/userinfo
+        netloc = parsed.netloc
+        # parsed.netloc may include userinfo (already rejected) or port; use hostname[:port] if present
+        if parsed.port:
+            netloc = f"{parsed.hostname}:{parsed.port}"
+        target_url = f"{parsed.scheme}://{netloc}/embed"
+
+        try:
+            # Resolve host to IPs and refuse private/reserved addresses (DNS rebinding protection)
+            ips = set()
             try:
-                hostname = parsed.hostname
+                # If hostname is a literal IP, skip DNS lookup and use it directly
                 try:
+                    ipaddress.ip_address(norm_hostname)
+                    ips.add(norm_hostname)
+                except Exception:
                     infos = socket.getaddrinfo(hostname, None)
                     ips = {info[4][0] for info in infos}
-                except Exception:
-                    ips = set()
+            except Exception:
+                ips = set()
 
-                blocked = False
-                for ip in ips:
-                    try:
-                        addr = ipaddress.ip_address(ip)
-                        if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
-                            blocked = True
-                            break
-                    except Exception:
+            blocked = False
+            for ip in ips:
+                try:
+                    addr = ipaddress.ip_address(ip)
+                    if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
                         blocked = True
                         break
+                except Exception:
+                    blocked = True
+                    break
 
-                allow_local = os.getenv('ALLOW_LOCAL_AGENT', 'false').lower() in ('1', 'true', 'yes')
-                if blocked and not allow_local:
-                    print(f"Refusing to call agent at {hostname} ({', '.join(ips)}) - private/reserved address")
-                else:
-                    if requests is None:
-                        print("requests package not available; cannot call LLM agent")
-                    else:
-                        # disable redirects to avoid following attacker-controlled redirects
-                        r = requests.post(url, json={'text': text}, timeout=15, allow_redirects=False)
-                        r.raise_for_status()
-                        return r.json().get('embedding')
-            except Exception as e:
-                print(f"llm-agent embedding failed: {e}")
+            allow_local = os.getenv('ALLOW_LOCAL_AGENT', 'false').lower() in ('1', 'true', 'yes')
+            if blocked and not allow_local:
+                print(f"Refusing to call agent at {hostname} ({', '.join(sorted(ips) if ips else ['<unresolved>'])}) - private/reserved address")
+                return None
+
+            if requests is None:
+                print("requests package not available; cannot call LLM agent")
+                return None
+
+            # disable redirects to avoid following attacker-controlled redirects
+            r = requests.post(target_url, json={'text': text}, timeout=15, allow_redirects=False)
+            r.raise_for_status()
+            # Basic sanity: expect JSON body with 'embedding' key
+            data = r.json()
+            return data.get('embedding')
+        except Exception as e:
+            print(f"llm-agent embedding failed: {e}")
     # Fallback to Azure OpenAI via openai package
     try:
         if openai is None:

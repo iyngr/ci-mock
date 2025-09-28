@@ -110,6 +110,8 @@ def get_cosmos_client():
         raise
 
 import urllib.parse
+import socket
+import ipaddress
 
 # Allowlist for AI scoring endpoints (full URLs or hostnames)
 ALLOWED_SCORING_ENDPOINTS = [
@@ -120,6 +122,11 @@ ALLOWED_SCORING_ENDPOINTS = [
     "https://prod.scoring.service/score",
 ]
 # ALLOWED_SCORING_HOSTNAMES removed for SSRF hardening
+
+# Allowlist for LLM agent hostnames (exact host or leading-dot for subdomains)
+ALLOWED_LLM_AGENT_HOSTNAMES = [
+    # e.g. 'llm-agent.yourcompany.com' or '.trusted-agent.example.com' to allow subdomains
+]
 
 def normalize_url(url):
     try:
@@ -161,8 +168,10 @@ async def trigger_ai_scoring(submission: dict):
         if not is_allowed_endpoint(scoring_endpoint):
             logging.error(f"Configured AI_SCORING_ENDPOINT '{scoring_endpoint}' is not allowlisted. Allowed endpoints: {ALLOWED_SCORING_ENDPOINTS}. Skipping AI scoring trigger.")
             return
-        
-        
+
+        # Use normalized allowlisted URL and force safe client options
+        scoring_endpoint = normalize_url(scoring_endpoint)
+
         payload = {
             "submission_id": submission["id"],
             "test_id": submission["test_id"],
@@ -170,11 +179,14 @@ async def trigger_ai_scoring(submission: dict):
             "auto_submitted": True
         }
         
+        timeout = aiohttp.ClientTimeout(total=int(os.environ.get('AI_SCORING_TIMEOUT_SECONDS', '60')))
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 scoring_endpoint,
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
+                timeout=timeout,
+                allow_redirects=False,
             ) as response:
                 if response.status == 200:
                     logging.info(f"Successfully triggered AI scoring for submission {submission['id']}")
@@ -271,22 +283,103 @@ async def generate_s2s_assessment_score(transcript: dict) -> dict:
             }
         }
         
-        # Call LLM-agent for scoring
+        # Call LLM-agent for scoring (validate endpoint to prevent SSRF)
         llm_agent_endpoint = os.environ.get("LLM_AGENT_ENDPOINT", "http://localhost:8080")
-        scoring_url = f"{llm_agent_endpoint}/generate-report"
-        
+
+        # Validate and normalize the configured LLM agent endpoint
+        try:
+            parts = urllib.parse.urlsplit(llm_agent_endpoint)
+            if parts.username or parts.password:
+                logging.error("LLM_AGENT_ENDPOINT must not contain credentials; refusing to use it")
+                return generate_fallback_s2s_score(transcript)
+            if parts.query or parts.fragment:
+                logging.error("LLM_AGENT_ENDPOINT must not contain query or fragment; refusing to use it")
+                return generate_fallback_s2s_score(transcript)
+            if parts.path and parts.path not in ('', '/'):
+                logging.error("LLM_AGENT_ENDPOINT must not include a path; provide just the scheme://host[:port]")
+                return generate_fallback_s2s_score(transcript)
+            if parts.scheme not in ('http', 'https'):
+                logging.error(f"LLM_AGENT_ENDPOINT uses unsupported scheme {parts.scheme}; refusing to use it")
+                return generate_fallback_s2s_score(transcript)
+
+            allow_insecure = os.environ.get('ALLOW_INSECURE_AGENT', 'false').lower() in ('1', 'true', 'yes')
+            if parts.scheme != 'https' and not allow_insecure:
+                logging.error('LLM_AGENT_ENDPOINT must use https by default. Set ALLOW_INSECURE_AGENT=true to allow http for testing')
+                return generate_fallback_s2s_score(transcript)
+
+            hostname = parts.hostname
+            norm_host = (hostname or '').lower().rstrip('.')
+
+            # Allowlist check: support exact host or leading-dot suffix entries
+            def _host_allowed(h: str) -> bool:
+                for e in ALLOWED_LLM_AGENT_HOSTNAMES:
+                    if not e:
+                        continue
+                    ee = e.lower().rstrip('.')
+                    if ee.startswith('.'):
+                        if h == ee.lstrip('.') or h.endswith(ee):
+                            return True
+                    else:
+                        if h == ee:
+                            return True
+                return False
+
+            if ALLOWED_LLM_AGENT_HOSTNAMES and not _host_allowed(norm_host):
+                logging.error(f"LLM agent host '{hostname}' not in allowlist; refusing to call")
+                return generate_fallback_s2s_score(transcript)
+
+            # Rebuild safe target URL
+            netloc = hostname
+            if parts.port:
+                netloc = f"{hostname}:{parts.port}"
+            target_url = f"{parts.scheme}://{netloc}/generate-report"
+
+            # Resolve hostname and block private/reserved addresses unless explicitly allowed
+            ips = set()
+            try:
+                try:
+                    ipaddress.ip_address(norm_host)
+                    ips.add(norm_host)
+                except Exception:
+                    infos = socket.getaddrinfo(hostname, None)
+                    ips = {info[4][0] for info in infos}
+            except Exception:
+                ips = set()
+
+            blocked = False
+            for ip in ips:
+                try:
+                    addr = ipaddress.ip_address(ip)
+                    if addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local:
+                        blocked = True
+                        break
+                except Exception:
+                    blocked = True
+                    break
+
+            allow_local = os.environ.get('ALLOW_LOCAL_AGENT', 'false').lower() in ('1', 'true', 'yes')
+            if blocked and not allow_local:
+                logging.error(f"Refusing to call LLM agent at {hostname} ({', '.join(sorted(ips) if ips else ['<unresolved>'])}) - private/reserved address")
+                return generate_fallback_s2s_score(transcript)
+
+        except Exception as e:
+            logging.exception('Error validating LLM_AGENT_ENDPOINT: %s', e)
+            return generate_fallback_s2s_score(transcript)
+
         payload = {
             "submission_id": pseudo_submission["id"],
             "debug_mode": False
         }
         
         import aiohttp
+        timeout = aiohttp.ClientTimeout(total=int(os.environ.get('LLM_AGENT_TIMEOUT_SECONDS', '300')))
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                scoring_url,
+                target_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=300)  # 5 minute timeout for AI processing
+                timeout=timeout,
+                allow_redirects=False,
             ) as response:
                 if response.status == 200:
                     result = await response.json()

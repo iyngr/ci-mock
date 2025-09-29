@@ -50,6 +50,7 @@ export function Header({ className }: HeaderProps) {
                 { label: "Add Questions", href: "/admin/add-questions" },
                 { label: "Initiate Test", href: "/admin/initiate-test" },
                 { label: "Reports", href: "/admin/report" },
+                { label: "Smart Screen", href: "/admin/smart-screen" },
             ]
         }
 

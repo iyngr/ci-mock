@@ -104,6 +104,19 @@ class Judge0ResultResponse(BaseModel):
     next_action: str  # "continue" | "retry" | "hint" | "move_on"
     encouragement: str | None = None
 
+# --- Smart Screen (resume) ---
+class ResumeScreenRequest(BaseModel):
+    mode: str = "auto"  # auto | customized
+    role: str | None = None
+    domain: str | None = None
+    skills: list[str] | None = None
+    resume_text: str
+
+class ResumeScreenResponse(BaseModel):
+    summary: list[str]
+    recommendation: str
+
+
 AI_STATUS: dict[str, dict[str, any]] = {"chat": {"ok": False, "details": "not validated"}, "embedding": {"ok": False, "details": "not validated"}}
 
 
@@ -1360,6 +1373,70 @@ async def generate_embedding(request: EmbeddingGenerationRequest) -> Dict[str, A
             "error": "An internal error occurred while generating embeddings."
         }
 
+
+@app.post("/screen/resume", response_model=ResumeScreenResponse)
+async def screen_resume(req: ResumeScreenRequest):
+    """LLM-agent endpoint to screen a resume text.
+    The backend prepares the text (PDF extraction) and calls this JSON endpoint.
+    """
+    text = (req.resume_text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty resume_text")
+    # Load base prompty
+    from prompt_loader import load_prompty
+    prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "resume_screen.yaml"))
+    if not prompty:
+        raise HTTPException(status_code=500, detail="resume_screen prompt missing")
+
+    if req.mode.lower() == "customized":
+        criteria = f"**Role:** `{req.role}`\n**Domain:** `{req.domain}`\n**Required Skills:** `{', '.join(req.skills or [])}`"
+    else:
+        criteria = "**EVALUATION CRITERIA:** Analyze the resume to identify the candidate's most likely role and strongest skills based on their experience."
+
+    system_prompt = prompty.system.replace("{{CRITERIA_SECTION}}", f"**EVALUATION CRITERIA:**\n{criteria}\n")
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"<RESUME_DATA>\n{text}\n</RESUME_DATA>"},
+    ]
+
+    try:
+        # JSON mode expected; rely on response_format
+        result = await call_llm(model_client, messages, temperature=0.0, max_tokens=600)
+        # AutoGen client returns object with choices-like structure; attempt to extract content
+        content = None
+        try:
+            # Newer autogen client might give .content in first candidate
+            choices = getattr(result, "choices", None) or []
+            if choices and hasattr(choices[0], "message"):
+                content = choices[0].message.content  # type: ignore
+        except Exception:
+            pass
+        if not content:
+            # Fallback: direct attribute
+            content = getattr(result, "content", None)
+        if isinstance(content, list):
+            # Some clients return list of segments
+            content = "".join([c if isinstance(c, str) else getattr(c, "text", "") for c in content])
+        import json as _json
+        try:
+            data = _json.loads(content)
+            if not isinstance(data, dict) or "summary" not in data or "recommendation" not in data:
+                raise ValueError("schema mismatch")
+            # Ensure summary is list of strings
+            summary = data.get("summary")
+            if not isinstance(summary, list):
+                summary = [str(summary)]
+            summary = [str(s) for s in summary]
+            return ResumeScreenResponse(summary=summary, recommendation=str(data.get("recommendation")))
+        except Exception:
+            # Fallback minimal structure
+            return ResumeScreenResponse(summary=[content or "No structured response"], recommendation="Insufficient structured response. Please review output.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ResumeScreenResponse(summary=[f"Model error: {e}"], recommendation="Insufficient structured response. Please review output.")
+    
 
 if __name__ == "__main__":
     import uvicorn

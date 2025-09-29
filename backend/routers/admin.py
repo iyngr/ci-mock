@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, BackgroundTasks, Request
+import os
 from typing import List, Optional, Dict, Any
 import logging
 import secrets
@@ -7,6 +8,8 @@ import io
 import hashlib
 import httpx
 import asyncio
+import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 from models import AdminLoginRequest, Submission
@@ -2050,3 +2053,97 @@ async def get_live_interview_session_details(
     except Exception as e:
         logger.error(f"Error fetching session details: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch session details")
+
+
+# Resume Screening Endpoint
+_SMARTSCREEN_REQS = defaultdict(lambda: deque())  # email -> deque[timestamps]
+_SMARTSCREEN_LOCK = asyncio.Lock()
+_SMARTSCREEN_WINDOW_SHORT = 60  # 1 minute
+_SMARTSCREEN_LIMIT_SHORT = 1
+_SMARTSCREEN_WINDOW_LONG = 300  # 5 minutes
+_SMARTSCREEN_LIMIT_LONG = 2
+
+async def _enforce_smartscreen_rate_limit(admin_email: str):
+    now = time.time()
+    async with _SMARTSCREEN_LOCK:
+        dq = _SMARTSCREEN_REQS[admin_email]
+        # prune old entries
+        while dq and (now - dq[0]) > _SMARTSCREEN_WINDOW_LONG:
+            dq.popleft()
+        # count within windows
+        count_short = sum(1 for t in dq if now - t <= _SMARTSCREEN_WINDOW_SHORT)
+        count_long = len(dq)
+        if count_short >= _SMARTSCREEN_LIMIT_SHORT:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded: 1 request per minute")
+        if count_long >= _SMARTSCREEN_LIMIT_LONG:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded: 2 requests per 5 minutes")
+        dq.append(now)
+
+@router.post("/smartscreen")
+async def smart_screen_resume(
+    request: Request,
+    file: UploadFile = File(...),
+    mode: str = "auto",
+    role: str | None = None,
+    domain: str | None = None,
+    skills: str | None = None,  # comma separated
+    admin: dict = Depends(verify_admin_token),
+):
+    """Screen a candidate resume PDF via llm-agent. Returns JSON with summary & recommendation.
+    Rate limited per admin: 1/minute, 2/5 minutes.
+    """
+    await _enforce_smartscreen_rate_limit(admin.get("email") or admin.get("admin_id") or "unknown")
+
+    # Validate file
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+    MAX_MB = 5
+    raw = await file.read(MAX_MB * 1024 * 1024 + 1)
+    if len(raw) > MAX_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 5MB)")
+    if not raw.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="File is not a valid PDF (missing %PDF header)")
+
+    # Extract text (best-effort)
+    text = ""
+    try:
+        import fitz  # type: ignore
+        with fitz.open(stream=raw, filetype="pdf") as doc:
+            parts = []
+            for page in doc:
+                parts.append(page.get_text("text"))
+            text = "\n".join(parts)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to extract text from PDF: {e}")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No extractable text in PDF")
+
+    # Prepare payload for llm-agent
+    llm_agent_url = os.getenv("LLM_AGENT_URL", "http://localhost:8001")
+    payload = {
+        "mode": mode.lower(),
+        "role": role,
+        "domain": domain,
+        "skills": [s.strip() for s in (skills.split(',') if skills else []) if s.strip()],
+        "resume_text": text[:15000],
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(f"{llm_agent_url.rstrip('/')}/screen/resume", json=payload)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"LLM-agent error: {resp.text}")
+        data = resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed calling screening service: {e}")
+
+    # Ensure structure
+    summary = data.get("summary") if isinstance(data, dict) else None
+    recommendation = data.get("recommendation") if isinstance(data, dict) else None
+    if not isinstance(summary, list) or not recommendation:
+        summary = [str(data)] if data else ["No structured response"]
+        recommendation = "Insufficient structured response. Please review output."
+    return {"summary": summary, "recommendation": recommendation}

@@ -395,8 +395,8 @@ export default function AddQuestions() {
                         <button
                             onClick={() => setActiveTab("single")}
                             className={`px-6 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${activeTab === "single"
-                                ? "bg-warm-brown text-white shadow-lg"
-                                : "text-warm-brown/60 hover:text-warm-brown hover:bg-warm-brown/5"
+                                ? "bg-white text-warm-brown/60 ring-1 ring-warm-brown/10 shadow-sm"
+                                : "text-warm-brown hover:text-warm-brown hover:bg-warm-brown/5"
                                 }`}
                         >
                             Single Question
@@ -404,8 +404,8 @@ export default function AddQuestions() {
                         <button
                             onClick={() => setActiveTab("bulk")}
                             className={`px-6 py-3 text-sm font-medium rounded-xl transition-all duration-300 ${activeTab === "bulk"
-                                ? "bg-warm-brown text-white shadow-lg"
-                                : "text-warm-brown/60 hover:text-warm-brown hover:bg-warm-brown/5"
+                                ? "bg-white text-warm-brown/60 ring-1 ring-warm-brown/10 shadow-sm"
+                                : "text-warm-brown hover:text-warm-brown hover:bg-warm-brown/5"
                                 }`}
                         >
                             Bulk Upload

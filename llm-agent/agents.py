@@ -422,12 +422,19 @@ Present the final output clearly, starting with the phrase 'FINAL REPORT:' and f
 )
 
 # 5. User Proxy Agent - Handles tool execution and user interactions
-user_proxy_agent = UserProxyAgent(
+# Use a simple AssistantAgent as the proxy/tool-executor to avoid relying on
+# UserProxyAgent which may change between AutoGen releases. This AssistantAgent
+# will act as the participant that executes tool-backed tasks when selected.
+user_proxy_agent = AssistantAgent(
     name="Admin_User_Proxy",
     description="A proxy agent that executes tools and handles administrative tasks.",
-    human_input_mode="NEVER",  # Autonomous: No human input prompts; executes tools directly
-    code_execution_config=False,  # Disable code execution if not needed (avoids extra prompts)
-    max_consecutive_auto_reply=None  # Allow unlimited autonomous responses
+    model_client=model_client,
+    system_message=(
+        "You are an administrative proxy agent. When instructed by the orchestrator,"
+        " call the requested tools or perform administrative tasks. If a tool is not"
+        " available, respond with a clear error message."
+    ),
+    tools=[fetch_submission_data, score_mcqs, generate_question_from_ai, validate_question]
 )
 
 # 6. RAG-Enabled Agent - Handles knowledge base queries and context retrieval

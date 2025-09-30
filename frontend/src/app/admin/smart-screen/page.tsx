@@ -91,7 +91,20 @@ export default function SmartScreenPage() {
                 fd.append('skills', skills.join(', '))
             }
             const token = localStorage.getItem('adminToken')
-            const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            // SSRF mitigation: Only allow trusted API URLs
+            const ALLOWED_API_URLS = [
+                'http://localhost:8000',
+                'https://your-prod-api.com' // Add your real prod API URL(s) here
+            ]
+            let candidateBaseUrl = process.env.NEXT_PUBLIC_API_URL
+            let baseUrl = ALLOWED_API_URLS[0]
+            if (
+                candidateBaseUrl &&
+                typeof candidateBaseUrl === "string" &&
+                ALLOWED_API_URLS.includes(candidateBaseUrl)
+            ) {
+                baseUrl = candidateBaseUrl
+            }
             const resp = await fetch(`${baseUrl}/api/admin/smartscreen`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },

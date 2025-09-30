@@ -23,6 +23,7 @@ import string
 from database import CosmosDBService, get_cosmosdb_service
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
+import os
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -142,8 +143,25 @@ async def verify_candidate_access(
         ]
         submissions = await db.query_items("submissions", query, parameters)
         submission = submissions[0] if submissions else None
-        
         if not submission:
+            # Gate development fallback behind DEV_MOCK_FALLBACK env flag
+            if os.getenv("DEV_MOCK_FALLBACK", "false").lower() in ("1", "true", "yes") and login_code in mock_tests:
+                mock_entry = mock_tests[login_code]
+                synthesized = {
+                    "id": f"submission_{login_code}_{int(time.time())}",
+                    "assessment_id": mock_entry.get("id") or f"test_{login_code}",
+                    "candidate_id": candidate_info["candidate_id"],
+                    "status": "in_progress",
+                    "started_at": datetime.utcnow().isoformat(),
+                    "expires_at": (datetime.utcnow() + timedelta(minutes=mock_entry.get("duration_minutes", 60))).isoformat(),
+                    "answers": [],
+                    "proctoring_events": [],
+                    "submission_token": None,
+                    "finalized": False
+                }
+                # Do not persist to DB here; return synthesized submission to caller
+                return {**candidate_info, "submission": synthesized, "submission_id": synthesized["id"]}
+
             raise HTTPException(status_code=404, detail="Submission not found or access denied")
         
         # Check if test has expired
@@ -306,7 +324,24 @@ async def start_assessment(
         assessment = assessments[0] if assessments else None
         
         if not assessment:
-            raise HTTPException(status_code=404, detail="Assessment not found")
+            # Gate development fallback behind DEV_MOCK_FALLBACK env flag
+            if os.getenv("DEV_MOCK_FALLBACK", "false").lower() in ("1", "true", "yes"):
+                matched = None
+                for k, v in mock_tests.items():
+                    if v.get("id") == request.assessment_id or k == request.assessment_id:
+                        matched = v
+                        break
+                if matched:
+                    assessment = {
+                        "id": request.assessment_id,
+                        "title": matched.get("id") or f"Assessment {request.assessment_id}",
+                        "questions": [q.dict() for q in mock_questions],
+                        "duration": matched.get("duration_minutes", 60)
+                    }
+                else:
+                    raise HTTPException(status_code=404, detail="Assessment not found")
+            else:
+                raise HTTPException(status_code=404, detail="Assessment not found")
         
         # Update submission with candidate_id and start time
         submission_id = candidate_info["submission_id"]
@@ -331,11 +366,12 @@ async def start_assessment(
         expiration_time = start_time + timedelta(minutes=duration_minutes)
         
         # Return assessment with limited info for security
-        return StartAssessmentResponse(
-            submission_id=submission_id,
-            expiration_time=expiration_time,
-            duration_minutes=duration_minutes
-        )
+        # Use plain dict with aliased keys to avoid Pydantic response-model validation issues
+        return {
+            "submission_id": submission_id,
+            "expirationTime": expiration_time.isoformat() + "Z",
+            "durationMinutes": duration_minutes,
+        }
         
     except HTTPException:
         raise

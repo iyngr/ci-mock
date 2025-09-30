@@ -108,7 +108,8 @@ class TestInitiationRequestModel(BaseModel):
 async def initiate_test(
     request: TestInitiationRequestModel,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    x_source: Optional[str] = Header(None, alias="X-Source")
 ):
     """Create a test (submission) record for a candidate for a given assessment.
     This is a minimal reconstruction of the lost endpoint to unblock frontend usage.
@@ -123,6 +124,11 @@ async def initiate_test(
         login_code = secrets.token_hex(3)
         expires_at = datetime.utcnow() + timedelta(hours=24)
 
+        # Determine logical source (product context)
+        source_val = (x_source or "smart-mock").strip().lower()
+        if source_val not in {"smart-mock", "talens-interview"}:
+            source_val = "smart-mock"  # fallback to default
+
         submission_doc = {
             "id": test_id,
             "assessment_id": request.assessment_id,
@@ -134,6 +140,7 @@ async def initiate_test(
             "initiated_by": admin.get("email"),
             "login_code": login_code,
             "overall_score": None,
+            "source": source_val,
         }
         try:
             await db.create_item("submissions", submission_doc, partition_key=request.assessment_id)
@@ -145,6 +152,7 @@ async def initiate_test(
             "loginCode": login_code,
             "expiresAt": expires_at.isoformat(),
             "message": "Test created successfully",
+            "source": source_val,
         }
     except HTTPException:
         raise
@@ -285,7 +293,42 @@ async def initiate_test_alias(
         candidate_name=str(candidate_name) if candidate_name else None
     )
 
-    return await initiate_test(model, admin, db)
+    # Determine source from header or query param so it is forwarded to the
+    # canonical initiate_test handler. Frontend may include ?source=smart-mock
+    # or ?source=talens-interview (or set X-Source header). Validate values.
+    source_val = None
+    try:
+        hdr = request.headers.get("X-Source")
+        if hdr:
+            source_val = str(hdr).strip().lower()
+        else:
+            q = dict(request.query_params)
+            if "source" in q and q.get("source"):
+                source_val = str(q.get("source")).strip().lower()
+    except Exception:
+        source_val = None
+
+    if source_val and source_val not in {"smart-mock", "talens-interview"}:
+        source_val = None
+
+    # If an assessment was auto-created above, ensure we persist the source
+    # on that assessment document when possible. The auto-creation block set
+    # `assessment_id` and attempted to persist `assessment_doc` to the DB.
+    try:
+        # Attempt to patch the assessment document stored earlier in this
+        # function's scope. If it wasn't created or persisted, this will be
+        # a no-op.
+        if assessment_id and 'assessment_doc' in locals() and source_val:
+            assessment_doc['source'] = source_val
+            try:
+                await db.upsert_item(CONTAINER['ASSESSMENTS'], assessment_doc)
+            except Exception:
+                # Non-fatal: we only attempt to attach source for convenience
+                logger.debug(f"Could not upsert assessment with source: {assessment_id}")
+    except Exception:
+        pass
+
+    return await initiate_test(model, admin, db, x_source=source_val)
 
 
 @router.post("/tests/debug")
@@ -511,24 +554,32 @@ async def _background_enrich_and_index(db: CosmosDBService, question_doc: Dict[s
 @router.get("/dashboard")
 async def get_dashboard(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    source: Optional[str] = None
 ) -> dict:
     """Return dashboard statistics and recent submissions (normalized).
     Falls back to mock data ONLY on real exceptions (not on empty result sets).
     """
     try:
+        # Validate optional source filter
+        query_filter = {}
+        if source:
+            if source not in {"smart-mock", "talens-interview"}:
+                raise HTTPException(status_code=400, detail="Invalid source value")
+            query_filter["source"] = source
+
         try:
-            total_tests = await db.count_items("submissions")
+            total_tests = await db.count_items("submissions", query_filter if query_filter else None)
         except Exception as e:
             logger.warning(f"count_items total_tests failed: {e}")
             raise
         try:
-            completed_tests = await db.count_items("submissions", {"status": "completed"})
+            completed_tests = await db.count_items("submissions", {**({"status": "completed"} if not query_filter else {**query_filter, "status": "completed"})})
         except Exception as e:
             logger.warning(f"count_items completed_tests failed: {e}")
             completed_tests = 0
         try:
-            total_assessments = await db.count_items("assessments")
+            total_assessments = await db.count_items("assessments", query_filter if query_filter else None)
         except Exception as e:
             logger.warning(f"count_items total_assessments failed: {e}")
             total_assessments = 0
@@ -537,7 +588,7 @@ async def get_dashboard(
 
         # Recent submissions
         try:
-            raw_recent = await db.find_many("submissions", {}, limit=25)
+            raw_recent = await db.find_many("submissions", query_filter if query_filter else {}, limit=25)
             if raw_recent is None:
                 raw_recent = []
         except Exception as e:
@@ -581,13 +632,25 @@ async def get_dashboard(
 @router.get("/tests")
 async def get_tests(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    source: Optional[str] = None
 ) -> List[dict]:
-    """Get all submissions for admin dashboard"""
+    """Get all submissions for admin dashboard.
+
+    Optional query parameter `source` filters logical product context
+    (e.g., smart-mock, talens-interview). If omitted returns all.
+    """
     try:
-        # Query Cosmos DB for all submissions
-        submissions = await db.find_many("submissions", {}, limit=100)
+        query = {}
+        if source:
+            if source not in {"smart-mock", "talens-interview"}:
+                raise HTTPException(status_code=400, detail="Invalid source value")
+            query["source"] = source
+        # Query Cosmos DB for submissions
+        submissions = await db.find_many("submissions", query, limit=100)
         return submissions or []
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("get_tests failed, returning mock test summaries")
         # On failure only, return mock data
@@ -597,13 +660,25 @@ async def get_tests(
 @router.get("/submissions")
 async def get_all_submissions(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    source: Optional[str] = None
 ) -> List[Submission]:
-    """Get list of all assessment submissions"""
+    """Get list of assessment submissions.
+
+    Optional query parameter `source` filters logical product context
+    (e.g., smart-mock, talens-interview). If omitted returns all.
+    """
     try:
-        submissions_data = await db.find_many("submissions", {}, limit=1000)
+        query = {}
+        if source:
+            if source not in {"smart-mock", "talens-interview"}:
+                raise HTTPException(status_code=400, detail="Invalid source value")
+            query["source"] = source
+        submissions_data = await db.find_many("submissions", query, limit=1000)
         return [Submission(**sub) for sub in submissions_data]
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Failed to fetch submissions")
         raise HTTPException(status_code=500, detail="Failed to fetch submissions")
 
@@ -812,14 +887,21 @@ async def create_assessment_admin(
 async def get_detailed_report(
     result_id: str,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    source: Optional[str] = None
 ):
     """Return detailed report for a submission with normalized fields and lifecycle events.
 
     Removes unused personal placeholders and derives strengths / areas dynamically.
     """
     try:
-        submission = await db.find_one("submissions", {"id": result_id}) or await db.find_one("submissions", {"_id": result_id})
+        # If a source filter is provided, ensure it is valid and include it in the lookup
+        if source:
+            if source not in {"smart-mock", "talens-interview"}:
+                raise HTTPException(status_code=400, detail="Invalid source value")
+            submission = await db.find_one("submissions", {"id": result_id, "source": source}) or await db.find_one("submissions", {"_id": result_id, "source": source})
+        else:
+            submission = await db.find_one("submissions", {"id": result_id}) or await db.find_one("submissions", {"_id": result_id})
         if not submission:
             raise HTTPException(status_code=404, detail="Submission not found")
 

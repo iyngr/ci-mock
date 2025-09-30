@@ -63,7 +63,7 @@ try:
     database = client.get_database_client(DATABASE_NAME)
     submissions_container = database.get_container_client("Submissions")
     assessments_container = database.get_container_client("Assessments")
-    generated_questions_container = database.get_container_client("GeneratedQuestions")
+    generated_questions_container = database.get_container_client("generated_questions")
     print(f"Initialized transactional Cosmos client for database: {DATABASE_NAME}")
 except Exception as e:
     print(f"Warning: Could not initialize transactional Cosmos DB client: {e}")
@@ -157,7 +157,7 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
     # For now, we simulate calling OpenAI and returning a new question.
     
     # This is where you would call the Question_Generator_Agent. For now we
-    # generate the question structure and attempt to persist it to GeneratedQuestions
+    # generate the question structure and attempt to persist it to generated_questions
     ai_question = {
         "text": f"This is a newly generated {difficulty} {question_type} question about {skill}.",
         "prompt_hash": prompt_hash,
@@ -169,15 +169,32 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
         "correct_answer": None,
     }
 
+    # Transform to Cosmos/Pydantic alias names expected by GeneratedQuestion model
+    cosmos_doc = {
+        # id: prefer any provided id, else build from hash (DB layer will also generate if missing)
+        "id": ai_question.get("id") or f"gq_{prompt_hash[:12]}",
+        "promptHash": ai_question["prompt_hash"],
+        "skill": ai_question["skill"],
+        "questionType": ai_question["question_type"],
+        "difficulty": ai_question["difficulty"],
+        "generatedText": ai_question["text"],
+        "originalPrompt": ai_question.get("original_prompt", ai_question["text"]),
+        "generatedBy": os.getenv("AI_GENERATOR_NAME", "gpt-5-mini"),
+        # Type specific optional fields
+        "generatedOptions": ai_question.get("options") or None,
+        "generatedCorrectAnswer": ai_question.get("correct_answer")
+    }
+
     # Attempt to persist to generated_questions_container when available
     saved = None
     try:
         if hasattr(generated_questions_container, "upsert_item"):
-            saved = generated_questions_container.upsert_item(ai_question)
-            print(f"TOOL: Saved generated question to GeneratedQuestions (id={saved.get('id')})")
+            # Use the mapped cosmos_doc with aliases and explicit id
+            saved = generated_questions_container.upsert_item(cosmos_doc)
+            print(f"TOOL: Saved generated question to generated_questions (id={saved.get('id')})")
         elif hasattr(generated_questions_container, "create_item"):
-            saved = generated_questions_container.create_item(ai_question)
-            print(f"TOOL: Created generated question in GeneratedQuestions (id={saved.get('id')})")
+            saved = generated_questions_container.create_item(cosmos_doc)
+            print(f"TOOL: Created generated question in generated_questions (id={saved.get('id')})")
     except Exception as e:
         print(f"Warning: could not persist generated question: {e}")
 
@@ -271,7 +288,7 @@ def generate_question_from_ai(skill: str, question_type: str, difficulty: str) -
 
 # Per-phase validator fragments removed. A single `validate_question` implementation
 # is defined below (after the RAG retrieval function) and performs:
-# 1) exact content match against KnowledgeBase/GeneratedQuestions
+# 1) exact content match against KnowledgeBase/generated_questions
 # 2) semantic similarity via embeddings (when available)
 # 3) token-overlap heuristic fallback
 
@@ -580,7 +597,7 @@ def validate_question(question_text: str) -> dict:
     and vector similarity detection.
 
     Steps:
-      1) Exact content match against KnowledgeBase and GeneratedQuestions
+      1) Exact content match against KnowledgeBase and generated_questions
       2) Semantic similarity check using embeddings (when available)
       3) Token-overlap heuristic fallback
 
@@ -594,7 +611,7 @@ def validate_question(question_text: str) -> dict:
         # Compute a stable hash for the question for deduplication and telemetry
         question_hash = hashlib.sha256((question_text or "").encode()).hexdigest()
 
-        # 1) Exact match: check KnowledgeBase first, then GeneratedQuestions
+        # 1) Exact match: check KnowledgeBase first, then generated_questions
         existing_questions = []
 
         kb = rag_knowledge_container if rag_knowledge_container is not None else None
@@ -615,7 +632,7 @@ def validate_question(question_text: str) -> dict:
                 # Ignore KB exact-match errors and continue to other checks
                 pass
 
-        # Also check GeneratedQuestions container as a fallback exact-match
+        # Also check generated_questions container as a fallback exact-match
         if not existing_questions and generated_questions_container is not None and hasattr(generated_questions_container, "query_items"):
             try:
                 safe_text = (question_text or "").replace("'", "''")
@@ -683,7 +700,7 @@ def validate_question(question_text: str) -> dict:
         except Exception:
             query_embedding = None
 
-        # Gather candidates from KnowledgeBase (and fall back to GeneratedQuestions)
+        # Gather candidates from KnowledgeBase (and fall back to generated_questions)
         candidates = []
         if kb is not None and hasattr(kb, "query_items"):
             try:

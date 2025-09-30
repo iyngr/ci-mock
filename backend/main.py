@@ -184,6 +184,8 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://localhost:3002",
+        "http://localhost:3005",  # Admin app
+        "http://localhost:3010",  # Portal app
     ],
     allow_credentials=True,
     allow_methods=["*"],

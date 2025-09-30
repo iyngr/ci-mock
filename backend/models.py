@@ -587,7 +587,8 @@ class Submission(CosmosDocument):
                 "autoSubmitted": False,
                 "violationCount": 2,
                 "autoSubmitReason": None,
-                "autoSubmitTimestamp": None
+                "autoSubmitTimestamp": None,
+                "source": "smart-mock"
             }
         }
     )
@@ -611,6 +612,8 @@ class Submission(CosmosDocument):
     # Assessment session management
     login_code: str = Field(..., alias="loginCode", description="Unique code for candidate access")
     created_by: str = Field(..., alias="createdBy", description="Admin who initiated this assessment")
+    # Multi-tenant logical source (portal context) e.g. smart-mock | talens-interview
+    source: Literal["smart-mock", "talens-interview"] = Field("smart-mock", description="Logical product/source this submission belongs to")
     
     @computed_field
     @property

@@ -258,6 +258,17 @@ class CosmosDBService:
         # Ensure item is JSON-serializable by converting datetimes
         serializable_item = self._serialize_for_cosmos(item)
 
+        # Normalize id: accept caller-provided '_id' or 'id', else generate one here
+        if serializable_item.get('id') is None and serializable_item.get('_id') is not None:
+            serializable_item['id'] = serializable_item.pop('_id')
+        if serializable_item.get('id') is None:
+            try:
+                import uuid
+                serializable_item['id'] = str(uuid.uuid4())
+            except Exception:
+                # Fallback to a simple timestamp-based id if uuid isn't available
+                serializable_item['id'] = f"auto-{int(time.time()*1000)}"
+
         async def _create_operation():
             # Do not forward partition_key as a keyword to the SDK transport.
             # The Cosmos SDK will infer the partition from the item body when
@@ -334,9 +345,28 @@ class CosmosDBService:
             # Serialize datetimes/complex types before sending to Cosmos
             serializable_item = self._serialize_for_cosmos(item)
 
+            # Normalize id similarly to create_item: accept '_id' or generate one
+            if serializable_item.get('id') is None and serializable_item.get('_id') is not None:
+                serializable_item['id'] = serializable_item.pop('_id')
+            if serializable_item.get('id') is None:
+                try:
+                    import uuid
+                    serializable_item['id'] = str(uuid.uuid4())
+                except Exception:
+                    serializable_item['id'] = f"auto-{int(time.time()*1000)}"
+
             # Avoid passing partition_key into the SDK call as a kwarg; let
             # the SDK infer the partition from the item body. This avoids
-            # compatibility issues across SDK/transport layers.
+            # compatibility issues across SDK/transport layers. However, ensure
+            # the partition key value is present on the item body for correct
+            # routing by the server.
+            if partition_key is not None and partition_key not in serializable_item:
+                # Try to set the partition key field on the item if possible
+                # by inferring from COLLECTIONS metadata (if known) or using 'skill'
+                inferred_pk = self.infer_partition_key(container_name, serializable_item)
+                if inferred_pk is not None:
+                    serializable_item[inferred_pk] = partition_key
+
             response = container.upsert_item(body=serializable_item)
             logger.info(f"Upserted item in '{container_name}': {response.get('id')}")
             return response

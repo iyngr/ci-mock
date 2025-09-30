@@ -1,25 +1,17 @@
-# Frontend (Next.js 14 Monorepo Apps)
+# Frontend (Next.js 14)
 
-TypeScript / App Router UI powering multiple product experiences within the Talens Suite:
-
-* `portal` – Unified landing & candidate modality chooser (Talens vs Smart Mock)
-* `talens` – Live / real-time interview (future expansion)
-* `smartmock` – Agentic assessment & practice environment
-* `admin` – Cross-product administrative console (context-aware)
-* Shared UI library in `packages/ui`
+TypeScript / App Router UI for Candidate & Admin workflows of the AI Technical Assessment Platform.
 
 ---
 ## 1. Responsibilities
 | Domain    | Responsibilities                                                                                                                                         |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Candidate | Login, instructions, assessment workspace (MCQ / Descriptive / Coding), live code execution (Judge0), timer display, navigation, submission confirmation |
-| Admin     | Dashboard KPIs, initiate tests, manage questions (single + bulk AI enhancement), review submissions & reports (context filtered by product source)      |
+| Admin     | Dashboard KPIs, initiate tests, manage questions (single + bulk AI enhancement), review submissions & reports                                            |
 | RAG/AI UX | Optional hooks to request AI-generated questions; pending advanced retrieval UX                                                                          |
 | Integrity | Fullscreen prompt + tab switch detection (proctoring signals sent to backend)                                                                            |
 
 The backend is authoritative for: timing, scoring, final submission state, and RAG retrieval. Frontend never mutates canonical timers directly.
-
-
 
 ---
 ## 2. Tech Stack
@@ -34,27 +26,6 @@ The backend is authoritative for: timing, scoring, final submission state, and R
 ---
 ## 3. Project Structure (Selected)
 ```
-apps/
-	portal/        # Unified landing & candidate choice modal
-	admin/         # Context-aware admin (source toggle: smart-mock | talens)
-	smartmock/     # Traditional assessment UX
-	talens/        # Real-time / interview (scaffolding)
-packages/
-	ui/            # Shared component library consumed by all apps
-```
-
-Legacy single-app `src/app` references have been replaced by per-app routing roots.
-
-### Admin Source Context
-The admin console exposes a source toggle (Smart Mock / Talens). This sets a global Zustand store value which:
-* Appends `?source=<canonical>` to all admin API requests automatically
-* Sends `X-Source` header on creation endpoints (e.g. test initiation)
-* Canonical backend values: `smart-mock`, `talens-interview` (frontend maps `talens` → `talens-interview`)
-
-### Candidate Modal (Portal)
-Portal landing page presents a modal letting candidates choose their experience. Routes determined by env vars:
-* `NEXT_PUBLIC_TALENS_URL` (defaults to `/talens`)
-* `NEXT_PUBLIC_SMART_MOCK_URL` (defaults to `/smartmock`)
 src/
 	app/
 		admin/              # Admin routes (dashboard, initiate-test, reports, add-questions)
@@ -76,12 +47,6 @@ Create `frontend/.env.local`:
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 `NEXT_PUBLIC_API_URL` is the only required variable for local dev. In production provide the deployed backend base URL (HTTPS).
-
-Optional (multi-app routing overrides):
-```bash
-NEXT_PUBLIC_TALENS_URL=/talens
-NEXT_PUBLIC_SMART_MOCK_URL=/smartmock
-```
 
 Optional future additions (not yet required):
 * `NEXT_PUBLIC_FEATURE_RAG=true` – enable RAG UI affordances when backend vector features are live.
@@ -149,7 +114,7 @@ Primary options:
 * Azure Static Web Apps (if consolidating on Azure)
 * Azure Container Apps (if container uniformity desired)
 
-Remember to set `NEXT_PUBLIC_API_URL` to the backend public URL at build time. For multi-product deployments ensure source parameter is respected by all new admin endpoints.
+Remember to set `NEXT_PUBLIC_API_URL` to the backend public URL at build time.
 
 ---
 ## 12. Contributing

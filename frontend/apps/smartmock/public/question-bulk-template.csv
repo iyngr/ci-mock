@@ -1,0 +1,5 @@
+text,type,tags,options,correct_answer,starter_code,test_cases,programming_language,rubric
+What is the output of print(len(set([1,2,2,3])))?,mcq,python|sets,1|2|3|Error,b,,,,
+Which HTTP method is idempotent?,mcq,web|http,POST|GET|PATCH|CONNECT,b,,,,
+Implement a function to reverse a string.,coding,algorithms|strings,,,"input:hello|expected:olleh|input:abc|expected:cba",python,
+Describe the difference between a list and a tuple in Python,descriptive,python|core,,,,,,Lists are mutable; tuples are immutable and hashable when containing hashable elements.

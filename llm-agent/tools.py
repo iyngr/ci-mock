@@ -710,35 +710,138 @@ def validate_question(question_text: str) -> dict:
             except Exception:
                 pass
 
-        # 2a) If we have embeddings, compute cosine similarity
-        if query_embedding and any(c.get("embedding") for c in candidates):
-            import math
+        # 2a) If we have embeddings, prefer server-side vector search (VectorDistance)
+        # This is more efficient at scale. If vector search is unavailable or fails,
+        # fall back to local cosine similarity computation over candidates.
+        if query_embedding:
+            threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.75'))
+            try:
+                # Attempt Cosmos VectorDistance query (TOP K) scoped to candidates/skill when possible
+                kb = kb if 'kb' in locals() and kb is not None else None
+                if kb is None and database is not None:
+                    try:
+                        kb = database.get_container_client("KnowledgeBase")
+                    except Exception:
+                        kb = None
 
-            def cosine(a, b):
-                dot = sum(x * y for x, y in zip(a, b))
-                norm_a = math.sqrt(sum(x * x for x in a))
-                norm_b = math.sqrt(sum(x * x for x in b))
-                if norm_a == 0 or norm_b == 0:
-                    return 0.0
-                return dot / (norm_a * norm_b)
+                if kb is not None:
+                    # Use TOP K vector search to get closest documents (reduce RU cost)
+                    K = int(os.getenv('DEDUP_VECTOR_TOP_K', '50'))
+                    similarity_fn = 'VectorDistance'
+                    # NOTE: validate_question does not know the 'skill' partition key.
+                    # Run an unpartitioned TOP-K vector search as a conservative dedupe step.
+                    vector_search_query = f"""
+                    SELECT TOP {K} c.id, c.content, c.embedding, {similarity_fn}(c.embedding, @queryEmbedding) AS score
+                    FROM c
+                    ORDER BY {similarity_fn}(c.embedding, @queryEmbedding)
+                    """
+                    parameters = [{"name": "@queryEmbedding", "value": query_embedding}]
+                    iterator = kb.query_items(query=vector_search_query, parameters=parameters, enable_cross_partition_query=True)
 
-            threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.80'))
-            similar_found = []
-            for cand in candidates:
-                emb = cand.get("embedding")
-                if not emb:
-                    continue
+                    items = list(iterator)
+                    # Cosmos 'VectorDistance' may be a distance (smaller=closer) depending on deployment.
+                    # We'll interpret scores conservatively: treat higher absolute closeness as relevant.
+                    similar_found = []
+                    for it in items:
+                        score = it.get('score')
+                        # If VectorDistance is a distance metric (smaller is closer), invert to similarity
+                        if score is None:
+                            # fallback: compute local cosine if embedding exists
+                            emb = it.get('embedding')
+                            if emb:
+                                from embeddings import cosine_similarity
+                                s = cosine_similarity(query_embedding, emb)
+                                if s >= threshold:
+                                    similar_found.append({"id": it.get('id'), "text": it.get('content'), "similarity_score": s})
+                            continue
+
+                        # Heuristic: if score is in [0,1] assume similarity; if >1 or very small assume distance
+                        try:
+                            s = float(score)
+                        except Exception:
+                            continue
+
+                        # If the metric looks like a distance (small numbers close to 0), convert
+                        if s <= 1.0 and s >= -1.0:
+                            # treat as similarity-like (higher is better)
+                            if s >= threshold:
+                                similar_found.append({"id": it.get('id'), "text": it.get('content'), "similarity_score": s})
+                        else:
+                            # treat as distance (smaller is better) -> convert to similarity heuristic
+                            # this maps distance in [0, +inf) to similarity in (1, -inf) loosely; we only use threshold check
+                            # smaller distances are more similar; accept if distance <= (1 - threshold) heuristic
+                            distance = s
+                            if distance <= (1.0 - threshold):
+                                # approximate a similarity score for reporting
+                                approx_sim = max(0.0, 1.0 - distance)
+                                similar_found.append({"id": it.get('id'), "text": it.get('content'), "similarity_score": approx_sim})
+
+                    if similar_found:
+                        similar_found.sort(key=lambda x: x["similarity_score"], reverse=True)
+                        print(f"Found {len(similar_found)} similar questions (vector search)")
+                        return {"status": "similar_duplicate", "similar_questions": similar_found, "similarity_threshold": threshold}
+
+            except Exception:
+                # Fall back to local cosine path below
+                pass
+
+            # Local fallback: compute cosine similarity over fetched candidates
+                # Local fallback: use the embeddings helper's batch similarity function.
+                # This helper uses NumPy when available (fast path) and falls back to
+                # a pure-Python implementation otherwise.
                 try:
-                    score = cosine(query_embedding, emb)
+                    from embeddings import cosine_similarities_batch
                 except Exception:
-                    continue
-                if score >= threshold:
-                    similar_found.append({"id": cand.get("id"), "text": cand.get("text"), "similarity_score": score})
+                    cosine_similarities_batch = None
 
-            if similar_found:
-                similar_found.sort(key=lambda x: x["similarity_score"], reverse=True)
-                print(f"Found {len(similar_found)} similar questions (embeddings)")
-                return {"status": "similar_duplicate", "similar_questions": similar_found, "similarity_threshold": threshold}
+                threshold = float(os.getenv('SIMILARITY_THRESHOLD', '0.75'))
+                similar_found = []
+
+                # Collect candidates that have embeddings
+                emb_candidates = []
+                emb_candidate_map = []  # map index -> candidate
+                for cand in candidates:
+                    emb = cand.get('embedding')
+                    if emb and isinstance(emb, (list, tuple)) and len(emb) > 0:
+                        emb_candidates.append(emb)
+                        emb_candidate_map.append(cand)
+
+                if emb_candidates and cosine_similarities_batch is not None:
+                    try:
+                        scores = cosine_similarities_batch(emb_candidates, query_embedding)
+                        for cand, score in zip(emb_candidate_map, scores):
+                            try:
+                                s = float(score)
+                            except Exception:
+                                continue
+                            if s >= threshold:
+                                similar_found.append({"id": cand.get('id'), "text": cand.get('text'), "similarity_score": s})
+                    except Exception:
+                        # If batch computation fails, fall back to per-item computation below
+                        pass
+
+                # If NumPy helper wasn't available or produced no results, fall back to per-item safe computation
+                if not similar_found and emb_candidates:
+                    # safe per-item fallback (pure-Python)
+                    import math
+                    for cand in emb_candidate_map:
+                        emb = cand.get('embedding')
+                        try:
+                            dot = sum(x * y for x, y in zip(query_embedding, emb))
+                            na = math.sqrt(sum(x * x for x in query_embedding))
+                            nb = math.sqrt(sum(x * x for x in emb))
+                            if na == 0.0 or nb == 0.0:
+                                continue
+                            s = dot / (na * nb)
+                        except Exception:
+                            continue
+                        if s >= threshold:
+                            similar_found.append({"id": cand.get('id'), "text": cand.get('text'), "similarity_score": s})
+
+                if similar_found:
+                    similar_found.sort(key=lambda x: x['similarity_score'], reverse=True)
+                    print(f"Found {len(similar_found)} similar questions (embeddings - local)")
+                    return {"status": "similar_duplicate", "similar_questions": similar_found, "similarity_threshold": threshold}
 
         # 3) Fallback: token overlap heuristic
         import re

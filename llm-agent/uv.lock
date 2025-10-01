@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1104,6 +1104,7 @@ dependencies = [
     { name = "langchain-azure-ai" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
+    { name = "numpy" },
     { name = "promptflow" },
     { name = "promptflow-tools" },
     { name = "promptflow-tracing" },
@@ -1135,6 +1136,7 @@ requires-dist = [
     { name = "langchain-azure-ai", specifier = ">=0.1.0" },
     { name = "langchain-core", specifier = ">=0.2.0" },
     { name = "langchain-openai", specifier = ">=0.0.0" },
+    { name = "numpy", specifier = ">=2.3.2" },
     { name = "promptflow", specifier = ">=1.18.1" },
     { name = "promptflow-tools", specifier = ">=1.6.1" },
     { name = "promptflow-tracing", specifier = ">=1.18.1" },

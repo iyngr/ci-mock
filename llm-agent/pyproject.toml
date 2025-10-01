@@ -22,6 +22,7 @@ dependencies = [
     "ruff>=0.12.11",
     "promptflow>=1.18.1",
     "promptflow-tools>=1.6.1",
+    "numpy>=2.3.2",
 ]
 
 [build-system]

@@ -1,4 +1,5 @@
 from datetime import datetime
+from datetime_utils import now_ist
 from enum import Enum
 from typing import List, Optional, Any, Dict, Union, Annotated, Literal
 from pydantic import BaseModel, Field, ConfigDict, computed_field
@@ -103,7 +104,7 @@ class User(CosmosDocument):
     email: str = Field(..., description="Email address")
     role: UserRole = Field(..., description="User role: admin or candidate")
     developer_role: Optional[DeveloperRole] = Field(None, alias="developerRole", description="Role candidate is interviewing for (only for candidates)")
-    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    created_at: datetime = Field(default_factory=now_ist, alias="createdAt")
     
     @computed_field
     @property
@@ -207,7 +208,7 @@ class Assessment(CosmosDocument):
     duration: Annotated[int, Field(gt=0, le=480)] = Field(..., description="Duration in minutes (1-480 max 8 hours)")
     target_role: Optional[DeveloperRole] = Field(None, alias="targetRole", description="Target developer role for this assessment")
     created_by: str = Field(..., alias="createdBy", description="User ID of the admin who created this")
-    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    created_at: datetime = Field(default_factory=now_ist, alias="createdAt")
     questions: Annotated[List[QuestionUnion], Field(min_length=1, max_length=50)] = Field(default_factory=list, description="1-50 polymorphic questions")
     
     @computed_field
@@ -269,7 +270,7 @@ class GeneratedQuestion(CosmosDocument):
     
     # Metadata
     generated_by: str = Field(..., alias="generatedBy", description="AI model used for generation (e.g., 'gpt-5-mini')")
-    generation_timestamp: datetime = Field(default_factory=datetime.utcnow, alias="generationTimestamp")
+    generation_timestamp: datetime = Field(default_factory=now_ist, alias="generationTimestamp")
     usage_count: int = Field(default=0, alias="usageCount", description="Number of times this cached question was used")
     quality_score: Optional[float] = Field(None, alias="qualityScore", description="AI-assessed quality score (0-1)")
     
@@ -367,7 +368,7 @@ class BulkUploadSession(CosmosDocument):
     """
     filename: Optional[str] = Field(None, description="Original uploaded filename")
     created_by: Optional[str] = Field(..., description="Admin who uploaded this session (used as partition key)")
-    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    created_at: datetime = Field(default_factory=now_ist, alias="createdAt")
     validated: List[BulkUploadRow] = Field(default_factory=list)
     flagged: List[BulkUploadRow] = Field(default_factory=list)
     # session state controls flow: pending -> importing -> done
@@ -421,7 +422,7 @@ class KnowledgeBaseEntry(CosmosDocument):
     
     # Searchable metadata and timestamps
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Searchable metadata (tags, type, etc.)")
-    indexed_at: datetime = Field(default_factory=datetime.utcnow, alias="indexedAt")
+    indexed_at: datetime = Field(default_factory=now_ist, alias="indexedAt")
     last_accessed: Optional[datetime] = Field(None, alias="lastAccessed", description="Last time this entry was accessed in search")
     access_count: int = Field(default=0, alias="accessCount", description="Number of times accessed in searches")
     
@@ -472,7 +473,7 @@ class BulkQuestionUpload(CosmosDocument):
     
     session_id: str = Field(..., alias="sessionId", description="Unique session identifier")
     uploaded_by: str = Field(..., alias="uploadedBy", description="Admin user who initiated the upload")
-    upload_timestamp: datetime = Field(default_factory=datetime.utcnow, alias="uploadTimestamp")
+    upload_timestamp: datetime = Field(default_factory=now_ist, alias="uploadTimestamp")
     
     # File information
     filename: str = Field(..., description="Original filename")
@@ -732,7 +733,7 @@ class EvaluationRecord(CosmosDocument):
     aggregates: Dict[str, Any] = Field(default_factory=dict, description="Aggregate scores (total_points, max_points, percentage)")
     cost_breakdown: Dict[str, Any] = Field(default_factory=dict, alias="costBreakdown")
     re_evaluation_of: Optional[str] = Field(None, alias="reEvaluationOf", description="Previous evaluation id if this is a rescore")
-    created_at: datetime = Field(default_factory=datetime.utcnow, alias="createdAt")
+    created_at: datetime = Field(default_factory=now_ist, alias="createdAt")
 
     @computed_field
     @property
@@ -918,7 +919,7 @@ class RAGQueryLog(CosmosDocument):
     """
     # telemetry fields
     id: str = Field(..., description="Unique telemetry id")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="ISO timestamp of the query")
+    timestamp: datetime = Field(default_factory=now_ist, description="ISO timestamp of the query")
     question: Optional[str] = Field(None, description="Original question text")
     assessment_id: Optional[str] = Field(None, alias="assessmentId", description="Assessment id to partition by when available")
     skill: Optional[str] = Field(None, description="Skill context if supplied")

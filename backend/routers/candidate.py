@@ -24,6 +24,7 @@ from database import CosmosDBService, get_cosmosdb_service
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 import os
+from datetime_utils import now_ist, now_ist_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -40,9 +41,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = now_ist() + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = now_ist() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -152,8 +153,8 @@ async def verify_candidate_access(
                     "assessment_id": mock_entry.get("id") or f"test_{login_code}",
                     "candidate_id": candidate_info["candidate_id"],
                     "status": "in_progress",
-                    "started_at": datetime.utcnow().isoformat(),
-                    "expires_at": (datetime.utcnow() + timedelta(minutes=mock_entry.get("duration_minutes", 60))).isoformat(),
+                    "started_at": now_ist().isoformat(),
+                    "expires_at": (now_ist() + timedelta(minutes=mock_entry.get("duration_minutes", 60))).isoformat(),
                     "answers": [],
                     "proctoring_events": [],
                     "submission_token": None,
@@ -168,7 +169,7 @@ async def verify_candidate_access(
         expires_at_str = submission.get("expires_at")
         if expires_at_str:
             expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-            if expires_at < datetime.utcnow():
+            if expires_at < now_ist():
                 raise HTTPException(status_code=410, detail="Assessment has expired")
         
         # Check if already completed
@@ -185,13 +186,13 @@ async def verify_candidate_access(
 # Helper function to create submission instance
 def create_submission_instance(assessment_id: str, candidate_id: str, login_code: str, created_by: str) -> Submission:
     """Create a new Submission instance with proper validation"""
-    expiration_time = datetime.utcnow() + timedelta(hours=2)  # Default 2 hour expiration
+    expiration_time = now_ist() + timedelta(hours=2)  # Default 2 hour expiration
     
     return Submission(
         assessment_id=assessment_id,
         candidate_id=candidate_id,
         status=SubmissionStatus.IN_PROGRESS,
-        start_time=datetime.utcnow(),
+    start_time=now_ist(),
         expiration_time=expiration_time,
         login_code=login_code,
         created_by=created_by,
@@ -295,7 +296,7 @@ async def start_assessment(
         # In development mode without database, return mock response
         if db is None:
             submission_id = candidate_info["submission_id"]
-            expiration_time = datetime.utcnow() + timedelta(minutes=60)
+            expiration_time = now_ist() + timedelta(minutes=60)
             submission_token = secrets.token_urlsafe(24)
             # Create submission in mock storage for development
             mock_submissions[submission_id] = {
@@ -303,7 +304,7 @@ async def start_assessment(
                 "assessment_id": request.assessment_id,
                 "candidate_id": request.candidate_id,
                 "status": "in-progress",
-                "started_at": datetime.utcnow(),
+                "started_at": now_ist(),
                 "expiration_time": expiration_time,
                 "answers": [],
                 "proctoring_events": [],
@@ -349,7 +350,7 @@ async def start_assessment(
         
         update_data = {
             "candidate_id": candidate_id,  # Critical: Link submission to candidate
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": now_ist().isoformat(),
             "status": "in_progress"
         }
         
@@ -362,7 +363,7 @@ async def start_assessment(
         
         # Calculate expiration time
         duration_minutes = assessment.get("duration", 60)
-        start_time = datetime.utcnow()
+        start_time = now_ist()
         expiration_time = start_time + timedelta(minutes=duration_minutes)
         
         # Return assessment with limited info for security
@@ -675,8 +676,8 @@ async def autosave_assessment(
             "id": submission_id,
             "candidate_id": candidate_info["candidate_id"],
             "status": "in-progress",
-            "started_at": datetime.utcnow(),
-            "expiration_time": datetime.utcnow() + timedelta(hours=1),
+            "started_at": now_ist(),
+            "expiration_time": now_ist() + timedelta(hours=1),
             "answers": [],
             "proctoring_events": []
         }
@@ -692,7 +693,7 @@ async def autosave_assessment(
     # Append new proctoring events
     if request.proctoring_events:
         sub.setdefault("proctoring_events", []).extend([e.model_dump() for e in request.proctoring_events])
-    sub["last_autosave"] = datetime.utcnow().isoformat() + "Z"
+    sub["last_autosave"] = now_ist().isoformat() + "Z"
 
     return {"success": True, "savedAt": sub["last_autosave"], "answerCount": len(sub["answers"]) }
 
@@ -709,12 +710,12 @@ async def submit_assessment(
     # In development mode, verify the submission exists (or create it if not)
     if submission_id not in mock_submissions:
         # Create mock submission for development
-        expiration_time = datetime.utcnow() + timedelta(hours=1)  # 1 hour from now
+        expiration_time = now_ist() + timedelta(hours=1)  # 1 hour from now
         mock_submissions[submission_id] = {
             "id": submission_id,
             "candidate_id": candidate_info["candidate_id"],
             "status": "in-progress",
-            "started_at": datetime.utcnow(),
+            "started_at": now_ist(),
             "expiration_time": expiration_time,
             "answers": [],
             "proctoring_events": []
@@ -727,7 +728,7 @@ async def submit_assessment(
         raise HTTPException(status_code=403, detail="Access denied to this assessment")
     
     # Check if submission has expired
-    if datetime.utcnow() > submission["expiration_time"]:
+    if now_ist() > submission["expiration_time"]:
         raise HTTPException(status_code=400, detail="Assessment has expired")
     
     # Check if already completed
@@ -748,7 +749,7 @@ async def submit_assessment(
     if request.proctoring_events:
         submission["proctoring_events"].extend([event.dict() for event in request.proctoring_events])
     submission["status"] = "completed"
-    submission["submitted_at"] = datetime.utcnow()
+    submission["submitted_at"] = now_ist()
     submission["finalized"] = True
     
     # Save updated submission (in production, update database)

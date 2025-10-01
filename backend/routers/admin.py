@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, BackgroundTasks, Request
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
+import uuid
+import re
 import logging
 import secrets
 import csv
@@ -15,6 +17,7 @@ from pydantic import BaseModel
 from models import AdminLoginRequest, Submission
 from database import CosmosDBService
 from constants import normalize_skill, CONTAINER
+from datetime_utils import now_ist, now_ist_iso
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -38,6 +41,53 @@ async def get_cosmosdb() -> CosmosDBService:
         async def auto_create_item(self,*a,**k): return {}
         async def query_items(self,*a,**k): return []
     return MockDB()
+
+
+def sanitize_tags_input(tags: List[str]) -> Tuple[List[str], Optional[str]]:
+    """Normalize and validate tags server-side to mirror frontend rules.
+
+    Rules:
+    - Trim whitespace
+    - Replace internal whitespace with hyphens
+    - Replace non-alnum/hyphen chars with hyphen
+    - Collapse consecutive hyphens
+    - Trim leading/trailing hyphens
+    - Truncate each tag to 100 chars (report warning)
+    - Deduplicate case-insensitively, preserve order
+    Returns (normalized_tags, warning_message_or_None)
+    """
+    if not tags:
+        return [], None
+    seen = set()
+    out = []
+    warning = None
+    for raw in tags:
+        if raw is None:
+            continue
+        t = str(raw).strip()
+        if not t:
+            continue
+        # whitespace -> hyphens
+        t = re.sub(r"\s+", "-", t)
+        # replace invalid chars with hyphen
+        t = re.sub(r"[^A-Za-z0-9-]", "-", t)
+        # collapse consecutive hyphens
+        t = re.sub(r"-+", "-", t)
+        # trim leading/trailing hyphens
+        t = re.sub(r"^-+|-+$", "", t)
+        if not t:
+            continue
+        if len(t) > 100:
+            t = t[:100]
+            t = re.sub(r"^-+|-+$", "", t)
+            warning = "Some tags were truncated to 100 characters."
+        low = t.lower()
+        if low not in seen:
+            seen.add(low)
+            out.append(t)
+    if not out and tags and not warning:
+        warning = "Tags must contain letters, numbers or hyphens."
+    return out, warning
 
 async def verify_admin_token(authorization: str = Header(None)) -> dict:
     if not authorization:
@@ -122,7 +172,7 @@ async def initiate_test(
 
         test_id = f"test_{secrets.token_urlsafe(8)}"
         login_code = secrets.token_hex(3)
-        expires_at = datetime.utcnow() + timedelta(hours=24)
+        expires_at = now_ist() + timedelta(hours=24)
 
         # Determine logical source (product context)
         source_val = (x_source or "smart-mock").strip().lower()
@@ -135,7 +185,7 @@ async def initiate_test(
             "candidate_email": email_raw,
             "candidate_name": request.candidate_name,
             "status": "pending",
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": now_ist().isoformat(),
             "expires_at": expires_at.isoformat(),
             "initiated_by": admin.get("email"),
             "login_code": login_code,
@@ -250,7 +300,7 @@ async def initiate_test_alias(
                         "duration": int(duration_guess) if isinstance(duration_guess, (int, float, str)) else 60,
                         "target_role": role_guess,
                         "created_by": admin.get("admin_id"),
-                        "created_at": datetime.utcnow().isoformat(),
+                        "created_at": now_ist().isoformat(),
                         "questions": []
                     }
                     try:
@@ -744,7 +794,7 @@ async def get_all_assessments(
         created_by = item.get("created_by") or item.get("createdBy") or admin.get("admin_id") or "system"
         created_at = item.get("created_at") or item.get("createdAt")
         if not created_at:
-            created_at = datetime.utcnow().isoformat()
+            created_at = now_ist().isoformat()
 
         # Normalize questions
         questions = item.get("questions") or []
@@ -833,7 +883,7 @@ async def create_assessment_admin(
                         "generated_text": generated_text,
                         "original_prompt": f"Generate a {difficulty} {qtype} question for skill {skill}",
                         "generated_by": ai_resp.get("model", "llm-agent"),
-                        "generation_timestamp": datetime.utcnow().isoformat()
+                        "generation_timestamp": now_ist().isoformat()
                     }
 
                     try:
@@ -860,7 +910,7 @@ async def create_assessment_admin(
             "duration": request.duration,
             "target_role": request.target_role,
             "created_by": admin["admin_id"],
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": now_ist().isoformat(),
             "questions": questions_list
         }
 
@@ -965,7 +1015,7 @@ async def get_detailed_report(
         if completed_at:
             lifecycle_events.append({"event": "completed", "timestamp": completed_at})
         if status_raw == "expired":
-            lifecycle_events.append({"event": "expired", "timestamp": completed_at or datetime.utcnow().isoformat()})
+            lifecycle_events.append({"event": "expired", "timestamp": completed_at or now_ist().isoformat()})
 
         report = {
             "assessmentName": (assessment or {}).get("title", "Assessment"),
@@ -1068,7 +1118,7 @@ async def _queue_indexing(db: CosmosDBService, generated_doc: Dict[str, Any]):
                 "skill": skill_slug,
                 "embedding": None,
                 "metadata": knowledge_entry["metadata"],
-                "indexedAt": datetime.utcnow().isoformat()
+                "indexedAt": now_ist().isoformat()
             }
             try:
                 await db.auto_create_item(CONTAINER["KNOWLEDGE_BASE"], kb_entry)
@@ -1148,7 +1198,8 @@ async def call_ai_service(endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]
 async def add_single_question(
     request: SingleQuestionRequest,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    db: CosmosDBService = Depends(get_cosmosdb),
+    background_tasks: BackgroundTasks = None,
 ):
     """Add a single question with AI validation and enhancement"""
     try:
@@ -1177,7 +1228,7 @@ async def add_single_question(
         
         # Step 3: Create enhanced question object
         enhanced_question_data = {
-            "id": f"q_{secrets.token_urlsafe(8)}",
+            "id": f"q_{uuid.uuid4().hex}",
             "text": rewrite_result.get("rewritten_text", request.text),
             "type": request.type,
             "tags": request.tags + rewrite_result.get("suggested_tags", []),
@@ -1186,7 +1237,7 @@ async def add_single_question(
             # Accept optional suggested difficulty from the AI (`suggested_difficulty` or `suggestedDifficulty`)
             "suggested_difficulty": rewrite_result.get("suggested_difficulty") or rewrite_result.get("suggestedDifficulty"),
             "created_by": admin["admin_id"],
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": now_ist().isoformat(),
             "question_hash": hashlib.sha256(request.text.strip().lower().encode()).hexdigest()
         }
         
@@ -1208,48 +1259,107 @@ async def add_single_question(
                 "rubric": request.rubric
             })
         
-        # Step 4: Save to database (mock for development)
+        # Step 4: Save to transactional Questions container
         try:
-            # In production: await db.create_item("questions", enhanced_question_data)
-            logger.info(f"Question saved with ID: {enhanced_question_data['id']}")
+            # Normalize tags server-side (defense in depth); capture any warnings
+            normalized_tags, tag_warning = sanitize_tags_input(enhanced_question_data.get("tags") or [])
+            enhanced_question_data["tags"] = normalized_tags
+            if tag_warning:
+                logger.info(f"Tag normalization warning: {tag_warning}")
+            # Determine partition key for the question. Use topic/tags first
+            # (these represent the technical skill area, e.g., 'collections',
+            # 'exception-handling'). Keep any AI-suggested role as a separate
+            # `role` field so we don't collapse topics into coarse role strings.
+            tags = enhanced_question_data.get("tags") or []
+            first_tag = tags[0] if isinstance(tags, list) and tags else None
+            topic = enhanced_question_data.get("topic") or enhanced_question_data.get("topic_name")
+            skill_val = first_tag or topic or enhanced_question_data.get("suggested_role") or "general"
+            skill_slug = normalize_skill(skill_val)
+            # Persist the normalized skill (partition key) and keep the role
+            # separately for future filtering/analytics.
+            enhanced_question_data["skill"] = skill_slug
+            if enhanced_question_data.get("suggested_role"):
+                enhanced_question_data["role"] = enhanced_question_data.get("suggested_role")
+
+            # Persist into the transactional QUESTIONS container using the
+            # convenience auto_create_item (it will infer partition key properly).
+            # Try persisting, retrying up to 3 times if we encounter a duplicate id error
+            for attempt in range(3):
+                try:
+                    await db.auto_create_item(CONTAINER["QUESTIONS"], enhanced_question_data)
+                    logger.info(f"Question persisted in transactional DB with ID: {enhanced_question_data['id']} (skill={skill_slug})")
+                    break
+                except Exception as persist_err:
+                    # Inspect message for duplicate key hints (provider-specific); if so, retry with new id
+                    msg = str(persist_err).lower()
+                    if 'duplicate' in msg or 'conflict' in msg or 'already exists' in msg or 'unique' in msg:
+                        logger.warning(f"Duplicate id collision when saving question (attempt={attempt+1}): {persist_err}; regenerating id and retrying")
+                        enhanced_question_data['id'] = f"q_{uuid.uuid4().hex}"
+                        # on last attempt, log and continue
+                        if attempt == 2:
+                            logger.warning(f"Persist failed after retries: {persist_err}")
+                    else:
+                        logger.warning(f"Failed to persist question to transactional DB: {persist_err}")
+                        break
+
         except Exception as e:
-            logger.warning(f"Database save failed (development mode): {e}")
+            logger.warning(f"Database save flow failed (non-fatal): {e}")
         
-        # Step 5: Update Knowledge Base for RAG system
+        # Step 5: Update Knowledge Base for RAG system (run in background to avoid blocking frontend)
         try:
-            # Import the knowledge base update function
-            import httpx
-            
-            # Prepare knowledge base entry
+            rag_update_url = "http://localhost:8000/api/rag/knowledge-base/update"
+
+            async def _async_kb_update(entry: dict):
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.post(rag_update_url, json=entry)
+                        if resp.status_code == 200:
+                            rj = resp.json()
+                            logger.info(f"(bg) Knowledge base updated: {rj.get('knowledge_entry_id')}")
+                        else:
+                            logger.warning(f"(bg) Knowledge base update failed: {resp.status_code}")
+                except Exception as e:
+                    logger.warning(f"(bg) Knowledge base update exception: {e}")
+
+            # Prepare knowledge base entry: use normalized topic/tag as skill
+            kb_skill_source = None
+            tags = enhanced_question_data.get("tags") or []
+            if isinstance(tags, list) and tags:
+                kb_skill_source = tags[0]
+            else:
+                kb_skill_source = enhanced_question_data.get("topic") or enhanced_question_data.get("skill") or "General"
+            kb_skill = normalize_skill(kb_skill_source)
+
             knowledge_entry = {
                 "content": enhanced_question_data["text"],
-                "skill": enhanced_question_data.get("suggested_role", "General"),
+                "skill": kb_skill,
                 "content_type": "question",
                 "metadata": {
                     "question_id": enhanced_question_data["id"],
                     "question_type": enhanced_question_data["type"],
                     "tags": enhanced_question_data["tags"],
                     "created_by": enhanced_question_data["created_by"],
-                    "created_at": enhanced_question_data["created_at"]
+                    "created_at": enhanced_question_data["created_at"],
+                    "role": enhanced_question_data.get("role")
                 }
             }
-            
-            # Call RAG knowledge base update endpoint
-            rag_update_url = "http://localhost:8000/api/rag/knowledge-base/update"
-            
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.post(rag_update_url, json=knowledge_entry)
-                
-                if response.status_code == 200:
-                    rag_result = response.json()
-                    logger.info(f"Knowledge base updated: {rag_result.get('knowledge_entry_id')}")
-                    enhanced_question_data["knowledge_base_entry_id"] = rag_result.get("knowledge_entry_id")
-                else:
-                    logger.warning(f"Knowledge base update failed: {response.status_code}")
-                    
+
+            # Schedule background update; use asyncio.create_task so it runs independently
+            if background_tasks is not None:
+                background_tasks.add_task(asyncio.create_task, _async_kb_update(knowledge_entry))
+            else:
+                # Fallback: create task directly
+                try:
+                    asyncio.create_task(_async_kb_update(knowledge_entry))
+                except Exception:
+                    logger.warning("Could not schedule background KB update; will try synchronously")
+                    await _async_kb_update(knowledge_entry)
+
+            # Mark that KB update will run/was queued; actual entry id will be set later by the background task
+            enhanced_question_data["knowledge_base_entry_id"] = None
+            logger.info("Knowledge base update scheduled in background")
         except Exception as kb_error:
-            # Don't fail the entire operation if knowledge base update fails
-            logger.warning(f"Knowledge base update failed (non-critical): {kb_error}")
+            logger.warning(f"Knowledge base background scheduling failed (non-critical): {kb_error}")
         
         return {
             "success": True,
@@ -1260,7 +1370,8 @@ async def add_single_question(
             "suggested_role": enhanced_question_data["suggested_role"],
             "suggested_tags": rewrite_result.get("suggested_tags", []),
             "suggested_difficulty": enhanced_question_data.get("suggested_difficulty"),
-            "knowledge_base_updated": enhanced_question_data.get("knowledge_base_entry_id") is not None
+            "knowledge_base_updated": enhanced_question_data.get("knowledge_base_entry_id") is not None,
+            "tag_warning": tag_warning if 'tag_warning' in locals() and tag_warning else None
         }
         
     except HTTPException:
@@ -1313,7 +1424,7 @@ async def generate_question_admin(
             "generated_text": generated_text,
             "original_prompt": f"Generate a {request.difficulty} {request.question_type} question for skill {request.skill}",
             "generated_by": ai_response.get("model", "llm-agent"),
-            "generation_timestamp": datetime.utcnow().isoformat(),
+            "generation_timestamp": now_ist().isoformat(),
             "usage_count": 0,
             "quality_score": None,
             "enhancement_applied": False,
@@ -1423,7 +1534,7 @@ async def bulk_validate_questions(
             "id": session_id,
             "filename": getattr(file, 'filename', None),
             "created_by": admin.get("admin_id"),
-            "createdAt": datetime.utcnow().isoformat(),
+            "createdAt": now_ist().isoformat(),
             # store validated rows with their normalized hashes to enable fast dedupe
             "validated": validated_questions,
             "flagged": flagged_questions
@@ -1549,16 +1660,20 @@ async def bulk_confirm_import(
         imported_count = 0
         failed_count = 0
 
-        # Group by skill/partition
+        # Group by skill/partition — prefer tags/topic over any suggested role
         questions_by_skill = {}
         for q in validated_questions:
-            skill_field = q.get("tags") or q.get("skill") or "general"
-            if isinstance(skill_field, str):
-                skill_key = (skill_field.split(",")[0] if skill_field else "general").strip() or "general"
-            elif isinstance(skill_field, list) and skill_field:
-                skill_key = skill_field[0]
+            raw_tags = q.get("tags") or q.get("tags_text") or q.get("tags_list")
+            if isinstance(raw_tags, str):
+                tag_list = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            elif isinstance(raw_tags, list):
+                tag_list = raw_tags
             else:
-                skill_key = "general"
+                tag_list = []
+
+            topic = q.get("topic") or q.get("topic_name")
+            skill_key_raw = tag_list[0] if tag_list else q.get("skill") or topic or "general"
+            skill_key = normalize_skill(skill_key_raw)
             questions_by_skill.setdefault(skill_key, []).append(q)
 
         # For each partition, prepare docs and write transactionally when possible
@@ -1566,7 +1681,7 @@ async def bulk_confirm_import(
             enhanced_docs = []
             for question_data in group:
                 try:
-                    q_id = f"q_{secrets.token_urlsafe(8)}"
+                    q_id = f"q_{uuid.uuid4().hex}"
                     enhanced = {
                         "id": q_id,
                         "text": question_data.get("text", ""),
@@ -1575,7 +1690,7 @@ async def bulk_confirm_import(
                         # Preserve difficulty if present in the CSV row; default to medium
                         "difficulty": question_data.get("difficulty") or question_data.get("difficulty_level") or "medium",
                         "created_by": admin["admin_id"],
-                        "created_at": datetime.utcnow().isoformat(),
+                        "created_at": now_ist().isoformat(),
                         "question_hash": hashlib.sha256((question_data.get("text", "") or "").strip().lower().encode()).hexdigest()
                     }
 
@@ -1634,9 +1749,18 @@ async def bulk_confirm_import(
                 for d in created_iter:
                     try:
                         import httpx
+                        # Normalize KB skill using the same tag/topic-first strategy
+                        kb_skill_source = None
+                        d_tags = d.get("tags") or []
+                        if isinstance(d_tags, list) and d_tags:
+                            kb_skill_source = d_tags[0]
+                        else:
+                            kb_skill_source = d.get("topic") or d.get("skill") or "General"
+                        kb_skill = normalize_skill(kb_skill_source)
+
                         knowledge_entry = {
                             "content": d.get("text", ""),
-                            "skill": (d.get("tags") or ["General"])[0] if d.get("tags") else "General",
+                            "skill": kb_skill,
                             "content_type": "imported_question",
                             "metadata": {
                                 "question_id": d.get("id"),
@@ -1974,7 +2098,7 @@ async def get_live_interview_sessions(
         mock_sessions = []
         for i in range(5):  # 5 active sessions
             session_id = f"session_{uuid.uuid4().hex[:12]}"
-            started_at = datetime.utcnow() - timedelta(minutes=30 + i * 10)
+            started_at = now_ist() - timedelta(minutes=30 + i * 10)
             
             mock_sessions.append({
                 "id": f"live_{uuid.uuid4().hex[:8]}",
@@ -1985,7 +2109,7 @@ async def get_live_interview_sessions(
                 "testName": f"Senior Developer Assessment {i+1}",
                 "status": "active" if i < 3 else "completed" if i == 3 else "failed",
                 "startedAt": started_at.isoformat(),
-                "lastActivity": (datetime.utcnow() - timedelta(seconds=30 + i * 60)).isoformat(),
+                "lastActivity": (now_ist() - timedelta(seconds=30 + i * 60)).isoformat(),
                 "duration": 1800 + i * 300,  # 30min + extras
                 "currentQuestion": min(i + 2, 5),
                 "totalQuestions": 5,
@@ -1998,7 +2122,7 @@ async def get_live_interview_sessions(
                 "errorCount": i if i > 2 else 0,
                 "transcript": {
                     "wordCount": 450 + i * 100,
-                    "lastUpdate": (datetime.utcnow() - timedelta(minutes=2)).isoformat(),
+                    "lastUpdate": (now_ist() - timedelta(minutes=2)).isoformat(),
                     "sentiment": ["positive", "neutral", "positive", "neutral", "negative"][i]
                 } if i < 4 else None,
                 "performance": {
@@ -2011,7 +2135,7 @@ async def get_live_interview_sessions(
         return {
             "sessions": mock_sessions,
             "total": len(mock_sessions),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": now_ist().isoformat()
         }
         
     except Exception as e:
@@ -2045,7 +2169,7 @@ async def get_live_interview_stats(
                 "poor": 2,
                 "unknown": 0
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": now_ist().isoformat()
         }
         
         return {
@@ -2077,8 +2201,8 @@ async def get_live_interview_session_details(
             "testId": "test_detail_123",
             "testName": "Senior Full-Stack Developer Assessment",
             "status": "active",
-            "startedAt": (datetime.utcnow() - timedelta(minutes=45)).isoformat(),
-            "lastActivity": (datetime.utcnow() - timedelta(seconds=15)).isoformat(),
+            "startedAt": (now_ist() - timedelta(minutes=45)).isoformat(),
+            "lastActivity": (now_ist() - timedelta(seconds=15)).isoformat(),
             "duration": 2700,  # 45 minutes
             "currentQuestion": 3,
             "totalQuestions": 5,
@@ -2091,7 +2215,7 @@ async def get_live_interview_session_details(
             "errorCount": 0,
             "transcript": {
                 "wordCount": 850,
-                "lastUpdate": (datetime.utcnow() - timedelta(seconds=30)).isoformat(),
+                "lastUpdate": (now_ist() - timedelta(seconds=30)).isoformat(),
                 "sentiment": "positive",
                 "fullTranscript": "The candidate has been providing detailed technical responses about React, Node.js, and system architecture. Their communication is clear and demonstrates strong technical knowledge."
             },
@@ -2105,23 +2229,23 @@ async def get_live_interview_session_details(
                     "id": 1,
                     "question": "Tell me about your experience with React and state management",
                     "status": "completed",
-                    "startTime": (datetime.utcnow() - timedelta(minutes=42)).isoformat(),
-                    "endTime": (datetime.utcnow() - timedelta(minutes=35)).isoformat(),
+                    "startTime": (now_ist() - timedelta(minutes=42)).isoformat(),
+                    "endTime": (now_ist() - timedelta(minutes=35)).isoformat(),
                     "wordCount": 185
                 },
                 {
                     "id": 2,
                     "question": "How would you design a scalable microservices architecture?",
                     "status": "completed", 
-                    "startTime": (datetime.utcnow() - timedelta(minutes=35)).isoformat(),
-                    "endTime": (datetime.utcnow() - timedelta(minutes=25)).isoformat(),
+                    "startTime": (now_ist() - timedelta(minutes=35)).isoformat(),
+                    "endTime": (now_ist() - timedelta(minutes=25)).isoformat(),
                     "wordCount": 320
                 },
                 {
                     "id": 3,
                     "question": "Explain the difference between SQL and NoSQL databases",
                     "status": "active",
-                    "startTime": (datetime.utcnow() - timedelta(minutes=25)).isoformat(),
+                    "startTime": (now_ist() - timedelta(minutes=25)).isoformat(),
                     "endTime": None,
                     "wordCount": 245
                 }

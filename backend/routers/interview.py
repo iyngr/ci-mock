@@ -5,6 +5,7 @@ import os
 import httpx
 import re
 from datetime import datetime
+from datetime_utils import now_ist, now_ist_iso
 
 from database import CosmosDBService, get_cosmosdb_service
 from constants import CONTAINER
@@ -127,7 +128,7 @@ async def create_interview_session(payload: StartSessionRequest, db: CosmosDBSer
     """Create a logical interview session document for S2S flow.
     This doesn't start Realtime; it tracks the session metadata in Cosmos.
     """
-    session_id = f"s2s_{payload.login_code}_{int(datetime.utcnow().timestamp())}"
+    session_id = f"s2s_{payload.login_code}_{int(now_ist().timestamp())}"
 
     item = {
         "id": session_id,
@@ -135,12 +136,12 @@ async def create_interview_session(payload: StartSessionRequest, db: CosmosDBSer
         "login_code": payload.login_code,
         "candidate_name": payload.candidate_name,
         "status": "created",
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": now_ist().isoformat(),
     }
     await db.auto_create_item(CONTAINER["INTERVIEWS"], item)
 
     # Mint a short-lived token (opaque for now). For dev, reuse session_id.
-    expires_at = datetime.utcnow()
+    expires_at = now_ist()
     return StartSessionResponse(sessionId=session_id, token=session_id, expiresAt=expires_at)
 
 
@@ -189,10 +190,10 @@ async def mint_ephemeral_key(authorization: Optional[str] = Header(None)):
 
     # Dev-mode stub: if Azure envs are not configured, return a disabled payload
     if not (endpoint and api_key):
-        session_id = f"dev_{int(datetime.utcnow().timestamp())}"
+        session_id = f"dev_{int(now_ist().timestamp())}"
         webrtc_url = "https://invalid.local/realtimertc"
         # expires_at as epoch seconds
-        expires_at = int(datetime.utcnow().timestamp()) + 55
+        expires_at = int(now_ist().timestamp()) + 55
         return EphemeralKeyResponse(
             sessionId=session_id,
             ephemeralKey="dev_ephemeral_disabled",
@@ -264,7 +265,7 @@ async def finalize_transcript(payload: FinalizeTranscriptRequest, db: CosmosDBSe
     header_id = payload.session_id
     update = {
         "status": "finalized",
-        "finalized_at": datetime.utcnow().isoformat(),
+            "finalized_at": now_ist().isoformat(),
     }
     try:
         await db.update_item(CONTAINER["INTERVIEWS"], header_id, update, partition_key=payload.assessment_id)
@@ -282,7 +283,7 @@ async def finalize_transcript(payload: FinalizeTranscriptRequest, db: CosmosDBSe
         "schema_version": 1,
         "retention_policy_months": 6,
         "transcript": redacted,
-        "created_at": datetime.utcnow().isoformat(),
+    "created_at": now_ist().isoformat(),
     }
     await db.auto_create_item(CONTAINER["INTERVIEW_TRANSCRIPTS"], document)
     # Optionally trigger scoring pipeline if submissionId provided

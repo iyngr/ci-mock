@@ -3,6 +3,7 @@ import httpx
 import os
 import uuid
 from datetime import datetime
+from datetime_utils import now_ist, now_ist_iso
 import traceback
 
 from models import (
@@ -90,7 +91,7 @@ async def ask_rag_question(
         try:
             query_log = {
                 "id": str(uuid.uuid4()),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": now_ist().isoformat(),
                 "question": request.question,
                 "answer_length": len(answer),
                 "context_count": len(context_docs),
@@ -204,7 +205,11 @@ async def update_knowledge_base(
         )
         
         # Store in KnowledgeBase container
-        await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
+        # Use alias names (e.g. _etag/_ts) and exclude None values so we don't
+        # accidentally send empty user-level 'etag'/'ts' fields which would
+        # appear in stored documents as null. The Cosmos DB server will populate
+        # system metadata (_etag, _ts) itself.
+        await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump(by_alias=True, exclude_none=True))
         
         return KnowledgeBaseUpdateResponse(
             success=True,
@@ -225,7 +230,7 @@ async def update_knowledge_base(
                 metadata=request.metadata or {}
             )
 
-            await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump())
+            await db.upsert_item(CONTAINER["KNOWLEDGE_BASE"], knowledge_entry.model_dump(by_alias=True, exclude_none=True))
 
             import logging
             logger = logging.getLogger(__name__)
@@ -333,7 +338,7 @@ async def search_knowledge_base(
         try:
             query_log = {
                 "id": str(uuid.uuid4()),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": now_ist().isoformat(),
                 "query": query,
                 "skill": skill,
                 "limit": limit,
@@ -387,7 +392,7 @@ async def rag_health_check():
         
         return {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_ist().isoformat(),
             "services": {
                 "rag_router": "healthy",
                 "llm_agent": llm_agent_status
@@ -406,7 +411,7 @@ async def rag_health_check():
         return {
             "status": "unhealthy",
             "message": "RAG health check failed",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": now_ist().isoformat()
         }
 
 

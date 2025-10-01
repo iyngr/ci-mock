@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from database import CosmosDBService, get_cosmosdb_service
 from constants import CONTAINER  # use centralized container names
 from datetime import datetime
+from datetime_utils import now_ist, now_ist_iso
 import uuid
 
 # Load environment variables
@@ -82,7 +83,7 @@ async def run_code(
             "code": request.code,
             "stdin": request.stdin,
             "result": result,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_ist().isoformat(),
             "execution_type": "judge0" if USE_JUDGE0 and JUDGE0_API_KEY else "mock"
         }
 
@@ -116,7 +117,7 @@ async def create_code_run(request: CodeRunRequest, db: CosmosDBService = Depends
         "code": request.code,
         "stdin": request.stdin,
         "result": result,
-        "timestamp": datetime.utcnow().isoformat(),
+    "timestamp": now_ist().isoformat(),
         "is_final": False,
         "execution_type": "judge0" if USE_JUDGE0 and JUDGE0_API_KEY else "mock"
     }
@@ -395,8 +396,8 @@ async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBServic
         "method": "hybrid_scoring_v1_mock",
         "run_sequence": 1,
         "timing": {
-            "started_at": datetime.utcnow().isoformat(),
-            "completed_at": datetime.utcnow().isoformat(),
+            "started_at": now_ist().isoformat(),
+            "completed_at": now_ist().isoformat(),
             "duration_seconds": 2.0
         },
         "driver_versions": {"scoring_service": "1.0.0-mock"},
@@ -408,7 +409,7 @@ async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBServic
             "percentage": percentage
         },
         "cost_breakdown": {"mcq_calls": 0, "llm_calls": 0},
-        "created_at": datetime.utcnow().isoformat()
+    "created_at": now_ist().isoformat()
     }
     try:
         # Insert record
@@ -435,7 +436,7 @@ async def _legacy_mock_evaluation(request: EvaluationRequest, db: CosmosDBServic
                 request.submission_id,
                 {
                     "score": percentage,
-                    "evaluated_at": datetime.utcnow().isoformat(),
+                    "evaluated_at": now_ist().isoformat(),
                     "evaluation": summary
                 },
                 partition_key=assessment_id

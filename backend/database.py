@@ -278,6 +278,20 @@ class CosmosDBService:
             return _container.create_item(body=serializable_item)
         
         try:
+            # Defensive: strip any non-underscored system keys from the
+            # request body to avoid storing them as user fields in Cosmos.
+            for sys_key in ("etag", "ts"):
+                if sys_key in serializable_item:
+                    try:
+                        logger.warning(
+                            "Removing user-supplied system key '%s' from item before create (value=%r)",
+                            sys_key,
+                            serializable_item.get(sys_key)
+                        )
+                    except Exception:
+                        logger.warning("Removing user-supplied system key '%s' from item before create", sys_key)
+                    serializable_item.pop(sys_key, None)
+
             response = await cosmos_retry_wrapper(_create_operation)
             logger.info(f"Created item in '{container_name}': {response.get('id')}")
             return response
@@ -324,6 +338,19 @@ class CosmosDBService:
             # The SDK can infer the partition from the body when the partition
             # field is present in the item. Other methods in this service avoid
             # forwarding partition_key for compatibility.
+            # Defensive: strip any accidental non-underscored system keys
+            for sys_key in ("etag", "ts"):
+                if sys_key in serializable_item:
+                    try:
+                        logger.warning(
+                            "Removing user-supplied system key '%s' from item before replace (value=%r)",
+                            sys_key,
+                            serializable_item.get(sys_key)
+                        )
+                    except Exception:
+                        logger.warning("Removing user-supplied system key '%s' from item before replace", sys_key)
+                    serializable_item.pop(sys_key, None)
+
             return container.replace_item(item=serializable_item.get('id') or serializable_item.get('_id'), body=serializable_item, if_match=etag)
 
         try:
@@ -366,6 +393,22 @@ class CosmosDBService:
                 inferred_pk = self.infer_partition_key(container_name, serializable_item)
                 if inferred_pk is not None:
                     serializable_item[inferred_pk] = partition_key
+            # Defensive: remove any user-supplied non-underscored system fields
+            # such as 'etag' or 'ts' which, if present (even as null), would
+            # be stored in the document and shadow Cosmos DB's system properties
+            # like '_etag' and '_ts'. This prevents accidental overwrites from
+            # callers that serialize models incorrectly.
+            for sys_key in ("etag", "ts"):
+                if sys_key in serializable_item:
+                    try:
+                        logger.warning(
+                            "Removing user-supplied system key '%s' from item before upsert (value=%r)",
+                            sys_key,
+                            serializable_item.get(sys_key)
+                        )
+                    except Exception:
+                        logger.warning("Removing user-supplied system key '%s' from item before upsert", sys_key)
+                    serializable_item.pop(sys_key, None)
 
             response = container.upsert_item(body=serializable_item)
             logger.info(f"Upserted item in '{container_name}': {response.get('id')}")

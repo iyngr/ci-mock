@@ -6,6 +6,7 @@ Run this while the backend is running to validate the new functionality.
 
 import requests
 import datetime
+from datetime_utils import now_ist
 from time import sleep
 
 BASE_URL = "http://localhost:8000"
@@ -64,8 +65,8 @@ def test_submit_assessment(submission_id):
             }
         ],
         "proctoring_events": [
-            {
-                "timestamp": datetime.datetime.utcnow().isoformat(),
+                {
+                "timestamp": now_ist().isoformat(),
                 "event_type": "assessment_started",
                 "details": {"browser": "Chrome"}
             }

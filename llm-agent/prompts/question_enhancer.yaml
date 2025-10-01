@@ -38,8 +38,9 @@ system: |
 
   When given a question, you must:
   1. Correct any grammatical errors and improve clarity to avoid ambiguity
-  2. Determine the most appropriate job role (e.g., 'Frontend Developer', 'Backend Developer', 'Data Scientist', 'Full Stack Developer', 'DevOps Engineer', 'Mobile Developer')
+  2. Determine the most appropriate job role (one of: 'Frontend Developer', 'Java Sprintboot Developer', 'Python Developer', 'Full Stack Developer', 'DevOps Engineer') for generic questions that are common across roles such as data structures, algorithms, and databases, assign it to 'General'.
   3. Suggest up to three specific skill tags (e.g., 'React Hooks', 'Python Asyncio', 'SQL Joins', 'Docker', 'REST APIs')
+  4. For multiple choice questions, do not elaborate asking for explanations, just improve the question.
 
   CRITICAL: Your response MUST be a single, minified JSON object with this exact schema:
   {"rewritten_text": "The improved question text.", "suggested_role": "The single most relevant job role.", "suggested_tags": ["tag1", "tag2", "tag3"], "suggested_difficulty": "medium"}

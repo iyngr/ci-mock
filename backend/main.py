@@ -227,7 +227,7 @@ async def get_metrics():
     
     try:
         from database import get_cosmosdb_service, cosmos_metrics
-        
+
         # Get service metrics
         service_metrics = {
             "total_request_charge": cosmos_metrics.total_request_charge,
@@ -235,26 +235,26 @@ async def get_metrics():
             "average_ru_per_operation": cosmos_metrics.get_average_ru_per_operation(),
             "average_duration_ms": cosmos_metrics.get_average_duration()
         }
-        
+
         # Get container statistics
         db_service = await get_cosmosdb_service(database_client)
         container_stats = {}
-        
+
         for container_name in ["assessments", "submissions", "users", "questions", "code_executions", "evaluations"]:
             try:
                 stats = await db_service.get_container_statistics(container_name)
                 container_stats[container_name] = stats
-            except Exception as e:
+            except Exception:
                 # Log the error server-side and return a generic failure for that container
                 logger.exception("Failed to get container statistics for %s", container_name)
                 container_stats[container_name] = {"message": "failed to collect stats"}
-        
+
+        from backend.datetime_utils import now_ist as _now_ist
         return {
             "service_metrics": service_metrics,
             "container_statistics": container_stats,
-            "timestamp": __import__("datetime").datetime.utcnow().isoformat()
+            "timestamp": _now_ist().isoformat()
         }
-        
     except Exception as e:
         logger.exception("Failed to assemble metrics payload")
         raise HTTPException(status_code=500, detail="Failed to get metrics")
@@ -295,4 +295,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

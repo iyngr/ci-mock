@@ -63,16 +63,14 @@ export default function AddQuestions() {
     // Single question form state
     const [questionData, setQuestionData] = useState<SingleQuestionData>({
         text: "",
-        type: "mcq",
+        type: "descriptive",
         tags: [],
-        options: [
-            { id: "a", text: "" },
-            { id: "b", text: "" },
-            { id: "c", text: "" },
-            { id: "d", text: "" }
-        ],
+        options: [],
         correctAnswer: ""
     })
+    // Separate raw tag input so typing commas/spaces isn't lost by controlled formatting
+    const [tagInput, setTagInput] = useState<string>(questionData.tags.join(", "))
+    const [tagValidation, setTagValidation] = useState<string | null>(null)
 
     // Bulk upload state
     const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -87,9 +85,78 @@ export default function AddQuestions() {
         }
     }, [router])
 
-    const handleTagInput = (value: string) => {
-        const tags = value.split(",").map(tag => tag.trim()).filter(tag => tag.length > 0)
-        setQuestionData(prev => ({ ...prev, tags }))
+    const commitTagsFromInput = (value?: string) => {
+        const raw = value !== undefined ? value : tagInput
+        // Split on commas, trim, drop empties
+        const parts = raw.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0)
+
+        const seen = new Set<string>()
+        const deduped = [] as string[]
+        let validationMsg: string | null = null
+
+        for (let tag of parts) {
+            // Replace whitespace with hyphens
+            tag = tag.replace(/\s+/g, '-')
+            // Replace any non allowed chars with hyphen (allow letters, numbers and hyphen)
+            tag = tag.replace(/[^A-Za-z0-9-]/g, '-')
+            // Collapse consecutive hyphens
+            tag = tag.replace(/-+/g, '-')
+            // Trim leading/trailing hyphens
+            tag = tag.replace(/^-+|-+$/g, '')
+            if (!tag) continue
+            // Enforce per-tag max length 100 (truncate with warning)
+            if (tag.length > 100) {
+                tag = tag.slice(0, 100)
+                validationMsg = 'Some tags were truncated to 100 characters.'
+                // After truncation, ensure we didn't create a leading/trailing hyphen
+                tag = tag.replace(/^-+|-+$/g, '')
+            }
+
+            const low = tag.toLowerCase()
+            if (!seen.has(low)) {
+                seen.add(low)
+                deduped.push(tag)
+            }
+        }
+
+        // If deduped list is empty but raw had values, show a validation message
+        if (deduped.length === 0 && parts.length > 0 && !validationMsg) {
+            validationMsg = 'Tags must contain letters, numbers or hyphens.'
+        }
+
+        setTagValidation(validationMsg)
+        setQuestionData(prev => ({ ...prev, tags: deduped }))
+        return deduped
+    }
+
+    // Sanitize tag input as the user types or pastes:
+    // - replace whitespace and invalid chars with hyphen
+    // - collapse consecutive hyphens
+    // - trim leading/trailing hyphens
+    // - enforce per-tag max length 100 (hard stop/truncate)
+    const sanitizeTagInput = (val: string) => {
+        const hadTrailingComma = val.endsWith(',')
+        const parts = val.split(',')
+        let truncated = false
+        const outParts = parts.map(p => {
+            let t = p.replace(/\s+/g, '-')
+            t = t.replace(/[^A-Za-z0-9-]/g, '-')
+            t = t.replace(/-+/g, '-')
+            t = t.replace(/^-+|-+$/g, '')
+            if (t.length > 100) {
+                t = t.slice(0, 100)
+                // ensure no leading/trailing hyphen after truncation
+                t = t.replace(/^-+|-+$/g, '')
+                truncated = true
+            }
+            return t
+        })
+
+        // Reconstruct, preserving a trailing comma if present
+        let out = outParts.join(',')
+        if (hadTrailingComma) out += ','
+        setTagValidation(truncated ? 'Tag maximum length is 100 characters.' : null)
+        return { out, truncated }
     }
 
     const updateOption = (index: number, text: string) => {
@@ -185,16 +252,12 @@ export default function AddQuestions() {
                 // Reset form
                 setQuestionData({
                     text: "",
-                    type: "mcq",
+                    type: "descriptive",
                     tags: [],
-                    options: [
-                        { id: "a", text: "" },
-                        { id: "b", text: "" },
-                        { id: "c", text: "" },
-                        { id: "d", text: "" }
-                    ],
+                    options: [],
                     correctAnswer: ""
                 })
+                setTagInput("")
             } else {
                 setError(data.message || "Failed to add question")
             }
@@ -494,11 +557,63 @@ export default function AddQuestions() {
                                     </label>
                                     <Input
                                         type="text"
-                                        value={questionData.tags.join(", ")}
-                                        onChange={(e) => handleTagInput(e.target.value)}
+                                        value={tagInput}
+                                        onChange={(e) => {
+                                            const el = e.target as HTMLInputElement
+                                            const raw = el.value
+                                            const { out } = sanitizeTagInput(raw)
+                                            setTagInput(out)
+                                        }}
+                                        onBlur={() => {
+                                            const deduped = commitTagsFromInput()
+                                            setTagInput(deduped.join(","))
+                                        }}
+                                        onKeyDown={(e) => {
+                                            // Convert Space key to a hyphen at the caret position to prevent spaces inside tags
+                                            if (e.key === ' ') {
+                                                e.preventDefault()
+                                                const el = e.currentTarget as HTMLInputElement
+                                                const start = el.selectionStart ?? 0
+                                                const end = el.selectionEnd ?? 0
+                                                const val = el.value
+                                                const inserted = '-' + val.slice(end)
+                                                const tentative = val.slice(0, start) + inserted
+                                                // Sanitize tentative value and enforce per-tag length
+                                                const { out, truncated } = sanitizeTagInput(tentative)
+                                                // If truncation occurred for the tag being edited, block insertion (hard stop)
+                                                if (truncated) {
+                                                    setTagValidation('Tag maximum length is 100 characters.')
+                                                    return
+                                                }
+                                                setTagInput(out)
+                                                setTimeout(() => {
+                                                    try { el.setSelectionRange(start + 1, start + 1) } catch (err) { }
+                                                }, 0)
+                                                return
+                                            }
+                                            if (e.key === 'Enter') {
+                                                // Prevent form submit on Enter
+                                                e.preventDefault()
+                                                const next = (e.currentTarget as HTMLInputElement).value.replace(/,$/, '')
+                                                const deduped = commitTagsFromInput(next)
+                                                setTagInput(deduped.join(","))
+                                            }
+                                        }}
+                                        onKeyUp={(e) => {
+                                            if (e.key === ',') {
+                                                // Let the comma be typed into the input, then commit.
+                                                // We keep a trailing comma visible to avoid the flicker the user reported.
+                                                const next = (e.currentTarget as HTMLInputElement).value.replace(/,$/, '')
+                                                const deduped = commitTagsFromInput(next)
+                                                setTagInput(deduped.join(",") + ',')
+                                            }
+                                        }}
                                         placeholder="algorithms, data-structures, complexity"
                                         className="h-12"
                                     />
+                                    {tagValidation && (
+                                        <div role="status" aria-live="polite" className="mt-1 text-xs text-rose-600">{tagValidation}</div>
+                                    )}
                                 </div>
 
                                 {/* MCQ Options */}

@@ -21,6 +21,7 @@ import sys
 import logging
 from typing import List, Dict, Any
 from datetime import datetime
+from backend.datetime_utils import now_ist
 
 # Add backend to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'backend'))
@@ -161,7 +162,7 @@ class EmbeddingGenerator:
                     "type": question['type'],
                     "assessment_id": question['assessment_id']
                 },
-                "indexedAt": datetime.utcnow().isoformat(),
+                "indexedAt": now_ist().isoformat(),
                 "accessCount": 0
             }
             

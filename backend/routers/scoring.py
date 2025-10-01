@@ -4,6 +4,7 @@ import time
 import asyncio
 import os
 from datetime import datetime
+from datetime_utils import now_ist, now_ist_iso
 import uuid
 import json
 from functools import lru_cache
@@ -665,7 +666,7 @@ class ScoringTriageService:
             runSequence=1,  # Future: compute by counting existing evaluations for submission
             timing={
                 "started_at": datetime.utcfromtimestamp(start_time).isoformat(),
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": now_ist().isoformat(),
                 "duration_seconds": duration
             },
             driverVersions={
@@ -730,7 +731,7 @@ class ScoringTriageService:
                         submission_id,
                         {
                             "score": percentage,
-                            "evaluated_at": datetime.utcnow().isoformat(),
+                            "evaluated_at": now_ist().isoformat(),
                             "evaluation": evaluation_field.model_dump(by_alias=True)
                         },
                         partition_key=assessment_id
@@ -856,7 +857,7 @@ async def scoring_health_check():
         "service": "hybrid_scoring",
         "version": "1.0.0",
         "azure_openai_enabled": USE_AZURE_OPENAI,
-        "timestamp": datetime.utcnow().isoformat()
+    "timestamp": now_ist().isoformat()
     }
 
 
@@ -909,7 +910,7 @@ async def create_mock_submission(db: CosmosDBService = Depends(get_cosmosdb)):
     )
 
     submission_id = f"sub_{uuid.uuid4().hex[:8]}"
-    now = datetime.utcnow()
+    now = now_ist()
     # Create Answer objects using aliases/names
     # Create Answer dicts using alias keys so Pydantic expects the correct field names
     ans1_dict = {
@@ -1008,7 +1009,7 @@ async def log_scoring_analytics(
         "submission_id": submission_id,
         "cost_breakdown": cost_breakdown,
         "evaluation_time": evaluation_time,
-        "timestamp": datetime.utcnow().isoformat(),
+    "timestamp": now_ist().isoformat(),
         "service": "hybrid_scoring"
     }
     

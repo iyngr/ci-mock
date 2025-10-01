@@ -1,5 +1,17 @@
 import azure.functions as func
 import datetime
+try:
+    # Use zoneinfo when available for DST-aware timezone handling
+    from zoneinfo import ZoneInfo
+    _IST_ZONE = ZoneInfo("Asia/Kolkata")
+except Exception:
+    # Fallback to a fixed-offset timezone if zoneinfo is not present
+    _IST_ZONE = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+
+def now_ist() -> datetime.datetime:
+    """Return current time in IST (Asia/Kolkata) as an aware datetime."""
+    return datetime.datetime.now(_IST_ZONE)
 import logging
 import os
 from azure.cosmos import CosmosClient
@@ -15,8 +27,7 @@ async def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
     Azure Function that runs every 5 minutes to auto-submit expired assessments.
     CRON expression: "0 */5 * * * *" means run at minute 0 of every 5th minute
     """
-    utc_timestamp = datetime.datetime.utcnow().replace(
-        tzinfo=datetime.timezone.utc).isoformat()
+    utc_timestamp = now_ist().astimezone(datetime.timezone.utc).isoformat()
 
     if mytimer.past_due:
         logging.info('The timer is past due!')
@@ -28,16 +39,16 @@ async def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
         cosmos_client = get_cosmos_client()
         database = cosmos_client.get_database_client(os.environ["COSMOS_DB_NAME"])
         submissions_container = database.get_container_client("submissions")
-        
+
         # Query for expired in-progress submissions
-        current_time = datetime.datetime.utcnow()
-        
+        current_time = now_ist()
+
         query = """
         SELECT * FROM c 
         WHERE c.status = 'in-progress' 
         AND c.expiration_time < @current_time
         """
-        
+
         parameters = [
             {"name": "@current_time", "value": current_time.isoformat()}
         ]
@@ -71,10 +82,10 @@ async def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
                 logging.error(f'Failed to auto-submit submission {submission.get("id", "unknown")}: {str(e)}')
         
         logging.info(f'Successfully auto-submitted {auto_submitted_count} expired assessments')
-        
+
         # Also process expired S2S interview transcripts
         await process_expired_s2s_interviews(database)
-        
+
     except Exception as e:
         logging.error(f'Error in auto-submit function: {str(e)}')
         raise
@@ -324,12 +335,12 @@ async def process_expired_s2s_interviews(database):
     """
     try:
         transcripts_container = database.get_container_client("interview_transcripts")
-        current_time = datetime.datetime.utcnow()
-        
+        current_time = now_ist()
+
         # Query for finalized transcripts that haven't been scored yet
         # and are older than a buffer period (e.g., 5 minutes after finalization)
         buffer_time = current_time - datetime.timedelta(minutes=5)
-        
+
         query = """
         SELECT * FROM c 
         WHERE c.finalized_at != null
@@ -602,7 +613,7 @@ async def daily_cleanup_reserved_submissions(cleanupTimer: func.TimerRequest) ->
 
     This function is independent from auto_submit_expired_assessments and uses safe SDK calls.
     """
-    now = datetime.datetime.utcnow()
+    now = now_ist()
     now_iso = now.isoformat()
 
     if cleanupTimer.past_due:

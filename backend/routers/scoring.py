@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Tuple, Optional
 import time
 import asyncio
 import os
+import logging
 from datetime import datetime
 from datetime_utils import now_ist, now_ist_iso
 import uuid
@@ -24,6 +25,7 @@ from database import CosmosDBService, get_cosmosdb_service
 from constants import CONTAINER  # added near imports
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
@@ -461,8 +463,23 @@ class ScoringTriageService:
         coding_answers: List[Tuple[Answer, CodingQuestion]], 
         assessment: Assessment
     ) -> List[LLMScoreResult]:
-        """Score descriptive and coding questions using specialized LLM agents"""
+        """Score descriptive and coding questions using Autogen multi-agent service"""
         
+        # Check if we should use Autogen service or fallback to direct Azure OpenAI
+        use_autogen = os.getenv("USE_AUTOGEN_SCORING", "true").lower() == "true"
+        
+        if use_autogen and LLM_AGENT_URL:
+            # Use Autogen multi-agent service for scoring (Phase 2)
+            try:
+                logger.info(f"Using Autogen service for LLM scoring: {LLM_AGENT_URL}")
+                return await self._score_with_autogen_service(
+                    descriptive_answers, coding_answers, assessment
+                )
+            except Exception as e:
+                logger.warning(f"Autogen service scoring failed, falling back to direct Azure OpenAI: {e}")
+                # Fall through to direct Azure OpenAI scoring
+        
+        # Fallback: Direct Azure OpenAI scoring (original implementation)
         tasks = []
         
         # Score descriptive questions with Text_Analyst
@@ -482,6 +499,113 @@ class ScoringTriageService:
             return valid_results
         
         return []
+    
+    async def _score_with_autogen_service(
+        self,
+        descriptive_answers: List[Tuple[Answer, DescriptiveQuestion]],
+        coding_answers: List[Tuple[Answer, CodingQuestion]],
+        assessment: Assessment
+    ) -> List[LLMScoreResult]:
+        """
+        Score questions using Autogen multi-agent service.
+        
+        The llm-agent service will:
+        1. Fetch submission data from Cosmos DB
+        2. Use Orchestrator to coordinate scoring workflow
+        3. Use User_Proxy to score MCQs deterministically
+        4. Use Text_Analyst for descriptive questions
+        5. Use Code_Analyst for coding questions
+        6. Return structured scoring results
+        """
+        
+        # Get submission_id from the first answer (all answers belong to same submission)
+        submission_id = None
+        if descriptive_answers:
+            submission_id = descriptive_answers[0][0].question_id.split('_')[0]  # Extract from answer context
+        elif coding_answers:
+            submission_id = coding_answers[0][0].question_id.split('_')[0]
+        
+        # Fallback: Try to get submission_id from assessment context
+        if not submission_id and hasattr(assessment, 'id'):
+            # In practice, this should be passed from the parent scoring context
+            # For now, we'll construct a temporary identifier
+            submission_id = f"temp_{assessment.id}"
+        
+        if not submission_id:
+            raise ValueError("Cannot determine submission_id for Autogen scoring")
+        
+        logger.info(f"Calling Autogen service for submission: {submission_id}")
+        
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < LLM_MAX_RETRIES:
+            try:
+                async with httpx.AsyncClient(timeout=LLM_HTTP_TIMEOUT) as client:
+                    response = await client.post(
+                        f"{LLM_AGENT_URL}/assess-submission",
+                        json={
+                            "submission_id": submission_id,
+                            "debug_mode": False
+                        }
+                    )
+                    response.raise_for_status()
+                    
+                    # Parse Autogen response
+                    autogen_data = response.json()
+                    llm_results_data = autogen_data.get("llm_results", [])
+                    
+                    if not llm_results_data:
+                        logger.warning(f"Autogen service returned no scoring results for {submission_id}")
+                        return []
+                    
+                    # Convert Autogen results to LLMScoreResult objects
+                    llm_results = []
+                    
+                    # Create question map for point calculation
+                    all_questions = {q.id: q for q in assessment.questions}
+                    
+                    for result_data in llm_results_data:
+                        question_id = result_data.get("questionId") or result_data.get("question_id")
+                        score = result_data.get("score", 0.0)
+                        feedback = result_data.get("feedback", "")
+                        rubric_breakdown = result_data.get("rubricBreakdown") or result_data.get("rubric_breakdown")
+                        
+                        # Calculate points_awarded based on question points
+                        question = all_questions.get(question_id)
+                        if question:
+                            points_awarded = score * question.points
+                        else:
+                            # Fallback if question not found
+                            points_awarded = result_data.get("pointsAwarded") or result_data.get("points_awarded", 0.0)
+                        
+                        llm_results.append(LLMScoreResult(
+                            question_id=question_id,
+                            score=score,
+                            feedback=feedback,
+                            rubric_breakdown=rubric_breakdown,
+                            points_awarded=points_awarded
+                        ))
+                    
+                    logger.info(f"Autogen service scored {len(llm_results)} questions for {submission_id}")
+                    return llm_results
+                    
+            except httpx.HTTPError as e:
+                last_error = e
+                retry_count += 1
+                if retry_count < LLM_MAX_RETRIES:
+                    wait_time = 2 ** retry_count  # Exponential backoff
+                    logger.warning(f"Autogen service call failed (attempt {retry_count}/{LLM_MAX_RETRIES}), retrying in {wait_time}s: {e}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"Autogen service failed after {LLM_MAX_RETRIES} retries: {e}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Autogen scoring service unavailable after {LLM_MAX_RETRIES} retries"
+                    )
+        
+        # Should not reach here, but just in case
+        raise HTTPException(status_code=500, detail="Autogen scoring failed unexpectedly")
     
     async def _score_descriptive_question(
         self, answer: Answer, question: DescriptiveQuestion
@@ -706,6 +830,7 @@ class ScoringTriageService:
         evaluation_record_id: str
     ):
         """Update submission with summary evaluation field."""
+        db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
         try:
             submission_data = await self.db.find_one(CONTAINER["SUBMISSIONS"], {"id": submission_id})
             if not submission_data:
@@ -750,11 +875,11 @@ class ScoringTriageService:
 
 @router.post("/validate-mcq", response_model=MCQScoreResult)
 async def validate_mcq_answer(
-    request: MCQValidationRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    request: MCQValidationRequest
 ):
     """Fast MCQ validation endpoint for single questions"""
     
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # NOTE: Questions container currently partitioned by /skill (target model) or /type (legacy).
         # Since we don't have the partition key here, perform a fallback query by id.
@@ -782,8 +907,7 @@ async def validate_mcq_answer(
 
 @router.post("/validate-mcq-batch", response_model=MCQBatchValidationResponse)
 async def validate_mcq_batch(
-    request: MCQBatchValidationRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    request: MCQBatchValidationRequest
 ):
     """Batch MCQ validation for multiple questions"""
     
@@ -808,8 +932,7 @@ async def validate_mcq_batch(
 @router.post("/process-submission", response_model=ScoringTriageResponse)
 async def process_submission_scoring(
     request: ScoringTriageRequest,
-    background_tasks: BackgroundTasks,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    background_tasks: BackgroundTasks
 ):
     """Main endpoint for hybrid scoring workflow"""
     
@@ -838,8 +961,7 @@ async def process_submission_scoring(
 @router.post("/triage", response_model=ScoringTriageResponse)
 async def triage_compat(
     request: ScoringTriageRequest,
-    background_tasks: BackgroundTasks,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    background_tasks: BackgroundTasks
 ):
     """Compatibility wrapper for legacy /triage clients.
 
@@ -961,8 +1083,9 @@ async def create_mock_submission(db: CosmosDBService = Depends(get_cosmosdb)):
 
 
 @router.get("/dev/evaluations/{submission_id}")
-async def dev_get_evaluations(submission_id: str, db: CosmosDBService = Depends(get_cosmosdb)):
+async def dev_get_evaluations(submission_id: str):
     """Dev-only: get evaluations for a submission and the submission doc itself for verification."""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     if os.getenv("ENVIRONMENT", "development") == "production":
         raise HTTPException(status_code=403, detail="Not allowed in production")
 
@@ -980,8 +1103,9 @@ async def dev_get_evaluations(submission_id: str, db: CosmosDBService = Depends(
 
 
 @router.get("/dev/rag-queries")
-async def dev_get_rag_queries(limit: int = 10, db: CosmosDBService = Depends(get_cosmosdb)):
+async def dev_get_rag_queries(limit: int = 10):
     """Dev-only: return recent RAG_QUERIES entries for telemetry checks."""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     if os.getenv("ENVIRONMENT", "development") == "production":
         raise HTTPException(status_code=403, detail="Not allowed in production")
     try:

@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button"
 import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { ProctoringEvent } from "@/lib/schema"
 import Editor from "@monaco-editor/react"
+// Phase 1 Integration: Timer sync and grace period
+import { useTimerSync } from "@/lib/hooks"
+import { GracePeriodWarning } from "@/components/AssessmentStatusComponents"
 
 // SSRF mitigation / env-aware API base (use NEXT_PUBLIC_API_URL when allowed)
 const ALLOWED_API_BASES = [
@@ -139,7 +142,15 @@ export default function AIInterviewPage() {
   const [testData, setTestData] = useState<{ id: string } | null>(null)
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [answers, setAnswers] = useState<{ [key: number]: { code?: string; language?: string; output?: string; error?: string } }>({})
-  const [timeRemaining, setTimeRemaining] = useState<number>(0)
+
+  // Phase 1 Integration: Replace local timer with backend-synced timer
+  const {
+    timeRemaining,
+    graceActive,
+    graceRemaining,
+    timeExpired
+  } = useTimerSync(testData?.id || null)
+
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [proctoringEvents, setProctoringEvents] = useState<ProctoringEvent[]>([])
   const [candidateId, setCandidateId] = useState<string>("")
@@ -309,6 +320,23 @@ export default function AIInterviewPage() {
     }
   }, [])
   // finalizeInterview is declared later in the file; auto-submit effect also appears below.
+
+  // Phase 1 Integration: Handle auto-submission for timer expiry
+  const handleTimerAutoSubmit = useCallback(async () => {
+    if (autoSubmittedRef.current) return
+    autoSubmittedRef.current = true
+
+    // Store submission data in localStorage for success page
+    const submissionData = {
+      auto_submitted: true,
+      auto_submit_reason: 'grace_period_expired',
+      auto_submit_timestamp: Date.now()
+    }
+    localStorage.setItem('talens_submission_data', JSON.stringify(submissionData))
+
+    // Finalize interview with auto-submission flag (defined later in file)
+    // Will be called by useEffect monitoring graceRemaining === 0
+  }, [])
 
   const handleApiError = useCallback(async (response: Response, context: string) => {
     let errorMessage = `${context} failed with status ${response.status}`
@@ -1181,6 +1209,23 @@ export default function AIInterviewPage() {
     }
   }, [violationCount, finalizeInterview])
 
+  // Phase 1 Integration: Auto-submit when grace period expires
+  useEffect(() => {
+    if (graceActive && graceRemaining === 0 && !autoSubmittedRef.current) {
+      autoSubmittedRef.current = true
+      handleTimerAutoSubmit()
+        ; (async () => {
+          try {
+            await finalizeInterview()
+          } catch (e) {
+            console.error('Timer auto-submit failed:', e)
+          } finally {
+            try { window.location.href = '/candidate/success' } catch { }
+          }
+        })()
+    }
+  }, [graceActive, graceRemaining, handleTimerAutoSubmit, finalizeInterview])
+
   if (!testData) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900 flex items-center justify-center">
@@ -1230,6 +1275,18 @@ export default function AIInterviewPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-neutral-50 text-neutral-900">
+      {/* Phase 1 Integration: Grace period warning */}
+      {graceActive && graceRemaining > 0 && (
+        <GracePeriodWarning
+          secondsRemaining={graceRemaining}
+          onSubmit={async () => {
+            await handleTimerAutoSubmit()
+            await finalizeInterview()
+            window.location.href = '/candidate/success'
+          }}
+        />
+      )}
+
       {/* Hidden audio element for AI voice */}
       <audio ref={audioRef} autoPlay />
 

@@ -4,22 +4,61 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { AnimateOnScroll } from "@/components/AnimateOnScroll"
+import { useAssessmentReadiness } from "@/lib/hooks"
+import { GenerationProgress, AssessmentNotReady } from "@/components/AssessmentStatusComponents"
+import { SystemCheckModal } from "@/components/SystemCheckModal"
 
 export default function Instructions() {
   const [showModal, setShowModal] = useState(false)
+  const [showSystemCheck, setShowSystemCheck] = useState(false)
+  const [systemCheckPassed, setSystemCheckPassed] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
   const router = useRouter()
+  const testId = typeof window !== 'undefined' ? localStorage.getItem("testId") : null
+
+  // Phase 1 Integration: Assessment readiness check
+  const { readiness, loading, error } = useAssessmentReadiness(testId)
 
   useEffect(() => {
     // Check if user has valid test ID
-    const testId = localStorage.getItem("testId")
     if (!testId) {
       router.push("/candidate")
     }
 
-    // Show instructions modal after a brief delay
-    setTimeout(() => setShowModal(true), 500)
-  }, [router])
+    // Phase 2: Show system check modal first, then instructions
+    if (readiness?.status === 'ready' && !systemCheckPassed) {
+      setTimeout(() => setShowSystemCheck(true), 500)
+    } else if (readiness?.status === 'ready' && systemCheckPassed) {
+      setTimeout(() => setShowModal(true), 500)
+    }
+  }, [router, testId, readiness?.status, systemCheckPassed])
+
+  // Phase 1: Show generation progress while questions are being generated
+  if (readiness?.status === 'generating') {
+    return (
+      <div className="min-h-screen bg-warm-background flex items-center justify-center p-6">
+        <GenerationProgress
+          status="generating"
+          readyQuestions={readiness.ready_questions}
+          totalQuestions={readiness.total_questions}
+          message={readiness.message}
+        />
+      </div>
+    )
+  }
+
+  // Phase 1: Show error state if assessment generation failed
+  if (error || readiness?.status === 'generation_failed') {
+    return (
+      <div className="min-h-screen bg-warm-background flex items-center justify-center p-6">
+        <AssessmentNotReady
+          status={readiness?.status || 'error'}
+          message={error || readiness?.message || 'Assessment generation failed'}
+          onRefresh={() => window.location.reload()}
+        />
+      </div>
+    )
+  }
 
   // Cross-browser fullscreen function with retry mechanism
   const enterFullscreen = async (retries = 3) => {
@@ -192,6 +231,20 @@ export default function Instructions() {
 
   return (
     <div className="min-h-screen bg-warm-background flex items-center justify-center p-6">
+      {/* Phase 2: System check modal (shown first) */}
+      <SystemCheckModal
+        isOpen={showSystemCheck}
+        onComplete={() => {
+          setShowSystemCheck(false)
+          setSystemCheckPassed(true)
+          setTimeout(() => setShowModal(true), 300)
+        }}
+        onCancel={() => {
+          setShowSystemCheck(false)
+          router.push("/candidate")
+        }}
+      />
+
       {showModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6">
           <AnimateOnScroll animation="fadeInUp" delay={200}>

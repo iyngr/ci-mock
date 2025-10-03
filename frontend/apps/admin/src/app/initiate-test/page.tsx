@@ -8,6 +8,9 @@ import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { buildApiUrl } from "@/lib/apiClient"
 import { getActiveAdminSource } from "@/lib/adminContext"
 import { TestInitiationRequest } from "@/lib/schema"
+// Phase 6: LLM health monitoring
+import { useLLMHealth } from "@/lib/adminHooks"
+import { LLMHealthIndicator } from "@/components/AdminAnalyticsComponents"
 
 export default function InitiateTest() {
   const [candidateEmail, setCandidateEmail] = useState("")
@@ -18,6 +21,9 @@ export default function InitiateTest() {
   const [createdSource, setCreatedSource] = useState("")
   const [error, setError] = useState("")
   const router = useRouter()
+
+  // Phase 6: Monitor LLM health
+  const { status: llmHealth, loading: healthLoading, refresh: refreshHealth } = useLLMHealth(true)
 
   const developerRoles = [
     "Python Backend Developer",
@@ -74,9 +80,50 @@ export default function InitiateTest() {
         },
         body: JSON.stringify({
           candidate_email: candidateEmail,
-          developer_role: selectedRole,
-          duration_hours: 2 // Default 2 hours
-        } as TestInitiationRequest),
+          // Don't provide assessment_id - trigger inline creation
+          title: `${selectedRole} Technical Assessment`,
+          description: `Technical assessment for ${selectedRole} position`,
+          target_role: selectedRole,
+          duration: 60, // 1 hour in minutes
+          // Use hybrid question generation with intelligent distribution
+          // For 1-hour test: ~20 questions (mix of MCQ, Coding, Descriptive)
+          // Hybrid approach: Pull from DB where available, generate via AI if needed
+          generate: [
+            {
+              skill: selectedRole.toLowerCase().replace(/\s+/g, '-'),
+              question_type: "mcq",
+              num_questions: 12,
+              difficulty_distribution: {
+                easy: 4,
+                medium: 6,
+                hard: 2
+              },
+              source_preference: "hybrid" // Use DB first, AI if needed
+            },
+            {
+              skill: selectedRole.toLowerCase().replace(/\s+/g, '-'),
+              question_type: "coding",
+              num_questions: 4,
+              difficulty_distribution: {
+                easy: 1,
+                medium: 2,
+                hard: 1
+              },
+              source_preference: "hybrid"
+            },
+            {
+              skill: selectedRole.toLowerCase().replace(/\s+/g, '-'),
+              question_type: "descriptive",
+              num_questions: 4,
+              difficulty_distribution: {
+                easy: 1,
+                medium: 2,
+                hard: 1
+              },
+              source_preference: "hybrid"
+            }
+          ]
+        }),
       })
 
       const data = await response.json()
@@ -215,6 +262,17 @@ export default function InitiateTest() {
             <p className="text-lg text-warm-brown/60 font-light max-w-2xl">
               Create a new technical assessment for a candidate
             </p>
+          </div>
+        </AnimateOnScroll>
+
+        {/* Phase 6: LLM Health Status */}
+        <AnimateOnScroll animation="fadeInUp" delay={250}>
+          <div className="mb-8">
+            <LLMHealthIndicator
+              status={llmHealth}
+              loading={healthLoading}
+              onRefresh={refreshHealth}
+            />
           </div>
         </AnimateOnScroll>
 

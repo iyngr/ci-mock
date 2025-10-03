@@ -13,6 +13,9 @@ import Editor from "@monaco-editor/react"
 import LiveReactEditor from "@/components/LiveReactEditor"
 import { apiFetch, withQuery } from "@/lib/apiClient"
 import { questionsResponseSchema } from "@/lib/dto"
+// Phase 6: Timer sync and grace period
+import { useTimerSync, useAutoSubmission, formatTimeRemaining } from "@/lib/hooks"
+import { GracePeriodWarning } from "@/components/AssessmentStatusComponents"
 
 // Warning Modal Component - designed to work in fullscreen
 const WarningModal = ({ onContinue, violationCount }: { onContinue: () => void, violationCount: number }) => (
@@ -108,7 +111,10 @@ export default function Assessment() {
   const [questions, setQuestions] = useState<Question[]>([])
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
   const [answers, setAnswers] = useState<Answer[]>([])
-  const [timeLeft, setTimeLeft] = useState(0) // Will be calculated from server expiration time
+  const [testId, setTestId] = useState<string | null>(null)
+  // Phase 6: Use synced timer instead of local timer
+  const { timeRemaining, graceActive, graceRemaining, timeExpired } = useTimerSync(testId, true)
+  const { submitAssessment } = useAutoSubmission(testId)
   const [loading, setLoading] = useState(true)
   // Pagination state
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -145,6 +151,7 @@ export default function Assessment() {
   // Use refs to avoid stale closure issues
   const violationCountRef = useRef(0)
   const isProcessingRef = useRef(false)
+  const handleViolationRef = useRef<((violationType: string) => void) | null>(null)
   const router = useRouter()
 
   // Cross-browser fullscreen function
@@ -302,6 +309,11 @@ export default function Assessment() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logProctoringEvent]);
 
+  // Store handleViolation in ref for use in event listeners
+  useEffect(() => {
+    handleViolationRef.current = handleViolation;
+  }, [handleViolation]);
+
   const handleReturnToTest = useCallback(async () => {
     setShowWarningModal(false);
     // Force back to fullscreen when returning to test
@@ -391,6 +403,11 @@ export default function Assessment() {
       const data = await response.json()
 
       if (data.success) {
+        // Mark if this was an auto-submission for the success page to display
+        if (isAutoSubmitted) {
+          localStorage.setItem("wasAutoSubmitted", "true")
+        }
+
         // Part 3: Clean up localStorage after successful submission
         localStorage.removeItem("testId")
         localStorage.removeItem("submissionId")
@@ -414,7 +431,10 @@ export default function Assessment() {
       }
     } catch (error) {
       console.error("Failed to submit assessment:", error)
-      // For development: Navigate to success even if submission fails
+      // For development: Mark auto-submission and navigate to success even if submission fails
+      if (violationCount >= 3) {
+        localStorage.setItem("wasAutoSubmitted", "true")
+      }
       localStorage.removeItem("testId")
       localStorage.removeItem("submissionId")
       localStorage.removeItem("expirationTime")
@@ -424,7 +444,7 @@ export default function Assessment() {
       localStorage.removeItem("submissionToken")
       router.push("/candidate/success")
     }
-  }, [answers, proctoringEvents, router]);
+  }, [answers, proctoringEvents, router, violationCount]);
 
   // Validate completeness before actual submission
   const attemptSubmit = useCallback(() => {
@@ -458,12 +478,7 @@ export default function Assessment() {
       return
     }
 
-    // Calculate initial time left based on server expiration time
-    const expirationDate = new Date(storedExpirationTime)
-    const now = new Date()
-    const timeLeftSeconds = Math.max(0, Math.floor((expirationDate.getTime() - now.getTime()) / 1000))
-    setTimeLeft(timeLeftSeconds)
-
+    // Phase 6: Initial time calculation handled by useTimerSync hook
     // Only fetch assessment data once on mount
     let isMounted = true;
 
@@ -514,11 +529,11 @@ export default function Assessment() {
         }
       } catch (err) {
         console.error("Failed paginated fetch, falling back to legacy endpoint", err)
-        // Legacy fallback
+        // Legacy fallback - use submission ID with paginated endpoint
         try {
-          const testId = localStorage.getItem("testId")
-          if (!testId) throw new Error("Missing testId for fallback")
-          const legacy = await apiFetch<any>(`/api/candidate/assessment/${testId}`)
+          const fallbackSubmissionId = localStorage.getItem("submissionId")
+          if (!fallbackSubmissionId) throw new Error("Missing submissionId for fallback")
+          const legacy = await apiFetch<any>(`/api/candidate/assessment/${fallbackSubmissionId}/questions/page?limit=100`)
           try { questionsResponseSchema.parse(legacy) } catch (zerr) { console.error('Legacy payload invalid', zerr) }
           if (legacy.success) {
             setQuestions(legacy.questions)
@@ -542,6 +557,12 @@ export default function Assessment() {
     }
 
     fetchAssessmentData()
+
+    // Phase 6: Store testId for timer sync
+    const storedTestId = localStorage.getItem("testId")
+    if (storedTestId) {
+      setTestId(storedTestId)
+    }
 
     // Legacy autosave support (can be removed in future)
     const saved = localStorage.getItem("assessment_autosave")
@@ -569,23 +590,12 @@ export default function Assessment() {
       });
     }
 
-    // Setup timer - now using server-provided expiration time
-    const timer = setInterval(() => {
-      const currentTime = new Date()
-      const expiration = new Date(storedExpirationTime)
-      const remainingTime = Math.max(0, Math.floor((expiration.getTime() - currentTime.getTime()) / 1000))
+    // Phase 6: Timer sync handled by useTimerSync hook
+    // Auto-submission triggered by grace period expiration
+    // No local timer needed anymore
 
-      setTimeLeft(remainingTime)
-
-      if (remainingTime <= 0) {
-        // Time's up - auto submit
-        handleSubmit()
-        clearInterval(timer)
-      }
-    }, 1000)
-
-    // Setup proctoring
-    setupProctoring()
+    // Setup proctoring - capture cleanup function
+    const cleanupProctoring = setupProctoring()
 
     // Enhanced proctoring - keyboard events and window focus
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -639,6 +649,7 @@ export default function Assessment() {
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       showNotification("🚫 Right-click is disabled during the assessment");
+      handleViolation("right_click");
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -648,11 +659,13 @@ export default function Assessment() {
 
     return () => {
       isMounted = false;
-      clearInterval(timer)
+      // Phase 6: Timer cleanup handled by useTimerSync hook
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("blur", handleWindowBlur);
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
+      // Cleanup proctoring event listeners
+      if (cleanupProctoring) cleanupProctoring();
     }
   }, []) // Empty dependency array - only run once on mount
 
@@ -739,13 +752,17 @@ export default function Assessment() {
             }
           }, 50); // Small delay to ensure fullscreen exit event is processed
 
-          // Then trigger the violation handling
+          // Then trigger the violation handling using ref
           setTimeout(() => {
-            handleViolation("fullscreen_exit");
+            if (handleViolationRef.current) {
+              handleViolationRef.current("fullscreen_exit");
+            }
           }, 100);
         } else {
-          // For 3rd violation, proceed normally
-          handleViolation("fullscreen_exit");
+          // For 3rd violation, proceed normally using ref
+          if (handleViolationRef.current) {
+            handleViolationRef.current("fullscreen_exit");
+          }
         }
       }
     }
@@ -760,8 +777,10 @@ export default function Assessment() {
         }
         setProctoringEvents(prev => [...prev, event])
 
-        // Trigger violation handling for tab switching
-        handleViolation("tab_switch");
+        // Trigger violation handling for tab switching using ref
+        if (handleViolationRef.current) {
+          handleViolationRef.current("tab_switch");
+        }
       }
     }
 
@@ -1014,6 +1033,13 @@ export default function Assessment() {
       onContextMenu={(e) => e.preventDefault()}
     >
       {showWarningModal && <WarningModal onContinue={handleReturnToTest} violationCount={violationCount} />}
+      {/* Phase 6: Grace period warning */}
+      {graceActive && (
+        <GracePeriodWarning
+          secondsRemaining={graceRemaining}
+          onSubmit={() => handleSubmit()}
+        />
+      )}
       {notification && <Notification message={notification} onClose={() => setNotification(null)} />}
       {showIncompleteModal && (
         <IncompleteModal
@@ -1033,7 +1059,7 @@ export default function Assessment() {
         currentQuestionIndex={currentQuestionIndex}
         totalQuestions={questions.length}
         answeredCount={answeredCount}
-        timeLeft={timeLeft}
+        timeLeft={timeRemaining}
         violationCount={violationCount}
         progressPercent={progressPercent}
         isLastQuestion={isLastQuestion}

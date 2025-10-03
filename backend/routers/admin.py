@@ -24,23 +24,25 @@ logger = logging.getLogger(__name__)
 
 # ---------------- Dependency Helpers ---------------- #
 async def get_cosmosdb() -> CosmosDBService:
+    """Dependency to provide CosmosDBService to endpoints
+    
+    NOTE: Must await get_cosmosdb_service() to properly initialize the service.
+    """
     from main import database_client
-    if database_client:
-        # If already a CosmosDBService instance, return as-is
-        if isinstance(database_client, CosmosDBService):
-            return database_client
-        try:
-            # Wrap raw DatabaseProxy in our service abstraction
-            return CosmosDBService(database_client)
-        except Exception as e:
-            logger.warning(f"Failed to wrap database_client in CosmosDBService: {e}")
-    class MockDB:
-        async def count_items(self, *a, **k): return 0
-        async def find_many(self, *a, **k): return []
-        async def create_item(self, *a, **k): return {}
-        async def auto_create_item(self,*a,**k): return {}
-        async def query_items(self,*a,**k): return []
-    return MockDB()
+    from database import get_cosmosdb_service
+    
+    if database_client is None:
+        logger.error("Database client is None - cannot create CosmosDBService")
+        raise HTTPException(
+            status_code=503,
+            detail="Database not available. Check connection configuration."
+        )
+    
+    # Use the async get_cosmosdb_service helper from database.py
+    logger.debug(f"Creating CosmosDBService from database_client type: {type(database_client).__name__}")
+    service = await get_cosmosdb_service(database_client)
+    logger.debug(f"Successfully created CosmosDBService - type: {type(service).__name__}")
+    return service
 
 
 def sanitize_tags_input(tags: List[str]) -> Tuple[List[str], Optional[str]]:
@@ -149,27 +151,538 @@ mock_test_summaries = [
     }
 ]
 
+class GenerateQuestionSpec(BaseModel):
+    """Specification for generating a question via AI"""
+    skill: str
+    question_type: str  # 'mcq', 'coding', 'descriptive'
+    difficulty: str = "medium"  # 'easy', 'medium', 'hard'
+    count: int = 1
+
 class TestInitiationRequestModel(BaseModel):
-    assessment_id: str
+    """
+    Test initiation request supporting both existing and inline assessment creation.
+    
+    Option 1: Use existing assessment
+        - Provide assessment_id
+        
+    Option 2: Create assessment inline
+        - Provide title, duration, questions/generate specs
+        - assessment_id will be auto-generated
+    """
+    # For existing assessment
+    assessment_id: Optional[str] = None
+    
+    # For inline assessment creation
+    title: Optional[str] = None
+    description: Optional[str] = None
+    duration: Optional[int] = 60  # Duration in minutes
+    target_role: Optional[str] = None
+    
+    # Question sources
+    questions: Optional[List[dict]] = None  # Predefined questions
+    generate: Optional[List[dict]] = None  # Generation specs
+    
+    # Candidate info
     candidate_email: str
     candidate_name: Optional[str] = None
+
+
+# ===== Shared Assessment Creation Logic =====
+
+async def create_assessment_inline(
+    title: str,
+    duration: int,
+    created_by: str,
+    background_tasks: BackgroundTasks,
+    db: CosmosDBService,
+    description: Optional[str] = None,
+    target_role: Optional[str] = None,
+    questions: Optional[List[dict]] = None,
+    generate: Optional[List[dict]] = None
+) -> dict:
+    """
+    Create an assessment with optional question generation.
+    
+    This is the shared logic used by both /assessments/create and /tests/initiate
+    endpoints when creating assessments inline.
+    
+    Args:
+        title: Assessment title
+        duration: Duration in minutes
+        created_by: Admin ID/email
+        background_tasks: FastAPI background tasks for async operations
+        db: Database service
+        description: Optional description
+        target_role: Optional target role
+        questions: Optional list of predefined questions
+        generate: Optional list of generation specs
+        
+    Returns:
+        Created assessment document with id and questions
+        
+    Raises:
+        HTTPException: On validation or generation failure
+    """
+    from constants import MIN_QUESTIONS_REQUIRED
+    
+    try:
+        assessment_id = f"assess_{secrets.token_urlsafe(8)}"
+        questions_list = questions or []
+
+        # ===== Question Generation =====
+        if generate:
+            logger.info(f"Generating {len(generate)} question spec(s) for assessment {assessment_id}")
+            
+            for gen_spec in generate:
+                skill = gen_spec.get("skill")
+                skill_slug = normalize_skill(skill)
+                qtype = gen_spec.get("question_type")
+                difficulty = gen_spec.get("difficulty", "medium")
+                count = int(gen_spec.get("num_questions") or gen_spec.get("count", 1))
+                source_preference = gen_spec.get("source_preference", "hybrid")
+
+                logger.info(f"Hybrid generation: {count} {difficulty} {qtype} question(s) for skill: {skill} (preference: {source_preference})")
+
+                # ===== HYBRID APPROACH: DB First, Cache Second, AI Last =====
+                selected_questions = []
+                
+                # Step 1: Try to get from main questions database (the 180+ questions)
+                if source_preference in ["hybrid", "db"]:
+                    try:
+                        db_query = """
+                        SELECT * FROM c 
+                        WHERE c.skill = @skill 
+                        AND c.type = @qtype 
+                        AND c.difficulty = @difficulty
+                        ORDER BY c.usage_count ASC
+                        """
+                        db_params = [
+                            {"name": "@skill", "value": skill_slug},
+                            {"name": "@qtype", "value": qtype},
+                            {"name": "@difficulty", "value": difficulty}
+                        ]
+                        
+                        db_questions = await db.query_items(
+                            CONTAINER["QUESTIONS"],  # Main questions container
+                            db_query,
+                            db_params,
+                            cross_partition=True
+                        )
+                        
+                        if db_questions:
+                            # Take up to 'count' questions from DB
+                            available = min(len(db_questions), count)
+                            # Mark as DB source
+                            for q in db_questions[:available]:
+                                q["source"] = "db"
+                            selected_questions.extend(db_questions[:available])
+                            logger.info(f"Found {available} questions from main DB (out of {count} requested)")
+                        else:
+                            logger.info(f"No questions found in main DB for {skill_slug}/{qtype}/{difficulty}")
+                    except Exception as e:
+                        logger.warning(f"Failed to query main questions DB: {e}")
+                
+                # Step 2: If still need more, check generated_questions cache
+                if len(selected_questions) < count:
+                    needed = count - len(selected_questions)
+                    logger.info(f"Need {needed} more questions, checking AI-generated cache...")
+                    
+                    # ===== PHASE 5: Level 1 Deduplication - Prompt Hash Caching =====
+                    # Calculate prompt hash for cache lookup
+                    prompt_hash = hashlib.sha256(
+                        (skill_slug + qtype + difficulty).encode()
+                    ).hexdigest()
+                    
+                    logger.debug(f"Checking cache for prompt_hash: {prompt_hash}")
+                    
+                    # Check if we have cached questions for this prompt
+                    cached_questions = []
+                    try:
+                        cache_query = "SELECT * FROM c WHERE c.promptHash = @hash ORDER BY c.usage_count ASC"
+                        cache_params = [{"name": "@hash", "value": prompt_hash}]
+                        cached_questions = await db.query_items(
+                            CONTAINER["GENERATED_QUESTIONS"],
+                            cache_query,
+                            cache_params,
+                            cross_partition=True
+                        )
+                        
+                        if cached_questions:
+                            available = min(len(cached_questions), needed)
+                            # Mark as cache source
+                            for q in cached_questions[:available]:
+                                q["source"] = "cache"
+                            selected_questions.extend(cached_questions[:available])
+                            logger.info(
+                                f"Found {available} cached AI-generated question(s) for "
+                                f"skill={skill_slug}, type={qtype}, difficulty={difficulty}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Cache lookup failed: {e}")
+
+                # Step 3: If STILL need more, generate new via AI
+                if len(selected_questions) < count and source_preference in ["hybrid", "ai"]:
+                    needed = count - len(selected_questions)
+                    logger.info(f"Need {needed} more questions, generating via AI service...")
+                    
+                    for i in range(needed):
+                        db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+                        try:
+                            # Call AI service with retry logic
+                            # CRITICAL: Use /generate-question-direct endpoint (not /generate-question)
+                            # The direct endpoint is 10x faster and 95% cheaper
+                            # It bypasses the problematic multi-agent chat system
+                            ai_payload = {
+                                "skill": skill,
+                                "question_type": qtype,
+                                "difficulty": difficulty
+                            }
+                            
+                            logger.debug(f"Calling AI service (direct) for question {i+1}/{needed}")
+                            ai_resp = await call_ai_service("/generate-question-direct", ai_payload)
+                            
+                            # Extract generated text
+                            generated_text = (
+                                ai_resp.get("question") or
+                                ai_resp.get("question_text") or
+                                ai_resp.get("generated") or
+                                ai_resp.get("text")
+                            )
+                            
+                            if not generated_text:
+                                logger.error(f"AI service returned empty question text: {ai_resp}")
+                                raise HTTPException(
+                                    status_code=500,
+                                    detail={
+                                        "error": "empty_generated_question",
+                                        "message": "AI service returned empty question"
+                                    }
+                                )
+
+                            # Create generated question document
+                            prompt_hash = hashlib.sha256(
+                                (skill_slug + qtype + difficulty).encode()
+                            ).hexdigest()
+                            
+                            gen_doc = {
+                                "id": f"gq_{secrets.token_urlsafe(8)}",
+                                "promptHash": prompt_hash,
+                                "skill": skill_slug,
+                                "question_type": qtype,
+                                "difficulty": difficulty,
+                                "generated_text": generated_text,
+                                "original_prompt": f"Generate a {difficulty} {qtype} question for skill {skill}",
+                                "generated_by": ai_resp.get("model", "llm-agent"),
+                                "generation_timestamp": now_ist().isoformat(),
+                                "usage_count": 1  # First use
+                            }
+                            
+                            # For MCQ, extract structured options and correct_answer if provided
+                            if qtype == "mcq":
+                                if "options" in ai_resp and ai_resp["options"]:
+                                    gen_doc["options"] = ai_resp["options"]
+                                if "correct_answer" in ai_resp and ai_resp["correct_answer"]:
+                                    gen_doc["correct_answer"] = ai_resp["correct_answer"]
+
+                            # Persist to generated_questions container
+                            try:
+                                await db.auto_create_item(CONTAINER["GENERATED_QUESTIONS"], gen_doc)
+                                logger.info(f"Persisted generated question: {gen_doc['id']}")
+                            except Exception as e:
+                                logger.warning(f"Could not persist generated question: {e}")
+
+                            # Add to selected questions with proper MCQ structure
+                            question_obj = {
+                                "id": gen_doc["id"],
+                                "text": generated_text,
+                                "type": qtype,
+                                "skill": skill,
+                                "difficulty": difficulty,
+                                "source": "ai-generated"
+                            }
+                            
+                            # Include MCQ-specific fields if present
+                            if qtype == "mcq":
+                                if "options" in gen_doc:
+                                    question_obj["options"] = gen_doc["options"]
+                                if "correct_answer" in gen_doc:
+                                    question_obj["correctAnswer"] = gen_doc["correct_answer"]
+                            
+                            selected_questions.append(question_obj)
+
+                            # Queue for RAG indexing (background)
+                            background_tasks.add_task(_queue_indexing, db, gen_doc)
+                            
+                            logger.info(f"Generated question {i+1}/{needed} successfully")
+
+                        except HTTPException:
+                            raise
+                        except Exception as e:
+                            logger.error(f"Failed to generate question {i+1}/{needed}: {e}")
+                            raise HTTPException(
+                                status_code=500,
+                                detail={
+                                    "error": "question_generation_failed",
+                                    "message": f"Failed to generate question: {str(e)}"
+                                }
+                            )
+
+                # Now build assessment questions from selected_questions
+                db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+                for question in selected_questions:
+                    # Update usage count if from DB or cache
+                    source = question.get("source", "unknown")
+                    if source == "db":
+                        # Increment usage count for DB questions
+                        try:
+                            db_question = question.copy()
+                            db_question["usage_count"] = db_question.get("usage_count", 0) + 1
+                            await db.upsert_item(CONTAINER["QUESTIONS"], db_question)
+                            logger.debug(f"Updated usage count for DB question {question['id']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to update DB question usage count: {e}")
+                    
+                    elif source == "cache":
+                        # Increment usage count for cached AI questions
+                        try:
+                            cached_question = question.copy()
+                            cached_question["usage_count"] = cached_question.get("usage_count", 0) + 1
+                            await db.upsert_item(CONTAINER["GENERATED_QUESTIONS"], cached_question)
+                            logger.debug(f"Updated usage count for cached question {question['id']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to update cache usage count: {e}")
+                    
+                    # Add to assessment questions list
+                    questions_list.append({
+                        "id": question["id"],
+                        "text": question.get("text") or question.get("generated_text") or question.get("question_text", ""),
+                        "type": question["type"] if "type" in question else question.get("question_type", qtype),
+                        "skill": skill,
+                        "difficulty": difficulty,
+                        "source": source
+                    })
+                
+                logger.info(f"Added {len(selected_questions)} questions for {skill}/{qtype}/{difficulty}")
+
+        # ===== Validate Minimum Questions =====
+        if len(questions_list) < MIN_QUESTIONS_REQUIRED:
+            logger.error(
+                f"Insufficient questions: {len(questions_list)}/{MIN_QUESTIONS_REQUIRED}"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "insufficient_questions",
+                    "message": f"Assessment must have at least {MIN_QUESTIONS_REQUIRED} questions",
+                    "current_count": len(questions_list),
+                    "required_count": MIN_QUESTIONS_REQUIRED
+                }
+            )
+
+        # ===== Create Assessment Document =====
+        assessment_doc = {
+            "id": assessment_id,
+            "title": title,
+            "description": description,
+            "duration": duration,
+            "target_role": target_role,
+            "created_by": created_by,
+            "created_at": now_ist().isoformat(),
+            "questions": questions_list,
+            "metadata": {
+                "question_count": len(questions_list),
+                "has_generated": bool(generate),
+                "generation_timestamp": now_ist().isoformat() if generate else None
+            }
+        }
+
+        # Persist assessment
+        try:
+            await db.auto_create_item(CONTAINER["ASSESSMENTS"], assessment_doc)
+            logger.info(
+                f"Created assessment {assessment_id} with {len(questions_list)} questions"
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist assessment: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "assessment_persistence_failed",
+                    "message": "Failed to save assessment to database"
+                }
+            )
+
+        return assessment_doc
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error in create_assessment_inline: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "assessment_creation_failed",
+                "message": f"Failed to create assessment: {str(e)}"
+            }
+        )
+
 
 @router.post("/tests/initiate")
 async def initiate_test(
     request: TestInitiationRequestModel,
+    background_tasks: BackgroundTasks,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     x_source: Optional[str] = Header(None, alias="X-Source")
 ):
-    """Create a test (submission) record for a candidate for a given assessment.
-    This is a minimal reconstruction of the lost endpoint to unblock frontend usage.
     """
+    Create a test (submission) record for a candidate.
+    
+    Supports two modes:
+    1. Use existing assessment: Provide assessment_id
+    2. Create assessment inline: Provide title + question specs
+    
+    If question generation is requested, validates llm-agent availability first.
+    """
+    # WORKAROUND: Manually call get_cosmosdb() instead of using Depends
+    # FastAPI was not calling the dependency function for some reason
+    db = await get_cosmosdb()
+    
     try:
         # Basic email normalization & validation
         email_raw = (request.candidate_email or '').strip().lower()
         if not email_raw or '@' not in email_raw:
             raise HTTPException(status_code=400, detail="Valid candidate_email is required")
 
+        assessment_id = request.assessment_id
+        
+        # ===== OPTION 1: Create Assessment Inline =====
+        if not assessment_id:
+            logger.info("No assessment_id provided, creating assessment inline")
+            
+            # Validate inline creation requirements
+            if not request.title:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "missing_title",
+                        "message": "Must provide 'title' when creating assessment inline (no assessment_id)"
+                    }
+                )
+            
+            if not request.questions and not request.generate:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "missing_questions",
+                        "message": "Must provide 'questions' or 'generate' specs when creating assessment inline"
+                    }
+                )
+            
+            # Check llm-agent health if generation requested
+            if request.generate:
+                logger.info(f"Question generation requested, checking llm-agent health")
+                health_check = await check_llm_agent_health()
+                
+                if not health_check["available"]:
+                    logger.error(f"LLM agent unavailable: {health_check}")
+                    raise HTTPException(
+                        status_code=503,
+                        detail={
+                            "error": "llm_agent_unavailable",
+                            "message": "Question generation service is currently unavailable",
+                            "service_status": health_check["status"],
+                            "service_error": health_check.get("error")
+                        }
+                    )
+                
+                logger.info(f"LLM agent health check passed: {health_check['status']}")
+            
+            # Create assessment inline using shared logic
+            try:
+                assessment_doc = await create_assessment_inline(
+                    title=request.title,
+                    description=request.description,
+                    duration=request.duration or 60,
+                    target_role=request.target_role,
+                    questions=request.questions,
+                    generate=request.generate,
+                    created_by=admin.get("admin_id") or admin.get("email"),
+                    background_tasks=background_tasks,
+                    db=db
+                )
+                assessment_id = assessment_doc["id"]
+                
+                logger.info(
+                    f"Created assessment inline: {assessment_id} with {len(assessment_doc['questions'])} questions"
+                )
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception(f"Failed to create assessment inline: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": "assessment_creation_failed",
+                        "message": f"Failed to create assessment: {str(e)}"
+                    }
+                )
+        
+        # ===== OPTION 2: Use Existing Assessment =====
+        else:
+            logger.info(f"Using existing assessment: {assessment_id}")
+            
+            # Validate assessment exists and is ready
+            try:
+                # Fetch assessment document to validate
+                assessment_query = "SELECT * FROM c WHERE c.id = @assessment_id"
+                assessment_params = [{"name": "@assessment_id", "value": assessment_id}]
+                assessments = await db.query_items(
+                    CONTAINER["ASSESSMENTS"],
+                    assessment_query,
+                    assessment_params,
+                    cross_partition=True
+                )
+                
+                if not assessments:
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": "assessment_not_found",
+                            "message": f"Assessment {assessment_id} does not exist"
+                        }
+                    )
+                
+                assessment = assessments[0]
+                questions = assessment.get("questions", [])
+                
+                if not questions or len(questions) < 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "assessment_incomplete",
+                            "message": f"Assessment has no questions. Please add questions first."
+                        }
+                    )
+                
+                logger.info(f"Assessment validation passed: {len(questions)} questions")
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception(f"Assessment validation failed with type check - db type: {type(db).__name__}, has query_items: {hasattr(db, 'query_items')}")
+                logger.error(f"Assessment validation error: {e}")
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": "assessment_validation_failed",
+                        "message": str(e),
+                        "assessment_id": assessment_id,
+                        "debug_info": f"db_type={type(db).__name__}"
+                    }
+                )
+
+        # ===== Create Submission (Test Instance) =====
         test_id = f"test_{secrets.token_urlsafe(8)}"
         login_code = secrets.token_hex(3)
         expires_at = now_ist() + timedelta(hours=24)
@@ -181,7 +694,7 @@ async def initiate_test(
 
         submission_doc = {
             "id": test_id,
-            "assessment_id": request.assessment_id,
+            "assessment_id": assessment_id,
             "candidate_email": email_raw,
             "candidate_name": request.candidate_name,
             "status": "pending",
@@ -192,37 +705,58 @@ async def initiate_test(
             "overall_score": None,
             "source": source_val,
         }
+        
         try:
-            await db.create_item("submissions", submission_doc, partition_key=request.assessment_id)
+            await db.create_item("submissions", submission_doc, partition_key=assessment_id)
+            logger.info(f"Created submission {test_id} for assessment {assessment_id}")
         except Exception as e:
-            logger.warning(f"Persist submission failed (dev continue): {e}")
+            logger.error(f"Failed to persist submission: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "submission_creation_failed",
+                    "message": "Failed to create test submission"
+                }
+            )
+        
         return {
             "success": True,
             "testId": test_id,
+            "assessmentId": assessment_id,
             "loginCode": login_code,
             "expiresAt": expires_at.isoformat(),
             "message": "Test created successfully",
             "source": source_val,
         }
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"initiate_test error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create test")
+        logger.exception(f"initiate_test error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "test_initiation_failed",
+                "message": "Failed to create test"
+            }
+        )
 
 
 # Backward-compatible alias for older frontends that POST to /tests
 @router.post("/tests")
 async def initiate_test_alias(
     request: Request,
+    background_tasks: BackgroundTasks,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    x_source: Optional[str] = Header(None, alias="X-Source")
 ):
     """Backward-compatible endpoint that accepts JSON, form data, or query params
     and delegates to the canonical /tests/initiate handler.
     This helps older tests/clients that post as form-data or with different field
     names (e.g., assessmentId vs assessment_id).
     """
+    # WORKAROUND: Manually call get_cosmosdb() instead of using Depends
+    db = await get_cosmosdb()
     payload = {}
     # Try JSON first
     try:
@@ -281,13 +815,25 @@ async def initiate_test_alias(
     assessment_id = _recursive_find(payload, ["assessment_id", "assessmentId", "assessment"])
     candidate_email = _recursive_find(payload, ["candidate_email", "candidateEmail", "email"])
     candidate_name = _recursive_find(payload, ["candidate_name", "candidateName", "name"])
+    
+    # Extract inline assessment creation fields
+    title = _recursive_find(payload, ["title", "assessment_title", "assessmentTitle"])
+    description = _recursive_find(payload, ["description", "assessment_description"])
+    duration = _recursive_find(payload, ["duration", "duration_minutes", "durationMinutes"])
+    target_role = _recursive_find(payload, ["target_role", "targetRole", "developer_role", "role"])
+    
+    # Extract question sources
+    questions = payload.get("questions") or payload.get("question_list")
+    generate = payload.get("generate") or payload.get("generation_specs")
 
     if not assessment_id or not candidate_email:
         # If assessment_id missing but caller provided role/duration metadata,
         # create a minimal assessment on-the-fly and use that id. This helps
         # frontends/tests that submit 'developer_role' and 'duration_hours'
         # instead of an explicit assessment id.
-        if not assessment_id:
+        # 
+        # IMPORTANT: Skip auto-creation if inline creation fields (title/generate/questions) are provided
+        if not assessment_id and not title and not generate and not questions:
             role_guess = _recursive_find(payload, ["developer_role", "role", "target_role", "targetRole"])
             duration_guess = _recursive_find(payload, ["duration_hours", "duration", "durationMinutes", "duration_minutes"]) or 60
             if role_guess:
@@ -311,74 +857,51 @@ async def initiate_test_alias(
                 except Exception:
                     assessment_id = None
 
-        if not assessment_id or not candidate_email:
-            # Log the full payload with a short request id to aid debugging of
-            # client payload shapes. Return the id to the caller so they can
-            # reference the log line when reporting failures.
+        # Validate we have either:
+        # 1. assessment_id (use existing), OR
+        # 2. candidate_email + (title OR generate OR questions) for inline creation
+        if not candidate_email:
+            raise HTTPException(status_code=400, detail={
+                "message": "Missing required field: candidate_email",
+                "example_json": {"candidate_email": "foo@example.com"}
+            })
+        
+        if not assessment_id and not title and not generate and not questions:
+            # No assessment_id AND no inline creation fields
             req_id = secrets.token_urlsafe(6)
             try:
-                # Truncate payload for logs to avoid huge entries
                 preview = str(payload)[:2000]
             except Exception:
                 preview = "<unserializable>"
             logger.info(f"initiate_test_alias missing fields (req={req_id}) payload_preview={preview}")
-            # Also emit headers for context (authorization may be missing or wrong)
-            try:
-                hdrs = dict(request.headers)
-                logger.info(f"initiate_test_alias headers (req={req_id}) keys={list(hdrs.keys())}")
-            except Exception:
-                pass
-
-            # Return helpful message with reference id
+            
             raise HTTPException(status_code=400, detail={
-                "message": "Missing required fields. Provide assessment_id and candidate_email.",
-                "example_json": {"assessment_id": "assessment_123", "candidate_email": "foo@example.com", "candidate_name": "Optional Name"},
+                "message": "Must provide either 'assessment_id' OR inline creation fields (title/generate/questions).",
+                "example_existing": {"assessment_id": "assessment_123", "candidate_email": "foo@example.com"},
+                "example_inline": {"candidate_email": "foo@example.com", "title": "Python Assessment", "generate": [{"skill": "python", "num_questions": 5}]},
                 "debug_request_id": req_id,
                 "debug_endpoint": "/api/admin/tests/debug"
             })
 
     model = TestInitiationRequestModel(
-        assessment_id=str(assessment_id),
+        assessment_id=str(assessment_id) if assessment_id else None,
         candidate_email=str(candidate_email),
-        candidate_name=str(candidate_name) if candidate_name else None
+        candidate_name=str(candidate_name) if candidate_name else None,
+        # Pass through inline assessment creation fields
+        title=str(title) if title else None,
+        description=str(description) if description else None,
+        duration=int(duration) if duration else None,
+        target_role=str(target_role) if target_role else None,
+        questions=questions,
+        generate=generate
     )
 
-    # Determine source from header or query param so it is forwarded to the
-    # canonical initiate_test handler. Frontend may include ?source=smart-mock
-    # or ?source=talens-interview (or set X-Source header). Validate values.
-    source_val = None
-    try:
-        hdr = request.headers.get("X-Source")
-        if hdr:
-            source_val = str(hdr).strip().lower()
-        else:
-            q = dict(request.query_params)
-            if "source" in q and q.get("source"):
-                source_val = str(q.get("source")).strip().lower()
-    except Exception:
-        source_val = None
+    # Validate and normalize source from header
+    source_val = (x_source or "smart-mock").strip().lower()
+    if source_val not in {"smart-mock", "talens-interview"}:
+        source_val = "smart-mock"
 
-    if source_val and source_val not in {"smart-mock", "talens-interview"}:
-        source_val = None
-
-    # If an assessment was auto-created above, ensure we persist the source
-    # on that assessment document when possible. The auto-creation block set
-    # `assessment_id` and attempted to persist `assessment_doc` to the DB.
-    try:
-        # Attempt to patch the assessment document stored earlier in this
-        # function's scope. If it wasn't created or persisted, this will be
-        # a no-op.
-        if assessment_id and 'assessment_doc' in locals() and source_val:
-            assessment_doc['source'] = source_val
-            try:
-                await db.upsert_item(CONTAINER['ASSESSMENTS'], assessment_doc)
-            except Exception:
-                # Non-fatal: we only attempt to attach source for convenience
-                logger.debug(f"Could not upsert assessment with source: {assessment_id}")
-    except Exception:
-        pass
-
-    return await initiate_test(model, admin, db, x_source=source_val)
+    return await initiate_test(model, background_tasks, admin, x_source=source_val)
 
 
 @router.post("/tests/debug")
@@ -547,6 +1070,7 @@ async def _background_enrich_and_index(db: CosmosDBService, question_doc: Dict[s
     This is used for Phase 3 (async/background enrichment). It retries once and
     logs failures but does not block the original import.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         text = question_doc.get("text", "")
         # Call rewrite endpoint
@@ -604,12 +1128,12 @@ async def _background_enrich_and_index(db: CosmosDBService, question_doc: Dict[s
 @router.get("/dashboard")
 async def get_dashboard(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     source: Optional[str] = None
 ) -> dict:
     """Return dashboard statistics and recent submissions (normalized).
     Falls back to mock data ONLY on real exceptions (not on empty result sets).
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Validate optional source filter
         query_filter = {}
@@ -682,7 +1206,6 @@ async def get_dashboard(
 @router.get("/tests")
 async def get_tests(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     source: Optional[str] = None
 ) -> List[dict]:
     """Get all submissions for admin dashboard.
@@ -690,6 +1213,7 @@ async def get_tests(
     Optional query parameter `source` filters logical product context
     (e.g., smart-mock, talens-interview). If omitted returns all.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         query = {}
         if source:
@@ -710,7 +1234,6 @@ async def get_tests(
 @router.get("/submissions")
 async def get_all_submissions(
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     source: Optional[str] = None
 ) -> List[Submission]:
     """Get list of assessment submissions.
@@ -718,6 +1241,7 @@ async def get_all_submissions(
     Optional query parameter `source` filters logical product context
     (e.g., smart-mock, talens-interview). If omitted returns all.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         query = {}
         if source:
@@ -735,10 +1259,10 @@ async def get_all_submissions(
 
 @router.get("/candidates") 
 async def get_all_candidates(
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ) -> List[dict]:
     """Get list of all candidates who have taken tests"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Cosmos DB SQL query to group candidates
         query = """
@@ -761,8 +1285,7 @@ async def get_all_candidates(
 
 @router.get("/assessments")
 async def get_all_assessments(
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ) -> List[dict]:
     """Return assessments with lenient normalization.
 
@@ -773,6 +1296,7 @@ async def get_all_assessments(
       * Have question `type` values in uppercase (MCQ / DESCRIPTIVE / CODING)
     This endpoint now normalizes and filters rather than failing the entire list.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         raw_items = await db.find_many("assessments", {}, limit=200) or []
     except Exception as e:
@@ -782,6 +1306,7 @@ async def get_all_assessments(
     normalized: List[dict] = []
     for item in raw_items:
         if not isinstance(item, dict):
+            db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
             continue
         # Strip Cosmos system fields
         for sys_field in ["_rid", "_self", "_etag", "_attachments", "_ts"]:
@@ -851,10 +1376,10 @@ class CreateAssessmentAdminRequest(BaseModel):
 async def create_assessment_admin(
     request: CreateAssessmentAdminRequest,
     background_tasks: BackgroundTasks,
-    admin: dict = Depends(require_write_permission),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(require_write_permission)
 ):
     """Create a new assessment and optionally generate questions via AI service."""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         assessment_id = f"assess_{secrets.token_urlsafe(8)}"
 
@@ -937,13 +1462,14 @@ async def create_assessment_admin(
 async def get_detailed_report(
     result_id: str,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     source: Optional[str] = None
 ):
     """Return detailed report for a submission with normalized fields and lifecycle events.
 
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     Removes unused personal placeholders and derives strengths / areas dynamically.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # If a source filter is provided, ensure it is valid and include it in the lookup
         if source:
@@ -1038,6 +1564,64 @@ async def get_detailed_report(
     except Exception as e:
         logger.error(f"get_detailed_report error: {e}")
         raise HTTPException(status_code=500, detail="Failed to build report")
+
+
+@router.get("/report/autogen/{submission_id}")
+async def get_autogen_report(
+    submission_id: str,
+    admin: dict = Depends(verify_admin_token)
+):
+    """
+    Retrieve the Autogen-generated comprehensive assessment report for a submission.
+    
+    Phase 3: Returns structured report with executive summary, detailed analysis,
+    competency breakdown, and recommendations.
+    """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+    try:
+        # Find the most recent report for this submission
+        reports = await db.find(
+            "reports",
+            {"submission_id": submission_id}
+        )
+        
+        if not reports:
+            raise HTTPException(status_code=404, detail="No report found for this submission")
+        
+        # Sort by created_at and get most recent
+        sorted_reports = sorted(reports, key=lambda r: r.get("created_at") or r.get("createdAt") or "", reverse=True)
+        latest_report = sorted_reports[0]
+        
+        # Fetch submission for additional context
+        submission = await db.find_one("submissions", {"id": submission_id})
+        
+        # Format response
+        return {
+            "success": True,
+            "report": {
+                "id": latest_report.get("id"),
+                "submission_id": submission_id,
+                "candidate_email": latest_report.get("candidate_email") or latest_report.get("candidateEmail"),
+                "executive_summary": latest_report.get("executive_summary") or latest_report.get("executiveSummary"),
+                "detailed_analysis": latest_report.get("detailed_analysis") or latest_report.get("detailedAnalysis"),
+                "recommendations": latest_report.get("recommendations", []),
+                "competency_breakdown": latest_report.get("competency_breakdown") or latest_report.get("competencyBreakdown"),
+                "strengths": latest_report.get("strengths", []),
+                "areas_for_development": latest_report.get("areas_for_development") or latest_report.get("areasForDevelopment", []),
+                "overall_score": latest_report.get("overall_score") or latest_report.get("overallScore"),
+                "percentage_score": latest_report.get("percentage_score") or latest_report.get("percentageScore"),
+                "generated_at": latest_report.get("generated_at") or latest_report.get("generatedAt"),
+                "generation_method": latest_report.get("generation_method") or latest_report.get("generationMethod"),
+                "generation_duration_seconds": latest_report.get("generation_duration_seconds") or latest_report.get("generationDurationSeconds")
+            },
+            "submission_status": submission.get("status") if submission else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error retrieving Autogen report for {submission_id}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve report: {str(e)}")
 
 
 # ===========================
@@ -1161,65 +1745,215 @@ class BulkValidationSummary(BaseModel):
 # Temporary storage for bulk upload sessions
 bulk_upload_sessions: Dict[str, Dict[str, Any]] = {}
 
-async def call_ai_service(endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper function to call the AI service endpoints"""
+# ===== LLM Agent Health Check =====
+
+async def check_llm_agent_health() -> dict:
+    """
+    Check if llm-agent service is reachable and healthy.
+    Returns dict with 'available', 'status', 'error' (if any)
+    """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{AI_SERVICE_URL}{endpoint}", json=data)
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{AI_SERVICE_URL}/health")
             response.raise_for_status()
-            text = response.text
-            logger.debug(f"AI service response text for {endpoint}: {text}")
-            try:
-                return response.json()
-            except Exception as json_err:
-                # If the AI service returned a non-JSON or malformed payload,
-                # consider this an error — fail fast so we don't persist or index
-                # questions based on incomplete AI output.
-                logger.error(f"Failed to parse AI service JSON response for {endpoint}: {json_err}")
-                raise HTTPException(status_code=502, detail=f"AI service returned invalid JSON for {endpoint}")
+            return {
+                "available": True,
+                "status": "healthy",
+                "url": AI_SERVICE_URL
+            }
+    except httpx.TimeoutException:
+        logger.warning(f"LLM agent health check timeout: {AI_SERVICE_URL}")
+        return {
+            "available": False,
+            "status": "timeout",
+            "error": "Health check timed out after 5 seconds",
+            "url": AI_SERVICE_URL
+        }
     except httpx.RequestError as e:
-        # Network / connection-level failure when contacting the AI service.
-        # Fail fast: log and raise an HTTP 503 so callers do not proceed to
-        # persist or index questions without proper validation/embeddings.
-        logger.error(f"AI service request failed: {e}")
-        raise HTTPException(status_code=503, detail=f"AI service request failed: {str(e)}")
-    except httpx.HTTPStatusError as e:
-        # HTTP-level error returned by AI service (4xx/5xx) — propagate as-is
-        logger.error(f"AI service HTTP error: {e}")
-        status_code = getattr(e.response, "status_code", 503) or 503
-        # Try to include response text for diagnostics
+        logger.warning(f"LLM agent health check failed: {e}")
+        return {
+            "available": False,
+            "status": "unreachable",
+            "error": str(e),
+            "url": AI_SERVICE_URL
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error in LLM agent health check: {e}")
+        return {
+            "available": False,
+            "status": "error",
+            "error": str(e),
+            "url": AI_SERVICE_URL
+        }
+
+
+async def call_ai_service_with_retry(
+    endpoint: str,
+    data: Dict[str, Any],
+    max_retries: int = 3,
+    timeout: float = 120.0
+) -> Dict[str, Any]:
+    """
+    Call AI service with retry logic and extended timeout.
+    
+    Args:
+        endpoint: API endpoint path
+        data: Request payload
+        max_retries: Maximum retry attempts (default: 3)
+        timeout: Request timeout in seconds (default: 120s)
+        
+    Returns:
+        Response JSON from AI service
+        
+    Raises:
+        HTTPException: On failure after all retries
+    """
+    from constants import LLM_AGENT_MAX_RETRIES, LLM_AGENT_TIMEOUT
+    
+    # Use environment config if not specified
+    max_retries = max_retries or LLM_AGENT_MAX_RETRIES
+    timeout = timeout or LLM_AGENT_TIMEOUT
+    
+    last_error = None
+    
+    for attempt in range(1, max_retries + 1):
         try:
-            detail_text = e.response.text
-        except Exception:
-            detail_text = "AI service error"
-        raise HTTPException(status_code=status_code, detail=f"AI service error: {detail_text}")
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                logger.info(f"AI service call attempt {attempt}/{max_retries}: {endpoint}")
+                response = await client.post(f"{AI_SERVICE_URL}{endpoint}", json=data)
+                response.raise_for_status()
+                
+                # Parse and validate JSON response
+                try:
+                    result = response.json()
+                    logger.info(f"AI service call succeeded on attempt {attempt}")
+                    return result
+                except Exception as json_err:
+                    logger.error(f"Failed to parse AI service JSON (attempt {attempt}): {json_err}")
+                    if attempt == max_retries:
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"AI service returned invalid JSON for {endpoint}"
+                        )
+                    last_error = json_err
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                    
+        except httpx.TimeoutException as e:
+            logger.warning(f"AI service timeout (attempt {attempt}/{max_retries}): {e}")
+            last_error = e
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 2s, 4s, 8s
+                continue
+            raise HTTPException(
+                status_code=504,
+                detail=f"AI service timeout after {max_retries} attempts"
+            )
+            
+        except httpx.RequestError as e:
+            logger.error(f"AI service request failed (attempt {attempt}/{max_retries}): {e}")
+            last_error = e
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise HTTPException(
+                status_code=503,
+                detail=f"AI service request failed after {max_retries} attempts: {str(e)}"
+            )
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"AI service HTTP error (attempt {attempt}/{max_retries}): {e}")
+            status_code = getattr(e.response, "status_code", 503) or 503
+            
+            # Don't retry on client errors (4xx)
+            if 400 <= status_code < 500:
+                try:
+                    detail_text = e.response.text
+                except Exception:
+                    detail_text = "AI service client error"
+                raise HTTPException(status_code=status_code, detail=f"AI service error: {detail_text}")
+            
+            # Retry on server errors (5xx)
+            last_error = e
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+                continue
+                
+            try:
+                detail_text = e.response.text
+            except Exception:
+                detail_text = "AI service server error"
+            raise HTTPException(status_code=status_code, detail=f"AI service error: {detail_text}")
+    
+    # Should not reach here, but handle gracefully
+    raise HTTPException(
+        status_code=503,
+        detail=f"AI service call failed after {max_retries} attempts"
+    )
+
+
+async def call_ai_service(endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Helper function to call the AI service endpoints.
+    Now delegates to call_ai_service_with_retry for robustness.
+    """
+    return await call_ai_service_with_retry(endpoint, data)
 
 @router.post("/questions/add-single")
 async def add_single_question(
     request: SingleQuestionRequest,
     admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb),
     background_tasks: BackgroundTasks = None,
 ):
     """Add a single question with AI validation and enhancement"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         logger.info(f"Adding single question: {request.text[:50]}...")
         
-        # Step 1: Validate question for duplicates
-        validation_result = await call_ai_service("/questions/validate", {
-            "question_text": request.text
-        })
+        # Step 0: Hash-based duplicate check (fast, doesn't require AI service)
+        question_hash = hashlib.sha256(request.text.strip().lower().encode()).hexdigest()
         
-        if validation_result["status"] == "exact_duplicate":
-            raise HTTPException(
-                status_code=409, 
-                detail="This question already exists in the database"
+        try:
+            hash_query = "SELECT * FROM c WHERE c.question_hash = @hash"
+            hash_params = [{"name": "@hash", "value": question_hash}]
+            existing_questions = await db.query_items(
+                CONTAINER["QUESTIONS"],
+                hash_query,
+                hash_params,
+                cross_partition=True
             )
-        elif validation_result["status"] == "similar_duplicate":
-            raise HTTPException(
-                status_code=409,
-                detail="Similar questions found. Please review and modify your question."
-            )
+            
+            if existing_questions:
+                logger.warning(f"Exact duplicate found via hash check: {question_hash}")
+                raise HTTPException(
+                    status_code=409,
+                    detail="This exact question already exists in the database"
+                )
+        except HTTPException:
+            raise
+        except Exception as hash_err:
+            logger.warning(f"Hash-based duplicate check failed (non-critical): {hash_err}")
+        
+        # Step 1: Validate question for duplicates using AI service
+        try:
+            validation_result = await call_ai_service("/questions/validate", {
+                "question_text": request.text
+            })
+            
+            if validation_result["status"] == "exact_duplicate":
+                raise HTTPException(
+                    status_code=409, 
+                    detail="This question already exists in the database"
+                )
+            elif validation_result["status"] == "similar_duplicate":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Similar questions found. Please review and modify your question."
+                )
+        except HTTPException:
+            raise
+        except Exception as ai_err:
+            logger.warning(f"AI validation failed (non-critical, hash check already passed): {ai_err}")
         
         # Step 2: Enhance question with AI
         rewrite_result = await call_ai_service("/questions/rewrite", {
@@ -1238,7 +1972,7 @@ async def add_single_question(
             "suggested_difficulty": rewrite_result.get("suggested_difficulty") or rewrite_result.get("suggestedDifficulty"),
             "created_by": admin["admin_id"],
             "created_at": now_ist().isoformat(),
-            "question_hash": hashlib.sha256(request.text.strip().lower().encode()).hexdigest()
+            "question_hash": question_hash  # Use the hash we computed earlier for duplicate check
         }
         
         # Add type-specific fields
@@ -1384,9 +2118,9 @@ async def add_single_question(
 @router.post("/questions")
 async def add_single_question_alias(
     request: SingleQuestionRequest,
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     return await add_single_question(request, admin, db)
 
 
@@ -1394,10 +2128,10 @@ async def add_single_question_alias(
 async def generate_question_admin(
     request: GenerateQuestionAdminRequest,
     background_tasks: BackgroundTasks,
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Admin endpoint to generate a question via the AI service, persist it, and index it."""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         logger.info(f"Admin requested generation for skill={request.skill}, type={request.question_type}")
 
@@ -1458,13 +2192,219 @@ async def generate_question_admin(
         logger.error(f"Error in generate_question_admin: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate question")
 
+
+@router.post("/questions/check-duplicate")
+async def check_question_duplicate(
+    request: dict,
+    admin: dict = Depends(verify_admin_token)
+):
+    """Check if a question is duplicate or similar to existing questions.
+    
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+    Implements three levels of deduplication (all active):
+    1. Prompt Hash: Exact match on skill + type + difficulty combination
+    2. Content Similarity: Exact text match (normalized, case-insensitive)
+    3. AI-Powered Semantic Similarity: Uses AI service to detect similar meaning
+    
+    This endpoint uses the same AI validation service as the single question
+    add flow, ensuring consistent duplicate detection across all entry points.
+    
+    Request body:
+        {
+            "text": "What is React?",
+            "skill": "React",
+            "question_type": "mcq",
+            "difficulty": "easy"
+        }
+    
+    Returns:
+        {
+            "is_duplicate": true/false,
+            "duplicate_type": "exact_prompt" | "exact_text" | "ai_exact_duplicate" | "ai_similar" | null,
+            "duplicate_count": int,
+            "existing_questions": [...],
+            "recommendation": "reuse" | "generate_new",
+            "message": str,
+            "checks_performed": {
+                "prompt_hash": true,
+                "exact_text": true,
+                "semantic_similarity": true
+            }
+        }
+    """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+    from constants import CONTAINER
+    
+    try:
+        question_text = request.get("text", "") or request.get("question_text", "")
+        skill = request.get("skill", "")
+        question_type = request.get("question_type", "")
+        difficulty = request.get("difficulty", "medium")
+        
+        # If skill is not provided, try to derive from tags
+        if not skill:
+            tags = request.get("tags", [])
+            if tags and isinstance(tags, list) and len(tags) > 0:
+                skill = tags[0]  # Use first tag as skill
+        
+        if not question_text or not skill:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "invalid_request", "message": "text and skill are required"}
+            )
+        
+        skill_slug = normalize_skill(skill)
+        duplicates = []
+        duplicate_type = None
+        
+        # ===== Level 1: Prompt Hash Check =====
+        prompt_hash = hashlib.sha256(
+            (skill_slug + question_type + difficulty).encode()
+        ).hexdigest()
+        
+        logger.debug(f"Checking duplicates for prompt_hash: {prompt_hash}")
+        
+        try:
+            hash_query = "SELECT * FROM c WHERE c.promptHash = @hash"
+            hash_params = [{"name": "@hash", "value": prompt_hash}]
+            hash_matches = await db.query_items(
+                CONTAINER["GENERATED_QUESTIONS"],
+                hash_query,
+                hash_params,
+                cross_partition=True
+            )
+            
+            if hash_matches:
+                logger.info(f"Found {len(hash_matches)} questions with same prompt hash")
+                duplicate_type = "exact_prompt"
+                duplicates.extend(hash_matches)
+        except Exception as e:
+            logger.warning(f"Prompt hash check failed: {e}")
+        
+        # ===== Level 2: Exact Text Match =====
+        # Normalize text for comparison (lowercase, strip)
+        normalized_text = question_text.lower().strip()
+        
+        try:
+            text_query = "SELECT * FROM c WHERE LOWER(c.generated_text) = @text"
+            text_params = [{"name": "@text", "value": normalized_text}]
+            text_matches = await db.query_items(
+                CONTAINER["GENERATED_QUESTIONS"],
+                text_query,
+                text_params,
+                cross_partition=True
+            )
+            
+            if text_matches:
+                logger.info(f"Found {len(text_matches)} questions with exact text match")
+                duplicate_type = "exact_text"
+                # Add any new matches not already in duplicates
+                existing_ids = {d["id"] for d in duplicates}
+                for match in text_matches:
+                    if match["id"] not in existing_ids:
+                        duplicates.append(match)
+        except Exception as e:
+            logger.warning(f"Exact text check failed: {e}")
+        
+        # ===== Level 3: AI-Powered Semantic Similarity =====
+        # Use the same AI validation service as single question add for consistency
+        try:
+            logger.debug("Performing AI-powered semantic similarity check")
+            validation_result = await call_ai_service("/questions/validate", {
+                "question_text": question_text
+            })
+            
+            if validation_result.get("status") == "exact_duplicate":
+                logger.info("AI service detected exact duplicate")
+                duplicate_type = duplicate_type or "ai_exact_duplicate"
+                # AI service might return duplicate questions in response
+                if "duplicate_questions" in validation_result:
+                    for ai_dup in validation_result.get("duplicate_questions", []):
+                        existing_ids = {d["id"] for d in duplicates}
+                        if ai_dup.get("id") not in existing_ids:
+                            duplicates.append(ai_dup)
+                            
+            elif validation_result.get("status") == "similar_duplicate":
+                logger.info("AI service detected similar duplicates")
+                duplicate_type = duplicate_type or "ai_similar"
+                # Add similar questions from AI response
+                similar_questions = validation_result.get("similar_questions", [])
+                existing_ids = {d["id"] for d in duplicates}
+                for sim_q in similar_questions:
+                    if sim_q.get("id") not in existing_ids:
+                        duplicates.append(sim_q)
+            else:
+                logger.debug(f"AI validation status: {validation_result.get('status')}")
+                
+        except HTTPException as ai_err:
+            # If AI service is down, log but don't fail the entire check
+            logger.warning(f"AI semantic similarity check failed (non-critical): {ai_err.detail}")
+        except Exception as e:
+            logger.warning(f"AI semantic similarity check error (non-critical): {e}")
+        
+        # ===== Determine Recommendation =====
+        is_duplicate = len(duplicates) > 0
+        
+        if is_duplicate:
+            # Sort by usage count (prefer less-used questions)
+            duplicates.sort(key=lambda x: x.get("usage_count", 0))
+            
+            recommendation = "reuse"
+            message = f"Found {len(duplicates)} similar question(s). Consider reusing instead of generating new."
+        else:
+            recommendation = "generate_new"
+            message = "No duplicates found. Safe to generate new question."
+        
+        # Format response
+        formatted_duplicates = []
+        for dup in duplicates[:10]:  # Limit to top 10
+            formatted_duplicates.append({
+                "id": dup["id"],
+                "text": dup.get("generated_text", ""),
+                "skill": dup.get("skill", ""),
+                "question_type": dup.get("question_type", ""),
+                "difficulty": dup.get("difficulty", ""),
+                "usage_count": dup.get("usage_count", 0),
+                "generated_by": dup.get("generated_by", ""),
+                "generation_timestamp": dup.get("generation_timestamp", "")
+            })
+        
+        logger.info(
+            f"Duplicate check completed: is_duplicate={is_duplicate}, "
+            f"type={duplicate_type}, count={len(duplicates)}"
+        )
+        
+        return {
+            "is_duplicate": is_duplicate,
+            "duplicate_type": duplicate_type,
+            "duplicate_count": len(duplicates),
+            "existing_questions": formatted_duplicates,
+            "recommendation": recommendation,
+            "message": message,
+            "checks_performed": {
+                "prompt_hash": True,
+                "exact_text": True,
+                "semantic_similarity": True  # Now implemented via AI service
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error checking duplicates: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "duplicate_check_failed", "message": f"Failed to check duplicates: {str(e)}"}
+        )
+
+
 @router.post("/questions/bulk-validate")
 async def bulk_validate_questions(
     file: UploadFile = File(...),
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Validate bulk uploaded questions from CSV file"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         logger.info(f"Processing bulk upload file: {file.filename}")
         
@@ -1571,10 +2511,10 @@ async def bulk_confirm_import(
     session_id: Optional[str] = None,
     enrich: Optional[bool] = False,
     async_enrich: Optional[bool] = True,
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Confirm and import validated bulk questions"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Support optional session_id via query param; choose latest if none provided
         if not bulk_upload_sessions and not session_id:
@@ -1885,6 +2825,7 @@ async def list_bulk_sessions(
     admin: dict = Depends(verify_admin_token)
 ):
     """List pending bulk upload sessions with minimal metadata"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Prefer DB-backed sessions
         db_sessions = []
@@ -1923,6 +2864,7 @@ async def get_bulk_session(
     admin: dict = Depends(verify_admin_token)
 ):
     """Return full session data (validated + flagged rows) for review"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Try DB first — read using the session's partition (created_by = admin id) when possible.
         try:
@@ -1971,6 +2913,7 @@ async def revalidate_flagged_rows(
     validation back into the validated list and updates the session in-place.
     Returns a small summary of the results.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Load session from DB if available
         try:
@@ -2069,10 +3012,10 @@ async def revalidate_flagged_rows(
 
 @router.get("/questions")
 async def get_questions(
-    admin: dict = Depends(verify_admin_token),
-    db: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Get all questions for admin dashboard"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         questions = await db.find_many("questions", {}, limit=100)
         return questions or []
@@ -2083,8 +3026,7 @@ async def get_questions(
 # Live Interview Analytics Endpoints
 @router.get("/live-interviews/sessions")
 async def get_live_interview_sessions(
-    admin: dict = Depends(verify_admin_token),
-    db_service: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Get all active and recent live interview sessions"""
     try:
@@ -2145,8 +3087,7 @@ async def get_live_interview_sessions(
 
 @router.get("/live-interviews/stats")
 async def get_live_interview_stats(
-    admin: dict = Depends(verify_admin_token),
-    db_service: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Get live interview analytics statistics"""
     try:
@@ -2184,8 +3125,7 @@ async def get_live_interview_stats(
 @router.get("/live-interviews/session/{session_id}")
 async def get_live_interview_session_details(
     session_id: str,
-    admin: dict = Depends(verify_admin_token),
-    db_service: CosmosDBService = Depends(get_cosmosdb)
+    admin: dict = Depends(verify_admin_token)
 ):
     """Get detailed information about a specific live interview session"""
     try:
@@ -2353,3 +3293,160 @@ async def smart_screen_resume(
         summary = [str(data)] if data else ["No structured response"]
         recommendation = "Insufficient structured response. Please review output."
     return {"summary": summary, "recommendation": recommendation}
+
+
+# ============================================================================
+# Analytics Endpoints
+# ============================================================================
+
+@router.get("/analytics/cache-metrics")
+async def get_cache_metrics(
+    admin: dict = Depends(verify_admin_token)
+):
+    """
+    Get cache performance metrics for question deduplication
+    
+    Returns metrics about:
+    - Cache hit rate (questions reused vs generated)
+    - Total requests
+    - Cost savings from caching
+    - Cached question count
+    """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+    try:
+        # Query all assessments to get question statistics
+        assessments_query = "SELECT * FROM c WHERE c.type = 'assessment' OR NOT IS_DEFINED(c.type)"
+        assessments = await db.query_items(
+            CONTAINER["ASSESSMENTS"],
+            assessments_query,
+            cross_partition=True
+        )
+        
+        # Query all questions
+        questions_query = "SELECT * FROM c"
+        all_questions = await db.query_items(
+            CONTAINER["QUESTIONS"],
+            questions_query,
+            cross_partition=True
+        )
+        
+        # Calculate metrics
+        total_questions_in_db = len(all_questions)
+        
+        # Track question reuse across assessments
+        question_id_to_usage_count = {}
+        total_question_slots = 0  # Total number of question slots across all assessments
+        
+        for assessment in assessments:
+            questions_list = assessment.get("questions", [])
+            total_question_slots += len(questions_list)
+            
+            for q in questions_list:
+                q_id = q.get("id") or q.get("question_id")
+                if q_id:
+                    question_id_to_usage_count[q_id] = question_id_to_usage_count.get(q_id, 0) + 1
+        
+        # Cache hits = questions used more than once
+        cache_hits = sum(1 for count in question_id_to_usage_count.values() if count > 1) * (sum(count - 1 for count in question_id_to_usage_count.values() if count > 1))
+        cache_misses = total_questions_in_db  # First time each question was generated
+        total_requests = cache_hits + cache_misses
+        
+        # Avoid division by zero
+        cache_hit_rate = (cache_hits / total_requests * 100) if total_requests > 0 else 0.0
+        
+        # Estimate cost savings (assuming $0.01 per AI-generated question)
+        cost_per_generation = 0.01
+        estimated_cost_savings = cache_hits * cost_per_generation
+        
+        # Cached questions = questions used more than once
+        cached_questions = sum(1 for count in question_id_to_usage_count.values() if count > 1)
+        
+        return {
+            "cache_hit_rate": round(cache_hit_rate, 2),
+            "cache_hits": cache_hits,
+            "cache_misses": cache_misses,
+            "total_requests": total_requests,
+            "estimated_cost_savings": round(estimated_cost_savings, 2),
+            "cached_questions": cached_questions,
+            "total_questions": total_questions_in_db,
+            "timestamp": now_ist().isoformat()
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to get cache metrics: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve cache metrics: {str(e)}"
+        )
+
+
+@router.get("/analytics/top-reused-questions")
+async def get_top_reused_questions(
+    limit: int = 10,
+    admin: dict = Depends(verify_admin_token)
+):
+    """
+    Get the most frequently reused questions across assessments
+    
+    Args:
+        limit: Number of top questions to return (default: 10)
+        
+    Returns:
+        List of questions sorted by reuse count
+    """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
+    try:
+        # Query all assessments
+        assessments_query = "SELECT * FROM c WHERE c.type = 'assessment' OR NOT IS_DEFINED(c.type)"
+        assessments = await db.query_items(
+            CONTAINER["ASSESSMENTS"],
+            assessments_query,
+            cross_partition=True
+        )
+        
+        # Track question usage
+        question_usage = {}  # {question_id: {count, question_data, assessment_ids}}
+        
+        for assessment in assessments:
+            assessment_id = assessment.get("id")
+            questions_list = assessment.get("questions", [])
+            
+            for q in questions_list:
+                q_id = q.get("id") or q.get("question_id")
+                if q_id:
+                    if q_id not in question_usage:
+                        question_usage[q_id] = {
+                            "question_id": q_id,
+                            "text": q.get("text", "Unknown question")[:200],  # Truncate long questions
+                            "type": q.get("type", "unknown"),
+                            "difficulty": q.get("difficulty", "medium"),
+                            "tags": q.get("tags", []),
+                            "usage_count": 0,
+                            "assessment_ids": []
+                        }
+                    
+                    question_usage[q_id]["usage_count"] += 1
+                    question_usage[q_id]["assessment_ids"].append(assessment_id)
+        
+        # Filter questions used more than once and sort by usage count
+        reused_questions = [
+            q_data for q_data in question_usage.values()
+            if q_data["usage_count"] > 1
+        ]
+        
+        # Sort by usage count (descending) and limit
+        reused_questions.sort(key=lambda x: x["usage_count"], reverse=True)
+        top_questions = reused_questions[:limit]
+        
+        return {
+            "questions": top_questions,
+            "total_reused_questions": len(reused_questions),
+            "timestamp": now_ist().isoformat()
+        }
+        
+    except Exception as e:
+        logger.exception(f"Failed to get top reused questions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve top reused questions: {str(e)}"
+        )

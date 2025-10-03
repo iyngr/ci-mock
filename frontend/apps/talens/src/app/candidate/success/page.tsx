@@ -2,8 +2,13 @@
 
 import { useEffect } from "react"
 import { AnimateOnScroll } from "@/components/AnimateOnScroll"
+import { useAutoSubmission } from "@/lib/hooks"
+import { AutoSubmissionBadge } from "@/components/AssessmentStatusComponents"
 
 export default function Success() {
+  // Phase 1 Integration: Auto-submission tracking
+  const submissionData = useAutoSubmission()
+
   useEffect(() => {
     // Ensure we exit fullscreen immediately on load
     if (document.fullscreenElement) {
@@ -33,10 +38,20 @@ export default function Success() {
             </div>
 
             <h1 className="text-3xl font-light text-warm-brown mb-4 tracking-tight">
-              Assessment Completed
+              {submissionData.auto_submitted ? 'Assessment Auto-Submitted' : 'Assessment Completed'}
             </h1>
             <div className="w-24 h-px bg-warm-brown/30 mx-auto mb-4"></div>
           </div>
+
+          {/* Phase 1: Auto-submission badge */}
+          {submissionData.auto_submitted && submissionData.auto_submit_reason && submissionData.auto_submit_timestamp && (
+            <div className="mb-6">
+              <AutoSubmissionBadge
+                reason={submissionData.auto_submit_reason}
+                timestamp={submissionData.auto_submit_timestamp.toString()}
+              />
+            </div>
+          )}
 
           <p className="text-warm-brown/70 font-light leading-relaxed mb-8">
             Thank you for completing the technical assessment. Your responses have been recorded

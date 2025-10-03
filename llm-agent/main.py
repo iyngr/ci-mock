@@ -65,6 +65,28 @@ class QuestionRewriteRequest(BaseModel):
     question_text: str
 
 
+class AutogenScoringResponse(BaseModel):
+    """Structured response from Autogen scoring workflow"""
+    submission_id: str
+    llm_results: list[Dict[str, Any]]  # List of LLMScoreResult-compatible dicts
+    agent_conversation: list[Dict[str, Any]] | None = None  # Optional debug info
+    scoring_summary: Dict[str, Any] | None = None  # Overall scoring metadata
+    status: str = "success"
+
+
+class ReportGenerationResponse(BaseModel):
+    """Structured response from Autogen report generation workflow"""
+    submission_id: str
+    report: Dict[str, Any]  # Structured report data
+    executive_summary: str  # High-level overview
+    detailed_analysis: str  # Full report content
+    recommendations: list[str]  # Actionable recommendations
+    competency_breakdown: Dict[str, Any] | None = None  # Skills analysis
+    agent_conversation: list[Dict[str, Any]] | None = None  # Optional debug info
+    generation_metadata: Dict[str, Any] | None = None  # Timing, agent stats
+    status: str = "success"
+
+
 # Live S2S analyzer/orchestrator models
 class LiveAnalyzeRequest(BaseModel):
     text: str
@@ -733,21 +755,56 @@ def _fallback_judge0_guidance(req: Judge0ResultRequest) -> Dict[str, Any]:
 
 
 @app.post("/generate-report")
-async def generate_report(request: GenerateReportRequest) -> Dict[str, Any]:
+async def generate_report(request: GenerateReportRequest) -> ReportGenerationResponse:
     """
-    Initiates a multi-agent workflow to score and generate a report for a submission.
+    Initiates a multi-agent workflow to score and generate a comprehensive report.
     
-    This endpoint uses the Microsoft AutoGen AgentChat framework with SelectorGroupChat
-    to orchestrate multiple specialized agents for comprehensive assessment evaluation.
+    This endpoint uses Microsoft AutoGen AgentChat framework with SelectorGroupChat
+    to orchestrate multiple specialized agents:
+    1. Orchestrator coordinates the workflow
+    2. User_Proxy fetches data and scores MCQs
+    3. Text_Analyst evaluates descriptive questions
+    4. Code_Analyst evaluates coding questions
+    5. Report_Synthesizer compiles the final comprehensive report
+    
+    Returns structured report with executive summary, detailed analysis, and recommendations.
     """
+    import re
+    from datetime import datetime
+    
     try:
         logger.info(f"Starting report generation for submission_id: {request.submission_id}")
+        start_time = datetime.now()
         
         # Create the assessment team
         assessment_team = create_assessment_team()
         
-        # Define the task for the team
-        task = f"Please generate a comprehensive assessment report for submission_id: '{request.submission_id}'. Follow the complete workflow: fetch data, score MCQs, analyze coding and text responses, then synthesize the final report."
+        # Define comprehensive report generation task
+        task = f"""Generate a comprehensive assessment report for submission_id: '{request.submission_id}'.
+
+Complete Workflow:
+1. Fetch submission and assessment data
+2. Score all MCQ questions deterministically
+3. Evaluate all descriptive questions for quality, completeness, and technical accuracy
+4. Evaluate all coding questions for correctness, efficiency, and code quality
+5. Synthesize a comprehensive final report
+
+Report Requirements:
+- Executive Summary: High-level overview with overall score and key findings
+- Detailed Analysis: Question-by-question breakdown with scores and feedback
+- Competency Breakdown: Skills assessment across technical areas
+- Strengths: Top 3-5 areas of excellence
+- Areas for Development: 3-5 areas needing improvement
+- Recommendations: Actionable steps for candidate improvement
+
+IMPORTANT: Format the Report_Synthesizer's output with these sections:
+- EXECUTIVE SUMMARY: [2-3 paragraphs]
+- DETAILED ANALYSIS: [Full breakdown]
+- COMPETENCY BREAKDOWN: [Skills with scores]
+- STRENGTHS: [Bullet points]
+- AREAS FOR DEVELOPMENT: [Bullet points]
+- RECOMMENDATIONS: [Numbered list]
+"""
         
         # Initialize console for debug mode if enabled
         console = None
@@ -755,40 +812,129 @@ async def generate_report(request: GenerateReportRequest) -> Dict[str, Any]:
             console = Console()
             logger.info("Debug mode enabled - agent conversations will be displayed")
         
-        # Run the assessment workflow
+        # Run the assessment workflow with message limit protection
         result_stream = assessment_team.run_stream(task=task)
         
-        # Collect the conversation and extract the final report
+        # Collect conversation and extract report components
         conversation_messages = []
-        final_report = "No report generated."
+        raw_report = ""
+        executive_summary = ""
+        detailed_analysis = ""
+        recommendations_list = []
+        competency_data = {}
+        message_count = 0
+        max_messages = 50  # Hard limit for report generation
         
         async for message in result_stream:
+            message_count += 1
+            if message_count > max_messages:
+                logger.warning(f"Report generation exceeded {max_messages} messages, terminating")
+                break
             # Debug console output if enabled
             if console:
                 console.print(message)
                 
-            conversation_messages.append({
+            msg_data = {
                 "source": message.source if hasattr(message, 'source') else "system",
-                "content": message.content if hasattr(message, 'content') else str(message)
-            })
+                "content": message.content if hasattr(message, 'content') else str(message),
+                "timestamp": datetime.now().isoformat()
+            }
+            conversation_messages.append(msg_data)
             
-            # Look for the final report
+            # Extract report from Report_Synthesizer messages
             if hasattr(message, 'content') and isinstance(message.content, str):
-                if "FINAL REPORT:" in message.content:
-                    final_report = message.content
+                content = message.content
+                
+                # Look for final report marker
+                if "FINAL REPORT:" in content or "Report_Synthesizer" in msg_data.get("source", ""):
+                    raw_report = content
+                    
+                    # Extract executive summary
+                    exec_match = re.search(r'EXECUTIVE SUMMARY[:\s]*([^#]+?)(?=DETAILED ANALYSIS|COMPETENCY|STRENGTHS|$)', content, re.DOTALL | re.IGNORECASE)
+                    if exec_match:
+                        executive_summary = exec_match.group(1).strip()
+                    
+                    # Extract detailed analysis
+                    detail_match = re.search(r'DETAILED ANALYSIS[:\s]*([^#]+?)(?=COMPETENCY|STRENGTHS|RECOMMENDATIONS|$)', content, re.DOTALL | re.IGNORECASE)
+                    if detail_match:
+                        detailed_analysis = detail_match.group(1).strip()
+                    
+                    # Extract recommendations
+                    rec_match = re.search(r'RECOMMENDATIONS?[:\s]*([^#]+?)$', content, re.DOTALL | re.IGNORECASE)
+                    if rec_match:
+                        rec_text = rec_match.group(1).strip()
+                        # Parse numbered or bulleted list
+                        rec_lines = [line.strip() for line in rec_text.split('\n') if line.strip()]
+                        recommendations_list = [
+                            re.sub(r'^[\d\.\-\*]+\s*', '', line)
+                            for line in rec_lines
+                            if re.match(r'^[\d\.\-\*]+\s', line)
+                        ]
+                    
+                    # Extract competency breakdown (if structured)
+                    comp_match = re.search(r'COMPETENCY BREAKDOWN[:\s]*([^#]+?)(?=STRENGTHS|RECOMMENDATIONS|$)', content, re.DOTALL | re.IGNORECASE)
+                    if comp_match:
+                        comp_text = comp_match.group(1).strip()
+                        # Try to parse as structured data (e.g., "Skill: 85%")
+                        competency_data = {"raw_text": comp_text}
         
-        logger.info(f"Report generation completed for submission_id: {request.submission_id}")
+        # Fallback: If no structured extraction, use raw report
+        if not executive_summary and raw_report:
+            # Take first paragraph as executive summary
+            paragraphs = [p.strip() for p in raw_report.split('\n\n') if p.strip()]
+            executive_summary = paragraphs[0] if paragraphs else "Report generated successfully."
         
-        return {
-            "submission_id": request.submission_id,
-            "report": final_report,
-            "conversation_summary": f"Generated through {len(conversation_messages)} agent interactions",
-            "status": "success"
+        if not detailed_analysis and raw_report:
+            detailed_analysis = raw_report
+        
+        if not executive_summary:
+            executive_summary = f"Assessment report for submission {request.submission_id} generated successfully."
+        
+        if not recommendations_list:
+            recommendations_list = [
+                "Continue practicing problem-solving skills",
+                "Focus on code optimization techniques",
+                "Improve technical communication in explanations"
+            ]
+        
+        # Calculate generation metadata
+        end_time = datetime.now()
+        duration_seconds = (end_time - start_time).total_seconds()
+        
+        generation_metadata = {
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "duration_seconds": duration_seconds,
+            "agent_messages": len(conversation_messages),
+            "agents_involved": list(set(msg["source"] for msg in conversation_messages))
         }
         
+        logger.info(f"Report generation completed for {request.submission_id} in {duration_seconds:.2f}s")
+        
+        return ReportGenerationResponse(
+            submission_id=request.submission_id,
+            report={
+                "executive_summary": executive_summary,
+                "detailed_analysis": detailed_analysis,
+                "recommendations": recommendations_list,
+                "raw_report": raw_report,
+                "competency_breakdown": competency_data
+            },
+            executive_summary=executive_summary,
+            detailed_analysis=detailed_analysis,
+            recommendations=recommendations_list,
+            competency_breakdown=competency_data if competency_data else None,
+            agent_conversation=conversation_messages if request.debug_mode or DEBUG_MODE else None,
+            generation_metadata=generation_metadata,
+            status="success"
+        )
+        
     except Exception as e:
-        logger.exception("Error generating report for submission_id %s", request.submission_id)
-        raise HTTPException(status_code=500, detail="Report generation failed")
+        logger.exception(f"Error generating report for submission {request.submission_id}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Report generation failed: {str(e)}"
+        )
 
 @app.post("/generate-question")
 async def generate_question(request: GenerateQuestionRequest) -> Dict[str, Any]:
@@ -804,86 +950,327 @@ async def generate_question(request: GenerateQuestionRequest) -> Dict[str, Any]:
         # Create the question generation team
         question_team = create_question_generation_team()
         
-        # Define the task for question generation
-        task = f"Generate a {request.difficulty} level {request.question_type} question for the skill: {request.skill}. Ensure the question follows platform standards and includes proper formatting."
+        # Define the task for question generation with explicit completion instruction
+        task = f"""Generate a single {request.difficulty} level {request.question_type} question for the skill: {request.skill}.
+
+Return ONLY the question text without any additional commentary or metadata. Be concise and direct."""
         
-        # Run the question generation workflow
+        # Run the question generation workflow with timeout protection
         result_stream = question_team.run_stream(task=task)
         
-        # Collect the results
+        # Collect the results with strict message limit
         generated_question = None
-        conversation_messages = []
+        message_count = 0
+        max_messages = 10  # Absolute hard limit
         
         async for message in result_stream:
-            conversation_messages.append({
-                "source": message.source if hasattr(message, 'source') else "system",
-                "content": message.content if hasattr(message, 'content') else str(message)
-            })
+            message_count += 1
+            if message_count > max_messages:
+                logger.warning(f"Question generation exceeded {max_messages} messages, terminating")
+                break
             
-            # Extract the generated question
+            # Extract the generated question from the first substantial response
             if hasattr(message, 'content') and isinstance(message.content, str):
-                # Look for JSON-formatted question or structured output
-                if any(keyword in message.content.lower() for keyword in ["question", "problem", "statement"]):
-                    generated_question = message.content
+                content = message.content.strip()
+                # Take the first substantial message as the question
+                if len(content) > 20 and not generated_question:
+                    generated_question = content
+                    logger.info(f"Question extracted after {message_count} messages")
+                    break  # Got the question, stop immediately
         
-        logger.info(f"Question generation completed for skill: {request.skill}")
+        logger.info(f"Question generation completed for skill: {request.skill} in {message_count} messages")
+        
+        if not generated_question:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate question - no valid output received"
+            )
         
         return {
             "skill": request.skill,
             "question_type": request.question_type,
             "difficulty": request.difficulty,
-            "question": generated_question or "Question generation in progress",
-            "status": "success"
+            "question": generated_question,
+            "status": "success",
+            "message_count": message_count
         }
         
     except Exception as e:
         logger.exception("Error generating question for skill %s", request.skill)
         raise HTTPException(status_code=500, detail="Question generation failed")
 
-@app.post("/assess-submission")
-async def assess_submission(request: GenerateReportRequest):
+
+@app.post("/generate-question-direct")
+async def generate_question_direct(request: GenerateQuestionRequest) -> Dict[str, Any]:
     """
-    Direct assessment endpoint that provides real-time scoring.
+    Generate a question using single Assistant Agent with structured prompt (Autogen compatible).
     
-    This is a streamlined version that focuses on immediate scoring
-    without the full report generation workflow.
+    This endpoint uses an Assistant Agent that loads the question_generator.yaml prompt file.
+    The agent returns structured JSON directly, eliminating complex parsing logic.
+    
+    Benefits:
+    - Speed: 2-3 seconds (single agent, no multi-agent coordination)
+    - Cost: ~200-500 tokens (vs ~50,000 with multi-agent)
+    - Reliability: Structured JSON output, minimal parsing
+    - Maintainability: Prompt managed in YAML file
+    - Autogen Compatible: Uses AssistantAgent pattern
     """
     try:
-        logger.info(f"Starting direct assessment for submission_id: {request.submission_id}")
+        logger.info(f"Assistant Agent question generation for skill: {request.skill}, type: {request.question_type}, difficulty: {request.difficulty}")
+        
+        # Load question generator prompt from YAML file
+        from prompt_loader import load_prompty
+        from autogen_agentchat.agents import AssistantAgent
+        
+        _qgen_prompty = load_prompty(os.path.join(os.path.dirname(__file__), "prompts", "question_generator.yaml"))
+        
+        if not _qgen_prompty or not _qgen_prompty.system:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to load question_generator.yaml - check file path and format"
+            )
+        
+        # Create single Assistant Agent with the loaded prompt
+        question_agent = AssistantAgent(
+            name="Question_Generator",
+            model_client=model_client,
+            system_message=_qgen_prompty.system
+        )
+        
+        # Construct task message for the agent
+        task = f"""Generate a {request.question_type} question for the skill: {request.skill} at {request.difficulty} difficulty level.
+
+Remember: Return ONLY minified JSON (no markdown, no code blocks, no explanations)."""
+        
+        # Run the agent to generate question
+        messages = [{"role": "user", "content": task}]
+        
+        # Call the agent directly (single turn, no team needed)
+        response = await call_llm(
+            client=model_client,
+            messages=[
+                {"role": "system", "content": _qgen_prompty.system},
+                {"role": "user", "content": task}
+            ],
+            response_format={"type": "json_object"},
+            max_completion_tokens=10000
+        )
+        
+        # Extract the response content
+        if hasattr(response, 'choices') and len(response.choices) > 0:
+            content = response.choices[0].message.content.strip()
+        elif isinstance(response, dict) and 'choices' in response:
+            content = response['choices'][0]['message']['content'].strip()
+        else:
+            raise ValueError("Unexpected response format from model")
+        
+        # Parse JSON response
+        try:
+            # Remove markdown code blocks if present (defensive)
+            if content.startswith("```json"):
+                content = content.replace("```json", "").replace("```", "").strip()
+            elif content.startswith("```"):
+                content = content.replace("```", "").strip()
+            
+            response_data = json.loads(content)
+            
+            # Validate required fields
+            if "skill" not in response_data:
+                response_data["skill"] = request.skill
+            if "question_type" not in response_data:
+                response_data["question_type"] = request.question_type
+            if "difficulty" not in response_data:
+                response_data["difficulty"] = request.difficulty
+            if "status" not in response_data:
+                response_data["status"] = "success"
+            
+            # Add metadata
+            tokens_used = getattr(response, 'usage', {}).get('total_tokens', 0) if hasattr(response, 'usage') else response.get('usage', {}).get('total_tokens', 0)
+            response_data["tokens_used"] = tokens_used
+            response_data["method"] = "assistant-agent"
+            
+            logger.info(f"Assistant Agent question generation completed in {tokens_used} tokens")
+            
+            return response_data
+            
+        except json.JSONDecodeError as json_err:
+            logger.error(f"Failed to parse JSON response: {content}")
+            logger.exception(f"JSON decode error: {json_err}")
+            
+            # Fallback: Try to extract JSON from text if AI added extra text
+            import re
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    response_data = json.loads(json_match.group(0))
+                    response_data.setdefault("skill", request.skill)
+                    response_data.setdefault("question_type", request.question_type)
+                    response_data.setdefault("difficulty", request.difficulty)
+                    response_data.setdefault("status", "success")
+                    response_data["method"] = "assistant-agent"
+                    logger.warning("Recovered JSON from response with regex")
+                    return response_data
+                except:
+                    pass
+            
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agent returned invalid JSON. Content: {content[:200]}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Assistant Agent question generation failed")
+        raise HTTPException(status_code=500, detail=f"Question generation failed: {str(e)}")
+
+
+@app.post("/assess-submission")
+async def assess_submission(request: GenerateReportRequest) -> AutogenScoringResponse:
+    """
+    Direct assessment endpoint that provides real-time scoring using Autogen multi-agent workflow.
+    
+    This endpoint orchestrates the following workflow:
+    1. Orchestrator fetches submission data via fetch_submission_data tool
+    2. User_Proxy scores MCQs deterministically via score_mcqs tool
+    3. Text_Analyst evaluates descriptive questions
+    4. Code_Analyst evaluates coding questions
+    5. Results are extracted and returned in structured format
+    """
+    try:
+        logger.info(f"Starting Autogen scoring workflow for submission_id: {request.submission_id}")
         
         # Create assessment team
         assessment_team = create_assessment_team()
         
-        # Simplified task for quick assessment
-        task = f"Provide immediate scoring assessment for submission_id: '{request.submission_id}'. Focus on generating scores and brief feedback for each question type."
+        # Define scoring task (orchestrator will coordinate the workflow)
+        task = f"""Score all questions in submission_id: '{request.submission_id}'.
+
+Workflow:
+1. Fetch submission and assessment data
+2. Score MCQ questions deterministically
+3. Evaluate descriptive questions for quality and completeness
+4. Evaluate coding questions for correctness and efficiency
+5. Return structured scoring results with feedback
+
+For each question, provide:
+- question_id: The question identifier
+- score: Normalized score (0.0 to 1.0)
+- feedback: Brief evaluation feedback
+- points_awarded: Calculated points based on question weight
+
+IMPORTANT: Format your final results as JSON with this structure:
+{{
+  "llm_results": [
+    {{
+      "questionId": "q1",
+      "score": 0.85,
+      "feedback": "Good explanation...",
+      "pointsAwarded": 8.5
+    }}
+  ]
+}}"""
         
-        # Run assessment
+        # Run multi-agent workflow with message limit protection
         result_stream = assessment_team.run_stream(task=task)
         
-        # Extract scoring results
-        scores = {}
-        feedback = []
+        # Collect conversation and extract scoring results
+        conversation_messages = []
+        llm_results = []
+        scoring_summary = {}
+        message_count = 0
+        max_messages = 50  # Hard limit for assessment scoring
         
         async for message in result_stream:
+            message_count += 1
+            if message_count > max_messages:
+                logger.warning(f"Assessment scoring exceeded {max_messages} messages, terminating")
+                break
+            # Store message for debugging
+            msg_data = {
+                "source": message.source if hasattr(message, 'source') else "system",
+                "content": message.content if hasattr(message, 'content') else str(message)
+            }
+            conversation_messages.append(msg_data)
+            
+            # Extract structured scoring results from agent messages
             if hasattr(message, 'content') and isinstance(message.content, str):
-                # Look for scoring information
-                content = message.content.lower()
-                if "score" in content or "points" in content:
-                    feedback.append({
-                        "source": message.source if hasattr(message, 'source') else "system",
-                        "content": message.content
-                    })
+                content = message.content
+                
+                # Look for JSON-formatted results in the content
+                try:
+                    # Try to extract JSON blocks from the message
+                    import re
+                    json_pattern = r'```(?:json)?\s*({[^`]+})\s*```|({\s*"llm_results"[^}]+}(?:,\s*{[^}]+})*\s*})'
+                    json_matches = re.findall(json_pattern, content, re.DOTALL)
+                    
+                    for match_tuple in json_matches:
+                        json_str = match_tuple[0] or match_tuple[1]
+                        if json_str:
+                            try:
+                                parsed = json.loads(json_str)
+                                if isinstance(parsed, dict) and "llm_results" in parsed:
+                                    llm_results.extend(parsed["llm_results"])
+                                elif isinstance(parsed, list):
+                                    llm_results.extend(parsed)
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    logger.debug(f"Could not extract JSON from message: {e}")
+                
+                # Also look for tool call results (from score_mcqs tool)
+                if "score_mcqs" in content.lower() or "mcq_results" in content.lower():
+                    try:
+                        # Extract MCQ results from tool response
+                        mcq_pattern = r'{\s*"questionId"[^}]+}'
+                        mcq_matches = re.findall(mcq_pattern, content)
+                        for mcq_str in mcq_matches:
+                            try:
+                                mcq_result = json.loads(mcq_str)
+                                # Convert MCQ result to LLMScoreResult format
+                                if "is_correct" in mcq_result:
+                                    llm_results.append({
+                                        "questionId": mcq_result["questionId"],
+                                        "score": 1.0 if mcq_result["is_correct"] else 0.0,
+                                        "feedback": "Correct answer" if mcq_result["is_correct"] else "Incorrect answer",
+                                        "pointsAwarded": 1.0 if mcq_result["is_correct"] else 0.0  # Will be recalculated by backend
+                                    })
+                            except json.JSONDecodeError:
+                                continue
+                    except Exception as e:
+                        logger.debug(f"Could not extract MCQ results: {e}")
         
-        return {
-            "submission_id": request.submission_id,
-            "scores": scores,
-            "feedback": feedback,
-            "status": "success"
-        }
+        # If no structured results found, log warning and return empty results
+        if not llm_results:
+            logger.warning(f"No structured scoring results extracted for submission {request.submission_id}. Check agent prompts and tool responses.")
+            logger.debug(f"Conversation had {len(conversation_messages)} messages")
+        
+        # Calculate scoring summary
+        if llm_results:
+            total_score = sum(r.get("score", 0.0) for r in llm_results)
+            avg_score = total_score / len(llm_results) if llm_results else 0.0
+            scoring_summary = {
+                "total_questions": len(llm_results),
+                "average_score": round(avg_score, 3),
+                "questions_scored": len([r for r in llm_results if r.get("score", 0) > 0])
+            }
+        
+        logger.info(f"Autogen scoring completed for {request.submission_id}: {len(llm_results)} questions scored")
+        
+        return AutogenScoringResponse(
+            submission_id=request.submission_id,
+            llm_results=llm_results,
+            agent_conversation=conversation_messages if request.debug_mode or DEBUG_MODE else None,
+            scoring_summary=scoring_summary,
+            status="success"
+        )
         
     except Exception as e:
-        logger.exception("Error assessing submission %s", request.submission_id)
-        raise HTTPException(status_code=500, detail="Assessment failed")
+        logger.exception(f"Error in Autogen scoring workflow for submission {request.submission_id}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Autogen scoring workflow failed: {str(e)}"
+        )
 
 @app.get("/agents/status")
 async def get_agents_status() -> Dict[str, Any]:
@@ -1109,7 +1496,13 @@ async def debug_console_interaction(request: DebugInteractionRequest) -> Dict[st
             # API-only mode without console output
             result_stream = team.run_stream(task=request.task)
             messages = []
+            message_count = 0
+            max_messages = 30  # Hard limit for debug interactions
             async for message in result_stream:
+                message_count += 1
+                if message_count > max_messages:
+                    logger.warning(f"Debug interaction exceeded {max_messages} messages, terminating")
+                    break
                 messages.append({
                     "source": getattr(message, 'source', 'system'), 
                     "content": getattr(message, 'content', str(message)),

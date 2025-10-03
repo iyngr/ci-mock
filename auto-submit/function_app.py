@@ -40,12 +40,12 @@ async def auto_submit_expired_assessments(mytimer: func.TimerRequest) -> None:
         database = cosmos_client.get_database_client(os.environ["COSMOS_DB_NAME"])
         submissions_container = database.get_container_client("submissions")
 
-        # Query for expired in-progress submissions
+        # Query for expired in_progress submissions
         current_time = now_ist()
 
         query = """
         SELECT * FROM c 
-        WHERE c.status = 'in-progress' 
+        WHERE c.status = 'in_progress' 
         AND c.expiration_time < @current_time
         """
 

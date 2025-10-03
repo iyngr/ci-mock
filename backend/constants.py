@@ -1,6 +1,42 @@
 """Centralized constants for Cosmos DB containers and utilities."""
 from typing import Dict
 import re
+import os
+
+# ===== Production Safety Settings =====
+# These settings ensure production-ready behavior with proper validation
+
+# STRICT_MODE: When true, disables all development fallbacks and enforces production behavior
+STRICT_MODE = os.getenv("STRICT_MODE", "true").lower() == "true"
+
+# MIN_QUESTIONS_REQUIRED: Minimum questions required in an assessment before allowing test start
+MIN_QUESTIONS_REQUIRED = int(os.getenv("MIN_QUESTIONS_REQUIRED", "1"))
+
+# ALLOW_EMPTY_ASSESSMENTS: If false, block assessment creation with 0 questions
+ALLOW_EMPTY_ASSESSMENTS = os.getenv("ALLOW_EMPTY_ASSESSMENTS", "false").lower() == "true"
+
+# LLM_AGENT_TIMEOUT: Timeout in seconds for llm-agent service calls
+LLM_AGENT_TIMEOUT = int(os.getenv("LLM_AGENT_TIMEOUT", "120"))
+
+# LLM_AGENT_MAX_RETRIES: Maximum retry attempts for llm-agent calls
+LLM_AGENT_MAX_RETRIES = int(os.getenv("LLM_AGENT_MAX_RETRIES", "3"))
+
+# LLM_AGENT_URL: URL of the llm-agent microservice for Autogen multi-agent operations
+LLM_AGENT_URL = os.getenv("LLM_AGENT_URL", "http://localhost:8001")
+
+# ===== Auto-Submission Timer Settings =====
+# These settings control server-side timer enforcement and auto-submission
+
+# AUTO_SUBMIT_ENABLED: Enable server-side auto-submission when timer expires
+AUTO_SUBMIT_ENABLED = os.getenv("AUTO_SUBMIT_ENABLED", "true").lower() == "true"
+
+# AUTO_SUBMIT_GRACE_PERIOD: Grace period in seconds after expiration before forcing auto-submit
+AUTO_SUBMIT_GRACE_PERIOD = int(os.getenv("AUTO_SUBMIT_GRACE_PERIOD", "30"))
+
+# TIMER_SYNC_INTERVAL: How often frontend should sync timer with backend (seconds)
+TIMER_SYNC_INTERVAL = int(os.getenv("TIMER_SYNC_INTERVAL", "60"))
+
+# ===== Container Definitions =====
 
 # Container definitions with intended partition key fields (logical keys, not paths)
 COLLECTIONS: Dict[str, Dict[str, str]] = {
@@ -12,6 +48,7 @@ COLLECTIONS: Dict[str, Dict[str, str]] = {
     "KNOWLEDGE_BASE": {"name": "KnowledgeBase", "pk_field": "skill"},
     "CODE_EXECUTIONS": {"name": "code_executions", "pk_field": "submission_id"},
     "EVALUATIONS": {"name": "evaluations", "pk_field": "submission_id"},
+    "REPORTS": {"name": "reports", "pk_field": "submission_id"},
     "RAG_QUERIES": {"name": "RAGQueries", "pk_field": "assessment_id"},
     # New: S2S interview docs and transcripts
     "INTERVIEWS": {"name": "interviews", "pk_field": "assessment_id"},

@@ -12,6 +12,11 @@ from autogen_ext.auth.azure import AzureTokenProvider
 from tools import fetch_submission_data, score_mcqs, generate_question_from_ai, query_cosmosdb_for_rag, validate_question
 from prompt_loader import load_prompty
 from tracing import traced_run
+from logging_config import get_logger
+
+# Configure logger
+logger = get_logger("agents")
+
 # structured parsing helpers are imported where/when needed to avoid unused-import lints
 
 
@@ -629,7 +634,7 @@ Always format your output as valid JSON with the question structure expected by 
     question_team = SelectorGroupChat(
         participants=[question_generator_agent, user_proxy_agent],
         model_client=model_client,
-        termination_condition=TextMentionTermination("COMPLETE"),
+        termination_condition=MaxMessageTermination(max_messages=5),  # Strict limit to prevent infinite loops
         allow_repeated_speaker=False,
     )
     
@@ -793,15 +798,22 @@ async def generate_questions_async(skill: str, question_type: str, difficulty: s
     End with COMPLETE when done.
     """
     
-    # Run team conversation asynchronously  
+    # Run team conversation asynchronously with hard message limit
+    # CRITICAL: Use MaxMessageTermination to prevent infinite loops
     with traced_run("question_team.run", {"skill": skill, "type": question_type, "difficulty": difficulty}):
         result_stream = team.run_stream(
             task=task_message,
-            termination_condition=TextMentionTermination("COMPLETE")
+            termination_condition=MaxMessageTermination(max_messages=5)  # Prevent token burn
         )
 
     messages: List[BaseChatMessage] = []
+    message_count = 0
+    max_msg_limit = 10  # Additional safety limit
     async for message in result_stream:
+        message_count += 1
+        if message_count > max_msg_limit:
+            logger.warning(f"Question generation exceeded {max_msg_limit} messages, breaking")
+            break
         if isinstance(message, BaseChatMessage):
             messages.append(message)
 

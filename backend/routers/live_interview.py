@@ -393,6 +393,104 @@ def redact_transcript(tx: S2STranscript) -> S2STranscript:
     return tx
 
 # ---- Endpoints ----
+
+# ============================================================================
+# Phase 6 Integration: Readiness, Timer, and Auto-Submission Endpoints
+# ============================================================================
+
+@router.get("/assessment/{assessment_id}/readiness")
+async def check_live_interview_readiness(
+    assessment_id: str,
+    request: Request
+):
+    """
+    Check if live interview assessment is ready to begin.
+    Reuses candidate.py readiness logic for consistency.
+    
+    Returns:
+        - ready: bool
+        - status: 'ready' | 'generating' | 'partially_generated' | 'generation_failed'
+        - total_questions: int
+        - ready_questions: int
+        - message: str
+    """
+    # Forward to candidate endpoint (internal call)
+    target = f"{INTERNAL_API_BASE}/api/candidate/assessment/{assessment_id}/readiness"
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(target)
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                # Return error response
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=resp.json() if resp.text else {"error": "readiness_check_failed"}
+                )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "service_unavailable",
+                "message": f"Failed to check readiness: {str(e)}"
+            }
+        )
+
+
+@router.get("/assessment/{assessment_id}/timer")
+async def get_live_interview_timer(
+    assessment_id: str,
+    request: Request
+):
+    """
+    Get timer synchronization data for live interview.
+    Returns remaining time, grace period status, and server time.
+    
+    Returns:
+        - time_remaining_seconds: int
+        - time_expired: bool
+        - grace_period_active: bool
+        - grace_period_remaining: int
+        - current_server_time: str (ISO 8601)
+    """
+    # Get authorization header if present
+    auth_header = request.headers.get("Authorization", "")
+    
+    # Forward to candidate endpoint with authentication
+    target = f"{INTERNAL_API_BASE}/api/candidate/assessment/{assessment_id}/timer"
+    headers = {}
+    if auth_header:
+        headers["Authorization"] = auth_header
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(target, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                # Transform response to match live interview format
+                return {
+                    "time_remaining_seconds": data.get("remaining_seconds", 0),
+                    "time_expired": data.get("is_expired", False),
+                    "grace_period_active": data.get("grace_period_active", False),
+                    "grace_period_remaining": data.get("grace_period_seconds", 0),
+                    "current_server_time": data.get("current_time", "")
+                }
+            else:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=resp.json() if resp.text else {"error": "timer_sync_failed"}
+                )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "service_unavailable",
+                "message": f"Failed to sync timer: {str(e)}"
+            }
+        )
+
+
 @router.get("/plan")
 async def get_plan(assessment_id: Optional[str] = None):
     """Get assessment plan by reusing existing candidate endpoints"""
@@ -681,11 +779,39 @@ async def _push_judge0_results_to_llm_agent(request: Judge0Request, result: dict
         pass
 
 @router.post("/finalize")
-async def finalize_transcript(req: Request, transcript: S2STranscript):
-    """Finalize and persist interview transcript with PII redaction"""
+async def finalize_transcript(
+    req: Request,
+    transcript: S2STranscript,
+    auto_submitted: bool = False,
+    auto_submit_reason: Optional[str] = None
+):
+    """
+    Finalize and persist interview transcript with PII redaction.
+    
+    Enhanced with Phase 6 auto-submission tracking:
+    - auto_submitted: Whether interview was auto-submitted
+    - auto_submit_reason: Reason for auto-submission
+        ('time_expired', 'grace_expired', 'connection_lost')
+    """
     # Redact PII and set finalization timestamp
     redacted = redact_transcript(transcript)
     redacted.finalized_at = time.time()
+    
+    # Add auto-submission metadata (Phase 6 enhancement)
+    # Note: S2STranscript model already has these fields defined
+    # This is just documentation that they're now actively used
+    
+    # The auto_submitted field should be passed via the transcript object
+    # but we also accept it as a parameter for backward compatibility
+    if auto_submitted and not redacted.assessment_details:
+        redacted.assessment_details = {}
+    
+    if auto_submitted:
+        if not redacted.assessment_details:
+            redacted.assessment_details = {}
+        redacted.assessment_details["auto_submitted"] = True
+        redacted.assessment_details["auto_submit_reason"] = auto_submit_reason
+        redacted.assessment_details["auto_submit_timestamp"] = time.time()
 
     # Try to store if a Mongo client is configured in app.state
     try:
@@ -714,4 +840,8 @@ async def finalize_transcript(req: Request, transcript: S2STranscript):
     except Exception:
         pass
 
-    return {"ok": True}
+    return {
+        "ok": True,
+        "session_id": redacted.session_id,
+        "auto_submitted": auto_submitted
+    }

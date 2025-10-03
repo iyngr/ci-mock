@@ -58,14 +58,89 @@ async def get_cosmosdb() -> CosmosDBService:
     return await get_cosmosdb_service(database_client)
 
 
+@router.get("/llm-health")
+async def llm_health():
+    """Check LLM agent service health for question generation"""
+    import time
+    
+    try:
+        # Check if llm-agent service is available
+        llm_agent_url = os.getenv("LLM_AGENT_URL", "http://localhost:8001")
+        model_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_MODEL_NAME", "gpt-4o-mini")
+        
+        start_time = time.time()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{llm_agent_url}/health")
+            latency_ms = int((time.time() - start_time) * 1000)
+            
+            if response.status_code == 200:
+                health_data = response.json()
+                
+                return {
+                    "status": "healthy",
+                    "available": True,
+                    "healthy": True,
+                    "models_available": 1,
+                    "total_models": 1,
+                    "response_time_ms": latency_ms,
+                    "message": f"LLM service operational ({model_name})",
+                    "service": "llm-agent",
+                    "url": llm_agent_url,
+                    "model": model_name,
+                    "last_check": now_ist().isoformat()
+                }
+            else:
+                return {
+                    "status": "degraded",
+                    "available": False,
+                    "healthy": False,
+                    "models_available": 0,
+                    "total_models": 1,
+                    "response_time_ms": latency_ms,
+                    "message": f"LLM service returned status {response.status_code}",
+                    "service": "llm-agent",
+                    "model": model_name,
+                    "error": f"Service returned status {response.status_code}",
+                    "last_check": now_ist().isoformat()
+                }
+    except httpx.TimeoutException:
+        return {
+            "status": "unavailable",
+            "available": False,
+            "healthy": False,
+            "models_available": 0,
+            "total_models": 1,
+            "response_time_ms": 0,
+            "message": "LLM service timeout (>5s)",
+            "service": "llm-agent",
+            "model": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_MODEL_NAME", "gpt-4o-mini"),
+            "error": "Request timeout (>5s)",
+            "last_check": now_ist().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "unavailable",
+            "available": False,
+            "healthy": False,
+            "models_available": 0,
+            "total_models": 1,
+            "response_time_ms": 0,
+            "message": f"LLM service unavailable: {str(e)[:50]}",
+            "service": "llm-agent",
+            "model": os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME") or os.getenv("AZURE_OPENAI_MODEL_NAME", "gpt-4o-mini"),
+            "error": str(e),
+            "last_check": now_ist().isoformat()
+        }
+
+
 @router.post("/run-code")
 async def run_code(
-    request: CodeExecutionRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    request: CodeExecutionRequest
 ):
     """Execute code using Judge0 API or mock for development"""
     
     # Execute the code
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     if USE_JUDGE0 and JUDGE0_API_KEY:
         result = await execute_with_judge0(request)
     else:
@@ -99,8 +174,9 @@ async def run_code(
 
 
 @router.post("/code-runs", response_model=CodeRunResponse)
-async def create_code_run(request: CodeRunRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+async def create_code_run(request: CodeRunRequest):
     """Server-authoritative code run: executes via Judge0 or mock, persists as an attempt (is_final=False)."""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     exec_req = CodeExecutionRequest(language=request.language, code=request.code, stdin=request.stdin, submissionId=request.submission_id)
 
     if USE_JUDGE0 and JUDGE0_API_KEY:
@@ -139,9 +215,10 @@ async def create_code_run(request: CodeRunRequest, db: CosmosDBService = Depends
 
 
 @router.post("/code-runs/finalize")
-async def finalize_code_run(request: FinalizeRunRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+async def finalize_code_run(request: FinalizeRunRequest):
     """Mark a code run as final and persist its outcome into the submission answer for scoring."""
     # 1) Fetch the run from CODE_EXECUTIONS (partitioned by /submission_id)
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     run_doc = await db.find_one(CONTAINER["CODE_EXECUTIONS"], {"id": request.run_id, "submission_id": request.submission_id})
     if not run_doc:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -334,10 +411,10 @@ async def execute_with_judge0(request: CodeExecutionRequest):
 
 @router.post("/evaluate")
 async def evaluate_result(
-    request: EvaluationRequest,
-    db: CosmosDBService = Depends(get_cosmosdb)
+    request: EvaluationRequest
 ):
     """Evaluate a completed test using hybrid scoring (redirects to new scoring service)"""
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     
     try:
         # Import the new scoring service

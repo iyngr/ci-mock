@@ -34,7 +34,10 @@ async function parseJSON(res: Response) {
 }
 
 export async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-    const token = (typeof window !== 'undefined') ? localStorage.getItem('candidateToken') : null;
+    // Use adminToken for admin endpoints, candidateToken for candidate endpoints
+    const isAdminEndpoint = path.startsWith('/api/admin');
+    const tokenKey = isAdminEndpoint ? 'adminToken' : 'candidateToken';
+    const token = (typeof window !== 'undefined') ? localStorage.getItem(tokenKey) : null;
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(options.headers as Record<string, string> || {})
@@ -77,11 +80,26 @@ export function withContextSource(path: string): string {
         if (path.startsWith('/api/admin/questions')) {
             return path;
         }
+
         const activeContext = getActiveAdminSource();
-        return withQuery(path, { source: activeContext });
+
+        // Check if path already has query parameters to avoid double ?
+        if (path.includes('?')) {
+            // Append using & instead of adding another ?
+            const separator = path.endsWith('?') ? '' : '&';
+            return `${path}${separator}source=${encodeURIComponent(activeContext)}`;
+        } else {
+            // Use withQuery for clean parameter addition
+            return withQuery(path, { source: activeContext });
+        }
     } catch (error) {
         // Fallback if context is not available
         console.warn('Could not get admin context, using default source:', error);
+        // Same logic for fallback
+        if (path.includes('?')) {
+            const separator = path.endsWith('?') ? '' : '&';
+            return `${path}${separator}source=smart-mock`;
+        }
         return withQuery(path, { source: 'smart-mock' });
     }
 }

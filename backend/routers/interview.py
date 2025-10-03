@@ -124,10 +124,11 @@ def _redact_transcript(obj: Any) -> Any:
 
 
 @router.post("/session", response_model=StartSessionResponse)
-async def create_interview_session(payload: StartSessionRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+async def create_interview_session(payload: StartSessionRequest):
     """Create a logical interview session document for S2S flow.
     This doesn't start Realtime; it tracks the session metadata in Cosmos.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     session_id = f"s2s_{payload.login_code}_{int(now_ist().timestamp())}"
 
     item = {
@@ -146,10 +147,11 @@ async def create_interview_session(payload: StartSessionRequest, db: CosmosDBSer
 
 
 @router.get("/plan", response_model=InterviewPlanResponse)
-async def get_interview_plan(assessmentId: str, db: CosmosDBService = Depends(get_cosmosdb)):
+async def get_interview_plan(assessmentId: str):
     """Return a simple question plan for the live interview.
     In production, this should derive from the existing assessment configuration.
     """
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     try:
         # Attempt to load from assessments container
         query = "SELECT c.id, c.role, c.duration, c.questions FROM c WHERE c.id = @id"
@@ -254,11 +256,12 @@ async def proxy_code_submit(payload: CodeSubmitRequest):
 
 
 @router.post("/finalize")
-async def finalize_transcript(payload: FinalizeTranscriptRequest, db: CosmosDBService = Depends(get_cosmosdb)):
+async def finalize_transcript(payload: FinalizeTranscriptRequest):
     """Store final transcript JSON in Cosmos. Redact common PII before persist.
     We store a small header doc in 'interviews' and a full transcript in 'interview_transcripts'.
     """
     # Redact transcript
+    db = await get_cosmosdb()  # WORKAROUND: Manual call instead of Depends
     redacted = _redact_transcript(payload.transcript)
 
     # Header update

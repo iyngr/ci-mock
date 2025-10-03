@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { AnimateOnScroll } from "@/components/AnimateOnScroll"
 import { buildApiUrl } from "@/lib/apiClient"
+// Phase 6: Duplicate detection
+import { useDuplicateCheck } from "@/lib/adminHooks"
+import { DuplicateWarning } from "@/components/AdminAnalyticsComponents"
 
 // Question Types and Enums
 type QuestionType = "mcq" | "coding" | "descriptive"
@@ -76,6 +79,10 @@ export default function AddQuestions() {
     const [uploadFile, setUploadFile] = useState<File | null>(null)
     const [bulkSessions, setBulkSessions] = useState<BulkSessionMeta[]>([])
     const [selectedSession, setSelectedSession] = useState<BulkSessionDetail | null>(null)
+
+    // Phase 6: Duplicate detection
+    const { checkDuplicate, checking, result, reset: resetDupCheck } = useDuplicateCheck()
+    const [showDuplicateWarning, setShowDuplicateWarning] = useState(false)
 
     useEffect(() => {
         // Check if admin is logged in
@@ -192,6 +199,19 @@ export default function AddQuestions() {
         setLoading(true)
         setError("")
         setSuccess("")
+
+        // Phase 6: Proactive duplicate detection
+        try {
+            const dupResult = await checkDuplicate(questionData.text, questionData.tags)
+            if (dupResult && dupResult.has_duplicates) {
+                setShowDuplicateWarning(true)
+                setLoading(false)
+                return
+            }
+        } catch (err) {
+            console.warn('Duplicate check failed, proceeding with submission:', err)
+            // Continue with submission even if check fails
+        }
 
         try {
             const adminToken = localStorage.getItem("adminToken")
@@ -853,6 +873,73 @@ export default function AddQuestions() {
                     </AnimateOnScroll>
                 )}
             </div>
+
+            {/* Phase 6: Duplicate warning modal */}
+            {showDuplicateWarning && result && result.has_duplicates && (
+                <DuplicateWarning
+                    duplicates={result.duplicates}
+                    onReuseExisting={(questionId) => {
+                        console.log('Reusing existing question:', questionId)
+                        setSuccess(`Question reused successfully! ID: ${questionId}`)
+                        setShowDuplicateWarning(false)
+                        resetDupCheck()
+                        // Reset form
+                        setQuestionData({
+                            text: "",
+                            type: "descriptive",
+                            tags: [],
+                            options: [],
+                            correctAnswer: ""
+                        })
+                        setTagInput("")
+                    }}
+                    onAddAnyway={async () => {
+                        setShowDuplicateWarning(false)
+                        resetDupCheck()
+                        // Proceed with submission bypassing duplicate check
+                        setLoading(true)
+                        try {
+                            const adminToken = localStorage.getItem("adminToken")
+                            const response = await fetch(buildApiUrl('/api/admin/questions'), {
+                                method: "POST",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "Authorization": `Bearer ${adminToken}`
+                                },
+                                body: JSON.stringify({ ...questionData, bypass_duplicate_check: true }),
+                            })
+                            if (!response.ok) {
+                                const errBody = await response.json().catch(() => ({ detail: 'Server error' }))
+                                setError(errBody.detail || errBody.message || 'Failed to add question')
+                                return
+                            }
+                            const data = await response.json()
+                            if (data.success) {
+                                setSuccess("Question added successfully!")
+                                // Reset form
+                                setQuestionData({
+                                    text: "",
+                                    type: "descriptive",
+                                    tags: [],
+                                    options: [],
+                                    correctAnswer: ""
+                                })
+                                setTagInput("")
+                            }
+                        } catch (err) {
+                            console.error(err)
+                            setError("Failed to add question")
+                        } finally {
+                            setLoading(false)
+                        }
+                    }}
+                    onCancel={() => {
+                        setShowDuplicateWarning(false)
+                        resetDupCheck()
+                        setLoading(false)
+                    }}
+                />
+            )}
         </div>
     )
 }

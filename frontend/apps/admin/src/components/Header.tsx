@@ -41,6 +41,7 @@ export function Header({ className }: HeaderProps) {
         "/dashboard",
         "/add-questions",
         "/initiate-test",
+        "/analytics",
         "/report",
         "/smart-screen",
     ]
@@ -70,6 +71,7 @@ export function Header({ className }: HeaderProps) {
                 { label: "Dashboard", href: "/dashboard" },
                 { label: "Add Questions", href: "/add-questions" },
                 { label: "Initiate Test", href: "/initiate-test" },
+                { label: "Analytics", href: "/analytics" },
                 { label: "Reports", href: "/report" },
                 { label: "Smart Screen", href: "/smart-screen" },
             ]

@@ -9,7 +9,7 @@ model:
   parameters:
     # temperature: 0.6  # removed for GPT-5 compatibility; controlled at runtime via call_llm
     # top_p: 0.8       # removed for GPT-5 compatibility; controlled at runtime via call_llm
-    max_completion_tokens: 800
+    max_completion_tokens: 10000
     response_format:
       type: json_object
 outputs:
@@ -32,4 +32,48 @@ system: |
   4. For MCQs, ensure options are plausible and one clearly correct answer exists
   5. For descriptive questions, frame them to elicit comprehensive technical responses
 
-  Always format your output as valid JSON with the question structure expected by the platform.
+  CRITICAL: You MUST return ONLY valid minified JSON (no markdown, no explanations, no code blocks).
+
+  ## OUTPUT FORMAT BY QUESTION TYPE:
+
+  ### For MCQ (Multiple Choice Questions):
+  Return minified JSON with this EXACT structure:
+  {"skill":"<skill_name>","question_type":"mcq","difficulty":"<easy|medium|hard>","question":"<question_text>","options":[{"id":"a","text":"<option_text>"},{"id":"b","text":"<option_text>"},{"id":"c","text":"<option_text>"},{"id":"d","text":"<option_text>"}],"correct_answer":"<a|b|c|d>","status":"success"}
+
+  RULES FOR MCQ:
+  - Use lowercase letters for option ids: "a", "b", "c", "d" (NOT uppercase)
+  - correct_answer must be one of: "a", "b", "c", "d" (lowercase only)
+  - Exactly 4 options required
+  - One clearly correct answer
+  - Three plausible distractors
+
+  ### For CODING Questions:
+  Return minified JSON with this EXACT structure:
+  {"skill":"<skill_name>","question_type":"coding","difficulty":"<easy|medium|hard>","question":"<problem_description>\n\nExample 1:\nInput: <input>\nOutput: <output>\n\nExample 2:\nInput: <input>\nOutput: <output>\n\nConstraints:\n- <constraint_1>\n- <constraint_2>","status":"success"}
+
+  RULES FOR CODING:
+  - Include clear problem statement
+  - At least 2 input/output examples
+  - List all constraints
+  - Use \n for line breaks in question text
+
+  ### For DESCRIPTIVE Questions:
+  Return minified JSON with this EXACT structure:
+  {"skill":"<skill_name>","question_type":"descriptive","difficulty":"<easy|medium|hard>","question":"<question_text>","status":"success"}
+
+  RULES FOR DESCRIPTIVE:
+  - Frame to elicit comprehensive technical response
+  - Focus on conceptual understanding
+  - Encourage detailed explanations
+
+  ## CRITICAL REQUIREMENTS:
+  1. Output ONLY the JSON object (minified, single line)
+  2. NO markdown code blocks (no ```json or ```)
+  3. NO explanations before or after the JSON
+  4. NO comments in the JSON
+  5. Properly escape quotes in text using \"
+  6. All option ids and correct_answer in lowercase
+  7. Include all required fields: skill, question_type, difficulty, question, status
+
+  Example valid MCQ output (minified):
+  {"skill":"Java","question_type":"mcq","difficulty":"medium","question":"What is the purpose of the Spring @Autowired annotation?","options":[{"id":"a","text":"To create a new bean instance"},{"id":"b","text":"To inject dependencies automatically"},{"id":"c","text":"To define a bean scope"},{"id":"d","text":"To configure application properties"}],"correct_answer":"b","status":"success"}
